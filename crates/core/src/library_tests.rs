@@ -73,7 +73,7 @@ fn attachments_are_board_owned_binary_copies_and_survive_source_removal_and_relo
         std::slice::from_ref(&attachment)
     );
     let file = crate::attachments::resolve(&root, &attachment).unwrap();
-    assert!(file.starts_with(root.join("attachments")));
+    assert!(file.starts_with(root.join("attachments").canonicalize().unwrap()));
     assert_eq!(fs::read(&file).unwrap(), bytes);
     assert_eq!(attachment.size, 6);
     let bad = TaskAttachment {
