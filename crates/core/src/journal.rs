@@ -19,12 +19,23 @@ pub enum Mode {
     Preview,
     Split,
 }
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PreviewLayout {
+    #[default]
+    SideBySide,
+    Stacked,
+}
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Preferences {
     pub mode: Mode,
     pub font_size: f32,
     pub word_wrap: bool,
+    pub preview_font_size: f32,
+    pub preview_layout: PreviewLayout,
+    pub sync_scroll: bool,
+    pub line_numbers: bool,
 }
 impl Default for Preferences {
     fn default() -> Self {
@@ -32,6 +43,10 @@ impl Default for Preferences {
             mode: Mode::Split,
             font_size: 16.,
             word_wrap: true,
+            preview_font_size: 16.,
+            preview_layout: PreviewLayout::SideBySide,
+            sync_scroll: true,
+            line_numbers: true,
         }
     }
 }
@@ -595,5 +610,23 @@ mod link_tests {
                 .is_err()
         );
         fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod preference_tests {
+    use super::*;
+    #[test]
+    fn old_notebook_preferences_get_compatible_editor_defaults() {
+        let old: Preferences =
+            serde_json::from_str(r#"{"mode":"split","font_size":18.0,"word_wrap":false}"#).unwrap();
+        assert!(old.sync_scroll && old.line_numbers);
+        assert_eq!(old.preview_layout, PreviewLayout::SideBySide);
+        assert_eq!(old.preview_font_size, 16.);
+        assert!(!old.word_wrap);
+        assert_eq!(
+            serde_json::from_str::<Preferences>(&serde_json::to_string(&old).unwrap()).unwrap(),
+            old
+        );
     }
 }

@@ -1,11 +1,15 @@
 //! Markdown notebook UI. Filesystem work and native pickers belong to the shell.
 use amigo_core::journal::{
-    Document, Entry, Mode, Preferences,
+    Document, Entry, Mode, Preferences, PreviewLayout,
     formatting::{self, Format},
 };
 use amigo_ui::design::{self, Icon, colors};
 use egui::{self, RichText};
-use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
+mod highlight;
+mod panes;
+mod render;
+mod scroll;
+mod toolbar;
 use std::{collections::BTreeSet, time::Instant};
 
 #[derive(Clone, Debug)]
@@ -33,8 +37,11 @@ pub struct Editor {
     preview_source: String,
     revision: u64,
     preview_revision: u64,
-    preview_links: Vec<String>,
-    preview_cache: CommonMarkCache,
+    preview: render::Preview,
+    syntax: highlight::SourceCache,
+    scroll: scroll::ScrollSync,
+    preview_link: Option<String>,
+    toolbar_menus: Vec<egui::Id>,
 }
 impl Editor {
     pub fn new(document: Document) -> Self {
@@ -48,8 +55,11 @@ impl Editor {
             preview_source: String::new(),
             revision: 0,
             preview_revision: u64::MAX,
-            preview_links: vec![],
-            preview_cache: CommonMarkCache::default(),
+            preview: Default::default(),
+            syntax: Default::default(),
+            scroll: Default::default(),
+            preview_link: None,
+            toolbar_menus: vec![],
         }
     }
     pub fn dirty(&self) -> bool {
@@ -282,7 +292,7 @@ impl JournalTab {
     }
     pub fn show(&mut self, ui: &mut egui::Ui, preferences: &mut Preferences) -> Option<Action> {
         let mut action = None;
-        let title_width = (ui.available_width() - 270.).max(0.);
+        let title_width = (ui.available_width() - 130.).max(0.);
         ui.horizontal(|ui| {
             ui.allocate_ui_with_layout(
                 egui::vec2(title_width, 38.),
@@ -300,8 +310,6 @@ impl JournalTab {
                 },
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                mode_buttons(ui, &mut preferences.mode, "journal-mode");
-                ui.separator();
                 for (key, icon, label, candidate) in [
                     (
                         "import",
@@ -377,49 +385,14 @@ impl JournalTab {
                 ui.set_min_size(egui::vec2(width - 2., height - 2.));
                 ui.set_max_size(egui::vec2(width - 2., height - 2.));
                 if self.editor.is_some() {
-                    action = self.note_header(ui).or(action.take());
+                    action = self.note_header(ui, preferences).or(action.take());
                     let Some(editor) = &mut self.editor else {
                         return;
                     };
                     let width = ui.available_width();
                     let height = ui.available_height().max(80.);
                     ui.add_enabled_ui(!self.loading, |ui| {
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(width, height),
-                            egui::Layout::left_to_right(egui::Align::Min),
-                            |ui| {
-                                ui.spacing_mut().item_spacing.x = 0.;
-                                match preferences.mode {
-                                    Mode::Source => {
-                                        editor_pane(ui, width, height, |ui, width, height| {
-                                            source(editor, preferences, ui, width, height)
-                                        })
-                                    }
-                                    Mode::Preview => {
-                                        editor_pane(ui, width, height, |ui, width, height| {
-                                            preview(editor, ui, width, height)
-                                        })
-                                    }
-                                    Mode::Split => {
-                                        let half = (width - 1.) / 2.;
-                                        editor_pane(ui, half, height, |ui, width, height| {
-                                            source(editor, preferences, ui, width, height)
-                                        });
-                                        let (divider, _) = ui.allocate_exact_size(
-                                            egui::vec2(1., height),
-                                            egui::Sense::hover(),
-                                        );
-                                        ui.painter().line_segment(
-                                            [divider.center_top(), divider.center_bottom()],
-                                            egui::Stroke::new(1., palette.hover_line),
-                                        );
-                                        editor_pane(ui, half, height, |ui, width, height| {
-                                            preview(editor, ui, width, height)
-                                        });
-                                    }
-                                }
-                            },
-                        );
+                        panes::show(editor, preferences, ui, width, height)
                     });
                 } else {
                     ui.vertical_centered(|ui| {
@@ -438,21 +411,31 @@ impl JournalTab {
         let Some(editor) = &mut self.editor else {
             return action;
         };
-        if let Some(target) = editor
-            .preview_links
-            .iter()
-            .find(|link| editor.preview_cache.get_link_hook(link) == Some(true))
-            .cloned()
-        {
-            editor.preview_cache.add_link_hook(&target);
-            action = Some(Action::FollowLink {
-                from: editor.document.path.clone(),
-                target,
-            });
+        if let Some(target) = editor.preview_link.take() {
+            if target.starts_with("http://")
+                || target.starts_with("https://")
+                || target.starts_with("mailto:")
+            {
+                ui.ctx().open_url(egui::OpenUrl::new_tab(target));
+            } else if let Some(anchor) = target.strip_prefix('#') {
+                if let Some(y) = editor.preview.heading_y(anchor) {
+                    editor.scroll.preview_target = Some(y);
+                    if preferences.sync_scroll && preferences.mode == Mode::Split {
+                        let line = editor.preview.line_for_y((y - 20.).max(0.));
+                        editor.scroll.source_target = Some(editor.scroll.y_for_line(line) + 10.);
+                    }
+                    ui.ctx().request_repaint();
+                }
+            } else {
+                action = Some(Action::FollowLink {
+                    from: editor.document.path.clone(),
+                    target,
+                });
+            }
         }
         action
     }
-    fn note_header(&mut self, ui: &mut egui::Ui) -> Option<Action> {
+    fn note_header(&mut self, ui: &mut egui::Ui, preferences: &mut Preferences) -> Option<Action> {
         let keys = design::ActionKeys::capture(ui.ctx());
         let editor = self.editor.as_ref()?;
         let path = editor.document.path.clone();
@@ -462,7 +445,16 @@ impl JournalTab {
         let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 46.), egui::Sense::hover());
         let title_rect = egui::Rect::from_center_size(
             rect.center(),
-            egui::vec2((width - 170.).clamp(80., 500.), 34.),
+            egui::vec2(
+                (width
+                    - if self.title_edit.is_some() {
+                        500.
+                    } else {
+                        340.
+                    })
+                .clamp(80., 500.),
+                34.,
+            ),
         );
         let mut action = None;
         if let Some(edit) = &mut self.title_edit {
@@ -492,7 +484,7 @@ impl JournalTab {
             let mut save = false;
             let mut cancel = false;
             let controls = egui::Rect::from_min_size(
-                egui::pos2(rect.right() - 78., rect.top() + 7.),
+                egui::pos2(rect.right() - 242., rect.top() + 7.),
                 egui::vec2(72., 32.),
             );
             ui.scope_builder(
@@ -564,6 +556,64 @@ impl JournalTab {
                 ui.ctx().request_repaint();
             }
         }
+        let controls = egui::Rect::from_min_size(
+            egui::pos2(rect.right() - 160., rect.top() + 7.),
+            egui::vec2(154., 32.),
+        );
+        ui.scope_builder(
+            egui::UiBuilder::new()
+                .max_rect(controls)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+            |ui| {
+                ui.spacing_mut().item_spacing.x = 4.;
+                mode_buttons_with_layout(
+                    ui,
+                    &mut preferences.mode,
+                    "journal-mode",
+                    preferences.preview_layout,
+                );
+                let menu = design::icon_button(
+                    ui,
+                    egui::Id::new("journal-view-options"),
+                    Icon::More,
+                    "Editor and Preview Options",
+                    32.,
+                );
+                egui::Popup::menu(&menu).show(|ui| {
+                    ui.label(RichText::new("Split Layout").strong());
+                    let side = ui.radio_value(
+                        &mut preferences.preview_layout,
+                        PreviewLayout::SideBySide,
+                        "Side by Side",
+                    );
+                    ui.interact(
+                        side.rect,
+                        egui::Id::new("journal-layout-side"),
+                        egui::Sense::hover(),
+                    );
+                    if side.changed() {
+                        ui.close();
+                    }
+                    let stacked = ui.radio_value(
+                        &mut preferences.preview_layout,
+                        PreviewLayout::Stacked,
+                        "Stacked",
+                    );
+                    ui.interact(
+                        stacked.rect,
+                        egui::Id::new("journal-layout-stacked"),
+                        egui::Sense::hover(),
+                    );
+                    if stacked.changed() {
+                        ui.close();
+                    }
+                    ui.separator();
+                    design::checkbox(ui, &mut preferences.sync_scroll, "Synchronize Scrolling");
+                    design::checkbox(ui, &mut preferences.line_numbers, "Line Numbers");
+                    design::checkbox(ui, &mut preferences.word_wrap, "Soft Wraps");
+                });
+            },
+        );
         ui.painter().line_segment(
             [rect.left_bottom(), rect.right_bottom()],
             egui::Stroke::new(1., colors(ui).hover_line),
@@ -637,9 +687,22 @@ impl JournalTab {
     }
 }
 pub fn mode_buttons(ui: &mut egui::Ui, mode: &mut Mode, prefix: &str) {
+    mode_buttons_with_layout(ui, mode, prefix, PreviewLayout::SideBySide);
+}
+pub fn mode_buttons_with_layout(
+    ui: &mut egui::Ui,
+    mode: &mut Mode,
+    prefix: &str,
+    layout: PreviewLayout,
+) {
+    let split_icon = if layout == PreviewLayout::Stacked {
+        Icon::SplitStacked
+    } else {
+        Icon::Split
+    };
     let mut modes = [
         (Mode::Source, Icon::Markdown, "Markdown"),
-        (Mode::Split, Icon::Split, "Split"),
+        (Mode::Split, split_icon, "Split"),
         (Mode::Preview, Icon::Preview, "Preview"),
     ];
     if ui.layout().main_dir == egui::Direction::RightToLeft {
@@ -660,191 +723,7 @@ pub fn mode_buttons(ui: &mut egui::Ui, mode: &mut Mode, prefix: &str) {
         }
     }
 }
-fn editor_pane(
-    ui: &mut egui::Ui,
-    width: f32,
-    height: f32,
-    contents: impl FnOnce(&mut egui::Ui, f32, f32),
-) {
-    ui.allocate_ui_with_layout(
-        egui::vec2(width, height),
-        egui::Layout::top_down(egui::Align::Min),
-        |ui| {
-            egui::Frame::new().inner_margin(14).show(ui, |ui| {
-                let width = (width - 28.).max(24.);
-                let height = (height - 28.).max(24.);
-                ui.set_min_size(egui::vec2(width, height));
-                ui.set_max_size(egui::vec2(width, height));
-                contents(ui, width, height);
-            });
-        },
-    );
-}
-fn source(editor: &mut Editor, prefs: &Preferences, ui: &mut egui::Ui, width: f32, height: f32) {
-    let id = egui::Id::new(("journal-editor", &editor.document.path));
-    if !ui.is_enabled() {
-        ui.memory_mut(|m| m.surrender_focus(id));
-    }
-
-    if ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Secondary))
-        && !editor.selection.is_empty()
-        && ui.ctx().read_response(id).is_some_and(|r| {
-            ui.input(|i| i.pointer.interact_pos().is_some_and(|p| r.rect.contains(p)))
-        })
-    {
-        editor.context_selection = Some(editor.selection.clone());
-    }
-    let mut format = None;
-    if ui.is_enabled() && ui.memory(|m| m.has_focus(id)) && !egui::Popup::is_any_open(ui.ctx()) {
-        if ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::B)) {
-            format = Some(Format::Bold);
-        }
-        if ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::I)) {
-            format = Some(Format::Italic);
-        }
-    }
-    egui::ScrollArea::both()
-        .id_salt(("journal-source-scroll", &editor.document.path))
-        .max_height(height)
-        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-        .show(ui, |ui| {
-            let font = egui::FontId::monospace(prefs.font_size.clamp(11., 28.));
-            let ink = colors(ui).ink;
-            let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap: f32| {
-                ui.fonts_mut(|f| {
-                    f.layout_job(egui::text::LayoutJob::simple(
-                        text.as_str().to_owned(),
-                        font.clone(),
-                        ink,
-                        if prefs.word_wrap { wrap } else { f32::INFINITY },
-                    ))
-                })
-            };
-            let enabled = ui.is_enabled();
-            let output = egui::TextEdit::multiline(&mut editor.document.text)
-                .interactive(enabled)
-                .id(id)
-                .code_editor()
-                .font(egui::FontId::monospace(prefs.font_size))
-                .frame(egui::Frame::NONE)
-                .desired_width(width)
-                .min_size(egui::vec2(width, height - 12.))
-                .layouter(&mut layouter)
-                .show(ui);
-            if output.response.changed() {
-                editor.revision = editor.revision.wrapping_add(1);
-                editor.changed_at = Instant::now();
-            }
-            if let Some(range) = &editor.context_selection {
-                editor.selection = range.clone();
-                let mut state = output.state.clone();
-                state
-                    .cursor
-                    .set_char_range(Some(egui::text::CCursorRange::two(
-                        egui::text::CCursor::new(range.start),
-                        egui::text::CCursor::new(range.end),
-                    )));
-                state.store(ui.ctx(), id);
-            } else if let Some(range) = output.cursor_range {
-                let range = range.as_sorted_char_range();
-                editor.selection = range.start.0..range.end.0;
-            }
-            output.response.context_menu(|ui| {
-                ui.label(RichText::new("Format Selection").strong());
-                for (label, kind) in [
-                    ("Bold", Format::Bold),
-                    ("Italic", Format::Italic),
-                    ("Strikethrough", Format::Strike),
-                    ("Inline Code", Format::Code),
-                    ("Heading 1", Format::Heading(1)),
-                    ("Heading 2", Format::Heading(2)),
-                    ("Heading 3", Format::Heading(3)),
-                    ("Bulleted List", Format::Bullet),
-                    ("Numbered List", Format::Numbered),
-                    ("Task List", Format::Task),
-                    ("Quote", Format::Quote),
-                    ("Code Block", Format::CodeBlock),
-                    ("Link", Format::Link),
-                    ("Table", Format::Table),
-                    ("Horizontal Rule", Format::Rule),
-                ] {
-                    if ui
-                        .push_id(("journal-format", label), |ui| design::button(ui, label))
-                        .inner
-                        .clicked()
-                    {
-                        format = Some(kind);
-                        ui.close();
-                    }
-                }
-                ui.separator();
-                if design::button(ui, "Copy").clicked() {
-                    ui.ctx().copy_text(
-                        editor
-                            .document
-                            .text
-                            .chars()
-                            .skip(editor.selection.start)
-                            .take(editor.selection.len())
-                            .collect(),
-                    );
-                    ui.close();
-                }
-            });
-            if !output.response.context_menu_opened()
-                && !ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary))
-            {
-                editor.context_selection = None;
-            }
-            if let Some(kind) = format {
-                let mut state = egui::TextEdit::load_state(ui.ctx(), id).unwrap_or_default();
-                let old_range = egui::text::CCursorRange::two(
-                    egui::text::CCursor::new(editor.selection.start),
-                    egui::text::CCursor::new(editor.selection.end),
-                );
-                let mut undoer = state.undoer();
-                undoer.add_undo(&(old_range, editor.document.text.clone()));
-                editor.selection =
-                    formatting::apply(&mut editor.document.text, editor.selection.clone(), kind);
-                state.set_undoer(undoer);
-                state
-                    .cursor
-                    .set_char_range(Some(egui::text::CCursorRange::two(
-                        egui::text::CCursor::new(editor.selection.start),
-                        egui::text::CCursor::new(editor.selection.end),
-                    )));
-                state.store(ui.ctx(), id);
-                editor.revision = editor.revision.wrapping_add(1);
-                editor.changed_at = Instant::now();
-                ui.memory_mut(|m| m.request_focus(id));
-            }
-        });
-}
-fn preview(editor: &mut Editor, ui: &mut egui::Ui, width: f32, height: f32) {
-    if editor.preview_revision != editor.revision {
-        editor.preview_revision = editor.revision;
-        let (source, links) = markdown_links(&editor.document.text);
-        editor.preview_source = source;
-        editor.preview_links = links;
-        editor.preview_cache = CommonMarkCache::default();
-        for link in &editor.preview_links {
-            editor.preview_cache.add_link_hook(link);
-        }
-    }
-    ui.set_max_width(width);
-    ui.set_max_height(height);
-    ui.style_mut().spacing.scroll.bar_width = 0.;
-    CommonMarkViewer::new()
-        .enable_scroll_to_heading(true)
-        .show_scrollable(
-            ("journal-preview", &editor.document.path),
-            ui,
-            &mut editor.preview_cache,
-            &editor.preview_source,
-        );
-}
-
-fn markdown_links(text: &str) -> (String, Vec<String>) {
+fn markdown_source(text: &str) -> String {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let body = if let Some(rest) = text.strip_prefix("---\r\n") {
         rest.split_once("\r\n---\r\n")
@@ -878,18 +757,9 @@ fn markdown_links(text: &str) -> (String, Vec<String>) {
         cursor = range.end;
     }
     wiki_text(&body[cursor..], &mut output);
-    let mut hooks = BTreeSet::new();
-    for event in pulldown_cmark::Parser::new(&output) {
-        if let pulldown_cmark::Event::Start(pulldown_cmark::Tag::Link { dest_url, .. }) = event {
-            let url = dest_url.to_string();
-            if url.starts_with("amigo-journal://") || (!url.contains(':') && !url.starts_with('#'))
-            {
-                hooks.insert(url);
-            }
-        }
-    }
-    (output, hooks.into_iter().collect())
+    output
 }
+
 fn wiki_text(mut rest: &str, output: &mut String) {
     while let Some(start) = rest.find("[[") {
         output.push_str(&rest[..start]);
@@ -923,420 +793,4 @@ fn encode_target(value: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    struct Harness {
-        action: Option<Action>,
-        tab: JournalTab,
-        prefs: Preferences,
-    }
-    fn frame(
-        app: &mut Harness,
-        ctx: &egui::Context,
-        events: Vec<egui::Event>,
-        size: egui::Vec2,
-    ) -> egui::FullOutput {
-        let mut output = ctx.run_ui(
-            egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
-                events,
-                ..Default::default()
-            },
-            |ui| {
-                egui::CentralPanel::default().show(ui, |ui| {
-                    app.action = app.tab.show(ui, &mut app.prefs);
-                });
-            },
-        );
-        output.textures_delta.clear();
-        output
-    }
-    fn label(output: &egui::FullOutput, text: &str) -> egui::Rect {
-        fn find(shape: &egui::Shape, text: &str) -> Option<egui::Rect> {
-            match shape {
-                egui::Shape::Text(t) if t.galley.text() == text => {
-                    Some(egui::Rect::from_min_size(t.pos, t.galley.size()))
-                }
-                egui::Shape::Vec(items) => items.iter().find_map(|s| find(s, text)),
-                _ => None,
-            }
-        }
-        output
-            .shapes
-            .iter()
-            .rev()
-            .find_map(|s| find(&s.shape, text))
-            .unwrap_or_else(|| panic!("Missing {text}"))
-    }
-    #[test]
-    fn context_formatting_and_undo_keep_unicode_selection_and_markdown() {
-        let ctx = egui::Context::default();
-        design::install(&ctx);
-        let mut app = Harness {
-            action: None,
-            tab: JournalTab::default(),
-            prefs: Preferences {
-                mode: Mode::Source,
-                ..Default::default()
-            },
-        };
-        app.tab.open(Document {
-            path: "Note.md".into(),
-            text: "Hello 🌍".into(),
-            fingerprint: "test".into(),
-        });
-        let size = egui::vec2(980., 640.);
-        for _ in 0..4 {
-            frame(&mut app, &ctx, vec![], size);
-        }
-        let id = egui::Id::new(("journal-editor", "Note.md"));
-        let mut state = egui::TextEdit::load_state(&ctx, id).unwrap();
-        state
-            .cursor
-            .set_char_range(Some(egui::text::CCursorRange::two(
-                egui::text::CCursor::new(0),
-                egui::text::CCursor::new(5),
-            )));
-        state.store(&ctx, id);
-        ctx.memory_mut(|m| m.request_focus(id));
-        frame(&mut app, &ctx, vec![], size);
-        let pos = ctx.read_response(id).unwrap().rect.min + egui::vec2(12., 10.);
-        for pressed in [true, false] {
-            frame(
-                &mut app,
-                &ctx,
-                vec![
-                    egui::Event::PointerMoved(pos),
-                    egui::Event::PointerButton {
-                        pos,
-                        button: egui::PointerButton::Secondary,
-                        pressed,
-                        modifiers: egui::Modifiers::NONE,
-                    },
-                ],
-                size,
-            );
-        }
-        let output = frame(&mut app, &ctx, vec![], size);
-        let bold = label(&output, "Bold").center();
-        for pressed in [true, false] {
-            frame(
-                &mut app,
-                &ctx,
-                vec![
-                    egui::Event::PointerMoved(bold),
-                    egui::Event::PointerButton {
-                        pos: bold,
-                        button: egui::PointerButton::Primary,
-                        pressed,
-                        modifiers: egui::Modifiers::NONE,
-                    },
-                ],
-                size,
-            );
-        }
-        assert_eq!(
-            app.tab.editor.as_ref().unwrap().document.text,
-            "**Hello** 🌍"
-        );
-        for pressed in [true, false] {
-            frame(
-                &mut app,
-                &ctx,
-                vec![egui::Event::Key {
-                    key: egui::Key::Z,
-                    physical_key: None,
-                    pressed,
-                    repeat: false,
-                    modifiers: egui::Modifiers::COMMAND,
-                }],
-                size,
-            );
-        }
-        assert_eq!(app.tab.editor.as_ref().unwrap().document.text, "Hello 🌍");
-    }
-    #[test]
-    fn exclusive_load_blocks_edits_but_autosave_does_not() {
-        let ctx = egui::Context::default();
-        design::install(&ctx);
-        let mut app = Harness {
-            action: None,
-            tab: JournalTab::default(),
-            prefs: Preferences {
-                mode: Mode::Source,
-                ..Default::default()
-            },
-        };
-        app.tab.open(Document {
-            path: "Note.md".into(),
-            text: "Original".into(),
-            fingerprint: "test".into(),
-        });
-        let size = egui::vec2(980., 640.);
-        let id = egui::Id::new(("journal-editor", "Note.md"));
-        for _ in 0..3 {
-            frame(&mut app, &ctx, vec![], size);
-        }
-        ctx.memory_mut(|m| m.request_focus(id));
-        app.tab.busy = true;
-        app.tab.loading = true;
-        frame(
-            &mut app,
-            &ctx,
-            vec![egui::Event::Text("Blocked".into())],
-            size,
-        );
-        assert_eq!(app.tab.editor.as_ref().unwrap().document.text, "Original");
-        app.tab.loading = false;
-        frame(&mut app, &ctx, vec![], size);
-        ctx.memory_mut(|m| m.request_focus(id));
-        frame(
-            &mut app,
-            &ctx,
-            vec![egui::Event::Text("Allowed".into())],
-            size,
-        );
-        assert!(
-            app.tab
-                .editor
-                .as_ref()
-                .unwrap()
-                .document
-                .text
-                .contains("Allowed")
-        );
-    }
-    fn click(app: &mut Harness, ctx: &egui::Context, pos: egui::Pos2, size: egui::Vec2) {
-        for pressed in [true, false] {
-            frame(
-                app,
-                ctx,
-                vec![
-                    egui::Event::PointerMoved(pos),
-                    egui::Event::PointerButton {
-                        pos,
-                        button: egui::PointerButton::Primary,
-                        pressed,
-                        modifiers: egui::Modifiers::NONE,
-                    },
-                ],
-                size,
-            );
-        }
-    }
-    #[test]
-    fn notebook_keeps_title_borders_and_icon_controls_and_double_click_renames() {
-        for size in [egui::vec2(680., 500.), egui::vec2(1160., 760.)] {
-            let ctx = egui::Context::default();
-            design::install(&ctx);
-            let mut app = Harness {
-                action: None,
-                tab: JournalTab::default(),
-                prefs: Preferences::default(),
-            };
-            app.tab.open(Document {
-                path: "Folder/Original.md".into(),
-                text: "# Original\n\nBody".into(),
-                fingerprint: "test".into(),
-            });
-            for _ in 0..4 {
-                frame(&mut app, &ctx, vec![], size);
-            }
-            let title = ctx
-                .read_response(egui::Id::new("journal-note-title"))
-                .unwrap()
-                .rect;
-            let notebook = ctx
-                .read_response(egui::Id::new("journal-notebook"))
-                .unwrap()
-                .rect;
-            let heading = ctx
-                .read_response(egui::Id::new("journal-page-title"))
-                .unwrap()
-                .rect;
-            assert!((title.center().x - notebook.center().x).abs() < 1.);
-            assert!(heading.left() < notebook.left() + 1.);
-            assert!(notebook.right() <= size.x && notebook.bottom() <= size.y);
-            assert!(
-                ctx.read_response(egui::Id::new(("journal", "export")))
-                    .is_none()
-            );
-            click(&mut app, &ctx, title.center(), size);
-            click(&mut app, &ctx, title.center(), size);
-            frame(&mut app, &ctx, vec![], size);
-            assert!(app.tab.title_edit.is_some());
-            assert_eq!(
-                ctx.memory(|m| m.focused()),
-                Some(egui::Id::new("journal-title-edit"))
-            );
-            frame(
-                &mut app,
-                &ctx,
-                vec![egui::Event::Text("Renamed 🌍".into())],
-                size,
-            );
-            frame(
-                &mut app,
-                &ctx,
-                vec![egui::Event::Key {
-                    key: egui::Key::Enter,
-                    physical_key: None,
-                    pressed: true,
-                    repeat: false,
-                    modifiers: egui::Modifiers::NONE,
-                }],
-                size,
-            );
-            assert!(
-                matches!(&app.action, Some(Action::Rename {old, name}) if old == "Folder/Original.md" && name == "Folder/Renamed 🌍")
-            );
-            assert_eq!(
-                app.tab.editor.as_ref().unwrap().document.text,
-                "# Original\n\nBody"
-            );
-            app.tab.title_edit = Some(TitleEdit {
-                path: "Folder/Original.md".into(),
-                value: "Discard me".into(),
-                focus: true,
-            });
-            frame(&mut app, &ctx, vec![], size);
-            frame(
-                &mut app,
-                &ctx,
-                vec![egui::Event::Key {
-                    key: egui::Key::Escape,
-                    physical_key: None,
-                    pressed: true,
-                    repeat: false,
-                    modifiers: egui::Modifiers::NONE,
-                }],
-                size,
-            );
-            assert!(app.tab.title_edit.is_none());
-            assert!(app.action.is_none());
-            for mode in [Mode::Source, Mode::Split, Mode::Preview] {
-                let button = ctx
-                    .read_response(egui::Id::new(("journal-mode", mode)))
-                    .unwrap()
-                    .rect;
-                click(&mut app, &ctx, button.center(), size);
-                assert_eq!(app.prefs.mode, mode);
-            }
-        }
-    }
-    #[test]
-    fn folder_disclosure_opens_and_closes_nested_notes() {
-        let ctx = egui::Context::default();
-        design::install(&ctx);
-        let mut tab = JournalTab {
-            loaded: true,
-            entries: vec![
-                Entry {
-                    path: "Folder".into(),
-                    folder: true,
-                },
-                Entry {
-                    path: "Folder/Note.md".into(),
-                    folder: false,
-                },
-            ],
-            ..Default::default()
-        };
-        fn render(tab: &mut JournalTab, ctx: &egui::Context, events: Vec<egui::Event>) {
-            let mut output = ctx.run_ui(
-                egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        egui::vec2(224., 600.),
-                    )),
-                    events,
-                    ..Default::default()
-                },
-                |ui| {
-                    egui::CentralPanel::default().show(ui, |ui| {
-                        tab.sidebar(ui);
-                    });
-                },
-            );
-            output.textures_delta.clear();
-        }
-        for _ in 0..3 {
-            render(&mut tab, &ctx, vec![]);
-        }
-        for open in [true, false] {
-            let folder = ctx
-                .read_response(egui::Id::new(("journal-entry", "Folder")))
-                .unwrap()
-                .rect;
-            for pressed in [true, false] {
-                render(
-                    &mut tab,
-                    &ctx,
-                    vec![
-                        egui::Event::PointerMoved(folder.center()),
-                        egui::Event::PointerButton {
-                            pos: folder.center(),
-                            button: egui::PointerButton::Primary,
-                            pressed,
-                            modifiers: egui::Modifiers::NONE,
-                        },
-                    ],
-                );
-            }
-            render(&mut tab, &ctx, vec![]);
-            render(&mut tab, &ctx, vec![]);
-            assert_eq!(tab.expanded.contains("Folder"), open);
-            assert_eq!(
-                ctx.read_response(egui::Id::new(("journal-entry", "Folder/Note.md")))
-                    .is_some(),
-                open
-            );
-        }
-        assert!(!tab.expanded.contains("Folder"));
-    }
-    #[test]
-    fn every_mode_fits_both_window_sizes_and_cache_tracks_edits() {
-        for size in [egui::vec2(680., 500.), egui::vec2(1160., 760.)] {
-            let ctx = egui::Context::default();
-            design::install(&ctx);
-            let mut app = Harness {
-                action: None,
-                tab: JournalTab::default(),
-                prefs: Preferences::default(),
-            };
-            app.tab.open(Document{path:"Notebook.md".into(),text:"# Notebook\n\n**Bold** and _italic_.\n\n| A | B |\n| --- | --- |\n| one | two |\n\n- [ ] Task\n\n```rust\nlet n=1;\n```\n".into(),fingerprint:"test".into()});
-            for mode in [Mode::Source, Mode::Split, Mode::Preview] {
-                app.prefs.mode = mode;
-                for _ in 0..4 {
-                    frame(&mut app, &ctx, vec![], size);
-                }
-                let editor = app.tab.editor.as_ref().unwrap();
-                if mode != Mode::Source {
-                    assert_eq!(editor.preview_revision, editor.revision);
-                    assert!(editor.preview_source.contains("Notebook"));
-                }
-            }
-        }
-    }
-    #[test]
-    fn wikilinks_and_relative_links_are_hooked_without_touching_code_or_front_matter() {
-        let (source, links) = markdown_links(
-            "---\ntitle: Private\n---\n[[Folder/Note|My note]] [Other](Other%20Note.md)\n\n```md\n[[code]]\n```\n",
-        );
-        let (inline, inline_links) =
-            markdown_links("`[[literal]]` and [[Real]]\n\n    [[indented]]\n");
-        assert!(inline.contains("`[[literal]]`"));
-        assert!(inline.contains("    [[indented]]"));
-        assert!(inline.contains("[Real](amigo-journal://Real)"));
-        assert_eq!(inline_links, vec!["amigo-journal://Real"]);
-        let (windows, _) = markdown_links("\u{feff}---\r\ntitle: Private\r\n---\r\n# Windows\r\n");
-        assert_eq!(windows, "# Windows\r\n");
-        assert!(!source.contains("title: Private"));
-        assert!(source.contains("[My note](amigo-journal://Folder/Note)"));
-        assert!(source.contains("[[code]]"));
-        assert_eq!(
-            links,
-            vec!["Other%20Note.md", "amigo-journal://Folder/Note"]
-        );
-    }
-}
+mod tests;

@@ -9,6 +9,5 @@ authors.workspace = true
 amigo-core.workspace = true
 amigo-ui.workspace = true
 egui.workspace = true
-egui_commonmark = { version = "0.25", default-features = false, features = ["pulldown_cmark"] }
 
 pulldown-cmark = { version = "0.13", default-features = false }

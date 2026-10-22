@@ -322,8 +322,16 @@ pub fn dot_with_size(ui: &mut egui::Ui, color: Color32, size: f32) {
 
 #[derive(Clone, Copy)]
 pub enum Icon {
+    Bold,
+    Italic,
+    Strikethrough,
+    Code,
+    Link,
+    List,
+    More,
     Markdown,
     Split,
+    SplitStacked,
     Preview,
     Book,
     Lock,
@@ -378,32 +386,93 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, kind: Icon, color: Color3
         )
     };
     match kind {
-        Icon::Markdown => {
-            box_at((3., 3.), (21., 21.), 2);
-            line(&[(9., 8.), (6., 12.), (9., 16.)]);
-            line(&[(15., 8.), (18., 12.), (15., 16.)]);
+        Icon::Bold => {
+            line(&[(6., 4.), (6., 20.)]);
+            line(&[
+                (6., 4.),
+                (13., 4.),
+                (17., 6.),
+                (17., 10.),
+                (13., 12.),
+                (6., 12.),
+            ]);
+            line(&[(13., 12.), (18., 14.), (18., 18.), (14., 20.), (6., 20.)]);
         }
-        Icon::Split => {
-            box_at((3., 3.), (21., 21.), 2);
-            line(&[(12., 3.), (12., 21.)]);
-            for y in [8., 12., 16.] {
-                line(&[(6., y), (9., y)]);
-                line(&[(15., y), (18., y)]);
+        Icon::Italic => {
+            line(&[(10., 4.), (20., 4.)]);
+            line(&[(15., 4.), (9., 20.)]);
+            line(&[(4., 20.), (14., 20.)]);
+        }
+        Icon::Strikethrough => {
+            line(&[
+                (18., 5.),
+                (14., 3.),
+                (8., 4.),
+                (6., 7.),
+                (9., 10.),
+                (15., 13.),
+                (18., 16.),
+                (16., 20.),
+                (10., 21.),
+                (6., 19.),
+            ]);
+            line(&[(3., 12.), (21., 12.)]);
+        }
+        Icon::Code => {
+            line(&[(8., 6.), (3., 12.), (8., 18.)]);
+            line(&[(16., 6.), (21., 12.), (16., 18.)]);
+        }
+        Icon::Link => {
+            line(&[
+                (10., 7.),
+                (14., 3.),
+                (18., 3.),
+                (21., 6.),
+                (21., 10.),
+                (17., 14.),
+            ]);
+            line(&[
+                (14., 17.),
+                (10., 21.),
+                (6., 21.),
+                (3., 18.),
+                (3., 14.),
+                (7., 10.),
+            ]);
+            line(&[(8., 16.), (16., 8.)]);
+        }
+        Icon::List => {
+            for y in [6., 12., 18.] {
+                painter.circle_filled(p(3., y), rect.width() / 24., color);
+                line(&[(8., y), (21., y)]);
             }
         }
+        Icon::More => {
+            for y in [5., 12., 19.] {
+                painter.circle_filled(p(12., y), rect.width() * 1.4 / 24., color);
+            }
+        }
+        Icon::Markdown => {
+            for y in [5., 10., 15., 20.] {
+                line(&[(4., y), (20., y)]);
+            }
+        }
+        Icon::Split => {
+            for y in [5., 10., 15., 20.] {
+                line(&[(3., y), (9., y)]);
+            }
+            box_at((13., 3.), (22., 21.), 1);
+        }
+        Icon::SplitStacked => {
+            for y in [3., 7., 11.] {
+                line(&[(3., y), (21., y)]);
+            }
+            box_at((3., 15.), (21., 22.), 1);
+        }
         Icon::Preview => {
-            line(&[
-                (2., 12.),
-                (6., 7.),
-                (12., 5.),
-                (18., 7.),
-                (22., 12.),
-                (18., 17.),
-                (12., 19.),
-                (6., 17.),
-                (2., 12.),
-            ]);
-            painter.circle_stroke(p(12., 12.), rect.width() * 3. / 24., stroke);
+            box_at((3., 3.), (21., 21.), 2);
+            painter.circle_stroke(p(8., 8.), rect.width() * 2. / 24., stroke);
+            line(&[(4., 20.), (13., 11.), (20., 18.)]);
         }
         Icon::Book => {
             box_at((4., 3.), (20., 21.), 2);

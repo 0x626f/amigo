@@ -327,19 +327,59 @@ impl Amigo {
             SettingsPage::Journal => {
                 ui.heading("Journal");
                 ui.add_space(16.0);
-                amigo_ui::forms::field_label(ui, "Default Editor Mode");
-                ui.horizontal(|ui| {
-                    amigo_journal::mode_buttons(ui, &mut state.journal.mode, "journal-default-mode")
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Editor Font Size");
-                    ui.add(
-                        egui::DragValue::new(&mut state.journal.font_size)
-                            .range(11.0..=28.0)
-                            .suffix(" px"),
-                    );
-                });
-                design::checkbox(ui, &mut state.journal.word_wrap, "Wrap Long Lines");
+                egui::ScrollArea::vertical()
+                    .id_salt("journal-settings-fields")
+                    .max_height((design::dialog_body_height(ui.ctx()) - 70.).max(180.))
+                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                    .show(ui, |ui| {
+                        amigo_ui::forms::field_label(ui, "Default Editor Mode");
+                        ui.horizontal(|ui| {
+                            amigo_journal::mode_buttons_with_layout(
+                                ui,
+                                &mut state.journal.mode,
+                                "journal-default-mode",
+                                state.journal.preview_layout,
+                            )
+                        });
+                        egui::Grid::new("journal-font-sizes")
+                            .spacing([24., 12.])
+                            .show(ui, |ui| {
+                                ui.label("Editor Font Size");
+                                ui.add(
+                                    egui::DragValue::new(&mut state.journal.font_size)
+                                        .range(11.0..=28.0)
+                                        .suffix(" px"),
+                                );
+                                ui.end_row();
+                                ui.label("Preview Font Size");
+                                ui.add(
+                                    egui::DragValue::new(&mut state.journal.preview_font_size)
+                                        .range(11.0..=28.0)
+                                        .suffix(" px"),
+                                );
+                                ui.end_row();
+                            });
+                        ui.horizontal(|ui| {
+                            ui.label("Split Layout");
+                            ui.radio_value(
+                                &mut state.journal.preview_layout,
+                                amigo_core::journal::PreviewLayout::SideBySide,
+                                "Side by Side",
+                            );
+                            ui.radio_value(
+                                &mut state.journal.preview_layout,
+                                amigo_core::journal::PreviewLayout::Stacked,
+                                "Stacked",
+                            );
+                        });
+                        design::checkbox(
+                            ui,
+                            &mut state.journal.sync_scroll,
+                            "Synchronize Scrolling",
+                        );
+                        design::checkbox(ui, &mut state.journal.line_numbers, "Line Numbers");
+                        design::checkbox(ui, &mut state.journal.word_wrap, "Wrap Long Lines");
+                    });
                 return preferences_footer(ui);
             }
             SettingsPage::Updates => {

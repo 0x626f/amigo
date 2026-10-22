@@ -67,6 +67,7 @@ pub fn apply(text: &mut String, selection: Range<usize>, format: Format) -> Rang
             let mut lines = vec![];
             for (index, line) in text[a..b].split('\n').enumerate() {
                 let prefix = match format {
+                    Format::Heading(0) => String::new(),
                     Format::Heading(n) => format!("{} ", "#".repeat(n.clamp(1, 6) as usize)),
                     Format::Bullet => "- ".into(),
                     Format::Numbered => format!("{}. ", index + 1),

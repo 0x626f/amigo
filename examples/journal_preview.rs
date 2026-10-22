@@ -1,7 +1,7 @@
 //! Capture Journal and shared settings using an isolated synthetic library.
 use amigo::{Amigo, Section, SettingsPage};
 use amigo_core::{
-    journal::{Journal, Mode},
+    journal::{Document, Journal, Mode},
     library::{self, Library},
 };
 use eframe::{App, egui};
@@ -14,8 +14,9 @@ struct Preview {
     pending: bool,
     board: String,
     vault: String,
+    code_document: Document,
 }
-const SCENES: [&str; 9] = [
+const SCENES: [&str; 12] = [
     "journal-split",
     "journal-preview",
     "journal-source",
@@ -25,9 +26,81 @@ const SCENES: [&str; 9] = [
     "board-settings",
     "vault-settings",
     "journal-rename",
+    "journal-selection",
+    "journal-stacked",
+    "journal-code",
 ];
 impl App for Preview {
     fn raw_input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
+        if self.step == 9
+            && self.frames == 5
+            && let Some(response) = ctx.read_response(egui::Id::new(("journal-mode", Mode::Split)))
+        {
+            let pos = response.rect.center();
+            input.events.push(egui::Event::PointerMoved(pos));
+            for pressed in [true, false] {
+                input.events.push(egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+        }
+        if self.step == 9
+            && self.frames == 9
+            && let Some(editor) = self.app.journal.editor.as_ref()
+        {
+            let id = egui::Id::new(("journal-editor", &editor.document.path));
+            if let Some(mut state) = egui::TextEdit::load_state(ctx, id) {
+                let byte = editor.document.text.find("your ideas").unwrap();
+                let start = editor.document.text[..byte].chars().count();
+                state
+                    .cursor
+                    .set_char_range(Some(egui::text::CCursorRange::two(
+                        egui::text::CCursor::new(start),
+                        egui::text::CCursor::new(start + 10),
+                    )));
+                state.store(ctx, id);
+                ctx.memory_mut(|m| m.request_focus(id));
+            }
+        }
+        if self.step == 10 && [5, 6, 10, 11].contains(&self.frames) {
+            let id = if self.frames <= 6 {
+                "journal-view-options"
+            } else {
+                "journal-layout-stacked"
+            };
+            if let Some(response) = ctx.read_response(egui::Id::new(id)) {
+                let pos = response.rect.center();
+                input.events.push(egui::Event::PointerMoved(pos));
+                {
+                    let pressed = [5, 10].contains(&self.frames);
+                    input.events.push(egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    });
+                }
+            }
+        }
+        if self.step == 11
+            && self.frames == 5
+            && let Some(response) =
+                ctx.read_response(egui::Id::new(("journal-mode", Mode::Preview)))
+        {
+            let pos = response.rect.center();
+            input.events.push(egui::Event::PointerMoved(pos));
+            for pressed in [true, false] {
+                input.events.push(egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+        }
         if self.step == 8
             && [5, 7].contains(&self.frames)
             && let Some(response) = ctx.read_response(egui::Id::new("journal-note-title"))
@@ -88,6 +161,14 @@ impl App for Preview {
         }
         if self.frames == 0 {
             self.app.section = Section::Journal;
+            if self.step == 9
+                && let Some(editor) = self.app.journal.editor.as_ref()
+            {
+                self.app.journal.open(editor.document.clone());
+            }
+            if self.step == 11 {
+                self.app.journal.open(self.code_document.clone());
+            }
             let page = match self.step {
                 3 => Some(SettingsPage::Tasks),
                 4 => Some(SettingsPage::Updates),
@@ -134,6 +215,7 @@ fn main() -> eframe::Result {
         .create("Daily", "# Daily note\n\nA fresh page.\n")
         .unwrap();
     let document = journal.create("Welcome", text).unwrap();
+    let code_document = journal.create("Code", "# Code and tables\n\nReadable code blocks keep their language and a copy action.\n\n```rust\npub fn greeting(name: &str) -> String {\n    let message = \"Hello from Amigo\";\n    format!(\"{message}, {name}!\")\n}\n```\n\n## Planning together\n\n| Feature | State | Notes |\n| --- | --- | --- |\n| **Editor** | Ready | Syntax, line numbers, selection toolbar |\n| **Preview** | Ready | Clear headings and real bold text |\n\n> Plain Markdown, kept in your own notebook.\n").unwrap();
     let entries = journal.entries().unwrap();
     let board = library.settings.board.clone();
     let vault = library.settings.vault.clone();
@@ -165,6 +247,7 @@ fn main() -> eframe::Result {
                 pending: false,
                 board,
                 vault,
+                code_document,
             }))
         }),
     )
