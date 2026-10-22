@@ -489,6 +489,9 @@ impl JournalTab {
 }
 fn source(editor: &mut Editor, prefs: &Preferences, ui: &mut egui::Ui, width: f32, height: f32) {
     let id = egui::Id::new(("journal-editor", &editor.document.path));
+    if !ui.is_enabled() {
+        ui.memory_mut(|m| m.surrender_focus(id));
+    }
 
     if ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Secondary))
         && !editor.selection.is_empty()
@@ -524,7 +527,9 @@ fn source(editor: &mut Editor, prefs: &Preferences, ui: &mut egui::Ui, width: f3
                     ))
                 })
             };
+            let enabled = ui.is_enabled();
             let output = egui::TextEdit::multiline(&mut editor.document.text)
+                .interactive(enabled)
                 .id(id)
                 .code_editor()
                 .font(egui::FontId::monospace(prefs.font_size))
@@ -647,43 +652,39 @@ fn preview(editor: &mut Editor, ui: &mut egui::Ui, width: f32, height: f32) {
 }
 
 fn markdown_links(text: &str) -> (String, Vec<String>) {
-    let body = if let Some(rest) = text.strip_prefix("---\n") {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let body = if let Some(rest) = text.strip_prefix("---\r\n") {
+        rest.split_once("\r\n---\r\n")
+            .map_or(text, |(_, body)| body)
+    } else if let Some(rest) = text.strip_prefix("---\n") {
         rest.split_once("\n---\n").map_or(text, |(_, body)| body)
     } else {
         text
     };
+    // Parser offsets keep wiki syntax inside code spans and fenced/indented blocks literal.
+    let mut protected: Vec<_> = pulldown_cmark::Parser::new(body)
+        .into_offset_iter()
+        .filter_map(|(event, range)| {
+            matches!(
+                event,
+                pulldown_cmark::Event::Code(_)
+                    | pulldown_cmark::Event::Start(pulldown_cmark::Tag::CodeBlock(_))
+            )
+            .then_some(range)
+        })
+        .collect();
+    protected.sort_by_key(|range| range.start);
     let mut output = String::new();
-    let mut fence = false;
-    for line in body.lines() {
-        let marker = line.trim_start().starts_with("```") || line.trim_start().starts_with("~~~");
-        if marker {
-            fence = !fence;
-        }
-        if fence || marker || line.contains('`') {
-            output.push_str(line);
-            output.push('\n');
+    let mut cursor = 0;
+    for range in protected {
+        if range.start < cursor {
             continue;
         }
-        let mut rest = line;
-        while let Some(start) = rest.find("[[") {
-            output.push_str(&rest[..start]);
-            let Some(end) = rest[start + 2..].find("]]").map(|n| n + start + 2) else {
-                output.push_str(&rest[start..]);
-                rest = "";
-                break;
-            };
-            let content = &rest[start + 2..end];
-            let (target, label) = content.split_once('|').unwrap_or((content, content));
-            output.push_str(&format!(
-                "[{}](amigo-journal://{})",
-                label.replace('[', "\\[").replace(']', "\\]"),
-                encode_target(target)
-            ));
-            rest = &rest[end + 2..];
-        }
-        output.push_str(rest);
-        output.push('\n');
+        wiki_text(&body[cursor..range.start], &mut output);
+        output.push_str(&body[range.clone()]);
+        cursor = range.end;
     }
+    wiki_text(&body[cursor..], &mut output);
     let mut hooks = BTreeSet::new();
     for event in pulldown_cmark::Parser::new(&output) {
         if let pulldown_cmark::Event::Start(pulldown_cmark::Tag::Link { dest_url, .. }) = event {
@@ -695,6 +696,24 @@ fn markdown_links(text: &str) -> (String, Vec<String>) {
         }
     }
     (output, hooks.into_iter().collect())
+}
+fn wiki_text(mut rest: &str, output: &mut String) {
+    while let Some(start) = rest.find("[[") {
+        output.push_str(&rest[..start]);
+        let Some(end) = rest[start + 2..].find("]]").map(|n| n + start + 2) else {
+            output.push_str(&rest[start..]);
+            return;
+        };
+        let content = &rest[start + 2..end];
+        let (target, label) = content.split_once('|').unwrap_or((content, content));
+        output.push_str(&format!(
+            "[{}](amigo-journal://{})",
+            label.replace('[', "\\[").replace(']', "\\]"),
+            encode_target(target)
+        ));
+        rest = &rest[end + 2..];
+    }
+    output.push_str(rest);
 }
 fn encode_target(value: &str) -> String {
     value
@@ -842,6 +861,56 @@ mod tests {
         assert_eq!(app.tab.editor.as_ref().unwrap().document.text, "Hello 🌍");
     }
     #[test]
+    fn exclusive_load_blocks_edits_but_autosave_does_not() {
+        let ctx = egui::Context::default();
+        design::install(&ctx);
+        let mut app = Harness {
+            tab: JournalTab::default(),
+            prefs: Preferences {
+                mode: Mode::Source,
+                ..Default::default()
+            },
+        };
+        app.tab.open(Document {
+            path: "Note.md".into(),
+            text: "Original".into(),
+            fingerprint: "test".into(),
+        });
+        let size = egui::vec2(980., 640.);
+        let id = egui::Id::new(("journal-editor", "Note.md"));
+        for _ in 0..3 {
+            frame(&mut app, &ctx, vec![], size);
+        }
+        ctx.memory_mut(|m| m.request_focus(id));
+        app.tab.busy = true;
+        app.tab.loading = true;
+        frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::Text("Blocked".into())],
+            size,
+        );
+        assert_eq!(app.tab.editor.as_ref().unwrap().document.text, "Original");
+        app.tab.loading = false;
+        frame(&mut app, &ctx, vec![], size);
+        ctx.memory_mut(|m| m.request_focus(id));
+        frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::Text("Allowed".into())],
+            size,
+        );
+        assert!(
+            app.tab
+                .editor
+                .as_ref()
+                .unwrap()
+                .document
+                .text
+                .contains("Allowed")
+        );
+    }
+    #[test]
     fn every_mode_fits_both_window_sizes_and_cache_tracks_edits() {
         for size in [egui::vec2(680., 500.), egui::vec2(1160., 760.)] {
             let ctx = egui::Context::default();
@@ -869,6 +938,14 @@ mod tests {
         let (source, links) = markdown_links(
             "---\ntitle: Private\n---\n[[Folder/Note|My note]] [Other](Other%20Note.md)\n\n```md\n[[code]]\n```\n",
         );
+        let (inline, inline_links) =
+            markdown_links("`[[literal]]` and [[Real]]\n\n    [[indented]]\n");
+        assert!(inline.contains("`[[literal]]`"));
+        assert!(inline.contains("    [[indented]]"));
+        assert!(inline.contains("[Real](amigo-journal://Real)"));
+        assert_eq!(inline_links, vec!["amigo-journal://Real"]);
+        let (windows, _) = markdown_links("\u{feff}---\r\ntitle: Private\r\n---\r\n# Windows\r\n");
+        assert_eq!(windows, "# Windows\r\n");
         assert!(!source.contains("title: Private"));
         assert!(source.contains("[My note](amigo-journal://Folder/Note)"));
         assert!(source.contains("[[code]]"));

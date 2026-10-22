@@ -148,7 +148,7 @@ impl CalendarTab {
                     .show(|ui| {
                         ui.spacing_mut().item_spacing.y = 4.0;
                         let mut local = !self.hidden.contains("local");
-                        if calendar_name(ui, &mut local, "Personal").changed() {
+                        if calendar_name(ui, &mut local, &o.name).changed() {
                             self.toggle("local", local);
                         }
                         for c in o.calendars.iter().filter(|c| o.source_enabled(&c.account)) {

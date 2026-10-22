@@ -41,8 +41,10 @@ enum Outcome {
 }
 impl Updates {
     pub(super) fn installing(&self) -> bool {
+        self.pending_install || self.applying()
+    }
+    pub(super) fn applying(&self) -> bool {
         self.closing
-            || self.pending_install
             || self
                 .job
                 .as_ref()
@@ -111,6 +113,7 @@ impl Amigo {
         if self.updates.job.is_some() {
             return;
         }
+        self.updates.pending_install = false;
         if self
             .journal
             .editor
@@ -195,7 +198,10 @@ impl Amigo {
                 }
             }
         }
-        if self.updates.pending_install && !self.journal.busy && !self.journal.dirty() {
+        if self.updates.pending_install
+            && !self.journal.busy
+            && (!self.journal.dirty() || self.journal.editor.as_ref().is_some_and(|e| e.conflict))
+        {
             self.install_update(ctx);
         }
         if self.updates.enabled
@@ -218,6 +224,21 @@ impl Amigo {
         if self.updates.enabled {
             ctx.request_repaint_after(Duration::from_secs(5));
         }
+    }
+    pub(super) fn installation_ui(&self, ui: &mut egui::Ui) {
+        if let Some(id) = ui.memory(|m| m.focused()) {
+            ui.memory_mut(|m| m.surrender_focus(id));
+        }
+        egui::CentralPanel::default().show(ui, |ui| {
+            ui.centered_and_justified(|ui| {
+                ui.vertical_centered(|ui| {
+                    ui.spinner();
+                    ui.heading("Installing Update");
+                    ui.label(&self.updates.status);
+                    design::hint(ui, "Amigo will restart when installation finishes.");
+                });
+            });
+        });
     }
     pub(super) fn updates_ui(&mut self, ui: &mut egui::Ui) {
         ui.add_space(12.);
@@ -324,6 +345,27 @@ impl Amigo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn pending_install_returns_to_editor_when_a_journal_save_conflicts() {
+        let (mut app, ctx) = crate::app::tests::harness();
+        app.journal.open(amigo_core::journal::Document {
+            path: "Note.md".into(),
+            text: "Original".into(),
+            fingerprint: "test".into(),
+        });
+        let editor = app.journal.editor.as_mut().unwrap();
+        editor.document.text = "Unsaved".into();
+        editor.conflict = true;
+        app.updates.pending_install = true;
+        app.tick_updates(&ctx);
+        assert!(!app.updates.installing());
+        assert!(app.updates.error.contains("conflict"));
+        assert_eq!(
+            app.journal.editor.as_ref().unwrap().document.text,
+            "Unsaved"
+        );
+        std::fs::remove_dir_all(app.data_path).unwrap();
+    }
     #[test]
     fn update_notice_opens_the_single_settings_window() {
         let (mut app, ctx) = crate::app::tests::harness();

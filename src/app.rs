@@ -378,6 +378,11 @@ impl Amigo {
         self.tick_journal(&ctx);
         self.journal_close_request(&ctx);
         self.tick_updates(&ctx);
+        if self.updates.applying() {
+            self.installation_ui(ui);
+            ctx.request_repaint_after(Duration::from_millis(100));
+            return;
+        }
         self.poll_vault_job();
         self.poll_autosave();
         self.finance.poll_rates(&mut self.workspace.finance);

@@ -176,7 +176,12 @@ fn launch(command: &mut Command) -> Result<(), String> {
         .map_err(|e| format!("Cannot start update helper: {e}"))
 }
 fn native_install(program: &str, package: &Path) -> Result<(), String> {
-    let output=Command::new("pkexec").arg(program).args(["-y","install"]).arg(package).output().map_err(|e|format!("Cannot start the system package installer: {e}. Install polkit and its desktop authentication agent."))?;
+    let output = Command::new("pkexec")
+        .arg(program)
+        .args(["-y", "install"])
+        .arg(package)
+        .output()
+        .map_err(|e| format!("Cannot start the system package installer: {e}. Install polkit and its desktop authentication agent."))?;
     if output.status.success() {
         Ok(())
     } else {

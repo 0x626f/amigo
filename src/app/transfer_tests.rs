@@ -299,3 +299,44 @@ fn toolbar_actions_route_to_the_correct_transfer_dialog_and_theme_stays_at_botto
         }
     }
 }
+
+#[test]
+fn locked_vault_keeps_data_actions_and_rename_accessible_at_both_sizes() {
+    for size in [egui::vec2(980., 640.), egui::vec2(1440., 900.)] {
+        let (mut app, ctx) = harness();
+        app.section = Section::Finance;
+        app.vault_unlocked = false;
+        settle(&mut app, &ctx, size);
+        for key in ["import", "export", "delete", "rename", "security"] {
+            let rect = ctx
+                .read_response(egui::Id::new(format!("vault-{key}")))
+                .unwrap()
+                .rect;
+            assert!(rect.left() > 200. && rect.right() < size.x && rect.top() >= 0.);
+        }
+        let rect = ctx
+            .read_response(egui::Id::new("vault-rename"))
+            .unwrap()
+            .rect;
+        for pressed in [true, false] {
+            render_sized(
+                &mut app,
+                &ctx,
+                vec![
+                    egui::Event::PointerMoved(rect.center()),
+                    egui::Event::PointerButton {
+                        pos: rect.center(),
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+                size,
+            );
+        }
+        let output = settle(&mut app, &ctx, size);
+        assert!(text_rect_optional(&output, "Rename Vault").is_some());
+        assert!(!app.vault_unlocked);
+        std::fs::remove_dir_all(app.data_path).unwrap();
+    }
+}

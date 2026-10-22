@@ -1,6 +1,6 @@
 ---
 name: amigo-architecture
-description: "Organize changes in Amigo’s Rust workspace across its desktop shell, Tasks and Finance tab crates, shared UI, and core model/storage. Use for Amigo refactors, new record types, persistence changes, or deciding where functionality belongs."
+description: "Organize changes in Amigo’s Rust workspace across its desktop shell, Tasks, Calendar, Finance, and Journal tab crates, shared UI, and core model/storage. Use for Amigo refactors, new record types, persistence changes, or deciding where functionality belongs."
 ---
 
 # Amigo code organization
@@ -32,10 +32,11 @@ Resolve any skill-directory symlink first. The repository root is two directorie
 ## Dependency direction
 
 ```text
-amigo (shell) -> amigo-tasks, amigo-calendar, amigo-finance, amigo-connect, amigo-ui, amigo-core
+amigo (shell) -> amigo-tasks, amigo-calendar, amigo-finance, amigo-journal, amigo-connect, amigo-ui, amigo-core
 amigo-tasks   -> amigo-ui, amigo-core
 amigo-finance -> amigo-ui, amigo-core
 amigo-calendar -> amigo-ui, amigo-core
+amigo-journal -> amigo-ui, amigo-core
 amigo-connect -> amigo-core
 ```
 

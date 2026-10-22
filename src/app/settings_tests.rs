@@ -163,3 +163,39 @@ fn navigating_settings_retains_board_drafts_and_cancel_preserves_saved_data() {
     app.close_settings();
     std::fs::remove_dir_all(app.data_path).unwrap();
 }
+#[test]
+fn stashed_vault_save_does_not_revert_the_shared_finance_refresh_interval() {
+    let (mut app, ctx) = harness();
+    let size = egui::vec2(980., 640.);
+    let vault = app.library.settings.vault.clone();
+    app.open_settings(SettingsPage::Vault(vault.clone()));
+    settle(&mut app, &ctx, size);
+    app.open_settings(SettingsPage::Finance);
+    app.app_settings.as_mut().unwrap().exchange_interval = 317;
+    let output = settle(&mut app, &ctx, size);
+    click(
+        &mut app,
+        &ctx,
+        size,
+        text_rect(&output, "Save Settings").center(),
+    );
+    assert_eq!(
+        app.library.settings.sync.exchange_rate_interval_seconds,
+        317
+    );
+    app.open_settings(SettingsPage::Vault(vault));
+    let output = settle(&mut app, &ctx, size);
+    click(
+        &mut app,
+        &ctx,
+        size,
+        text_rect(&output, "Save Settings").center(),
+    );
+    assert_eq!(
+        app.library.settings.sync.exchange_rate_interval_seconds,
+        317
+    );
+    assert_eq!(app.finance.exchange_interval_seconds, 317);
+    app.close_settings();
+    std::fs::remove_dir_all(app.data_path).unwrap();
+}

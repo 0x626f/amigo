@@ -510,14 +510,14 @@ The desktop shell composes four independent tab crates. Tabs own their UI state,
 | `amigo-finance` · `crates/finance/` | Finance subviews, record editing, validation, reference management, and background FX refresh |
 | `amigo-journal` · `crates/journal/` | Markdown editor, formatting, folder tree, search UI, and cached preview |
 | `amigo-calendar` · `crates/calendar/` | Calendar views, personal scheduling, repeat editing, and reminder settings |
-| `amigo-connect` · `crates/connect/` | Calendar URL downloads/iCalendar parsing and Telegram transport; no GUI |
+| `amigo-connect` · `crates/connect/` | Calendar URL downloads/iCalendar parsing, Telegram transport, and verified GitHub release downloads; no GUI |
 | `amigo-ui` · `crates/ui/` | Themes, typography, bundled fonts, icons, cards, and reusable form controls |
 | `amigo-core` · `crates/core/` | Shared data model, calculations, folder storage, migrations, and vault encryption |
-| `examples/preview.rs`, `examples/organizer_preview.rs` | Synthetic native previews through the same public shell and tab APIs |
+| `examples/preview.rs`, `examples/organizer_preview.rs`, `examples/journal_preview.rs` | Synthetic native previews through the same public shell and tab APIs |
 
-Tasks separates its board, editor, and settings into modules. Finance separates its dashboard, records, reference views, inline editing and validation, and rates into modules. Data formats and the `~/.amigo` directory remain unchanged by this code refactor.
+Tasks separates its board, editor, and settings into modules. Finance separates its dashboard, records, reference views, inline editing and validation, and rates into modules. Journal adds ordinary Markdown files under `journal/`. Existing library files remain compatible; new preferences and Calendar names have backward-compatible defaults.
 
-Dependencies flow from the shell to the tab crates and shared crates. All tab crates use `amigo-core` and `amigo-ui`; the shell also owns calendar subscription and notification jobs using `amigo-connect`; the shared crates do not depend on the tabs. Workspace dependency versions are declared once in the root `Cargo.toml`.
+Dependencies flow from the shell to the tab crates and shared crates. All tab crates use `amigo-core` and `amigo-ui`; the shell also owns subscription, notification, and update jobs using `amigo-connect`; the shared crates do not depend on the tabs. Workspace dependency versions are declared once in the root `Cargo.toml`.
 
 Run all tests with `cargo test --workspace --offline`, or work on one tab with `cargo test -p amigo-tasks --offline` or `cargo test -p amigo-finance --offline`. Each crate owns its unit tests; the shell keeps cross-tab persistence, appearance, and vault access tests. The independent Web Crypto fixture is in `crates/core/tests/webcrypto-interop.mjs`.
 

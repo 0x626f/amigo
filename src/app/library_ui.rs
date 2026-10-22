@@ -302,18 +302,68 @@ impl Amigo {
     }
     pub(super) fn locked_vault_ui(&mut self, ui: &mut egui::Ui) {
         let vault = self.current_vault().cloned();
+        let mut action = None;
+        let mut unlock = false;
         panel(ui).show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.label(
-                RichText::new(
-                    vault
-                        .as_ref()
-                        .map(|v| v.entry.name.as_str())
-                        .unwrap_or("Finance vaults"),
-                )
-                .size(30.0)
-                .strong(),
-            );
+            ui.horizontal(|ui| {
+                let width = (ui.available_width() - 215.).max(80.);
+                ui.add_sized(
+                    [width, 38.],
+                    egui::Label::new(
+                        RichText::new(
+                            vault
+                                .as_ref()
+                                .map_or("Finance vaults", |v| v.entry.name.as_str()),
+                        )
+                        .size(30.)
+                        .strong(),
+                    )
+                    .truncate(),
+                );
+                if vault.is_some() {
+                    for (key, icon, label, candidate) in [
+                        (
+                            "import",
+                            Icon::Import,
+                            "Import Vault",
+                            Some(VaultAction::ImportVault),
+                        ),
+                        (
+                            "export",
+                            Icon::Export,
+                            "Export Vault",
+                            Some(VaultAction::ExportVault),
+                        ),
+                        (
+                            "delete",
+                            Icon::Trash,
+                            "Delete Vault",
+                            Some(VaultAction::DeleteVault),
+                        ),
+                        (
+                            "rename",
+                            Icon::Edit,
+                            "Rename Vault",
+                            Some(VaultAction::RenameVaultRequested),
+                        ),
+                        ("security", Icon::Lock, "Unlock Vault", None),
+                    ] {
+                        if design::icon_button(
+                            ui,
+                            egui::Id::new(format!("vault-{key}")),
+                            icon,
+                            label,
+                            32.,
+                        )
+                        .clicked()
+                        {
+                            unlock = candidate.is_none();
+                            action = candidate;
+                        }
+                    }
+                }
+            });
             if let Some(vault) = vault {
                 hint(
                     ui,
@@ -323,7 +373,7 @@ impl Amigo {
                         "This vault could not be opened. Its files have been preserved."
                     },
                 );
-                if primary(
+                let requested = primary(
                     ui,
                     if vault.encrypted {
                         "Unlock Vault"
@@ -332,14 +382,17 @@ impl Amigo {
                     },
                 )
                 .clicked()
-                    && let Err(error) = self.switch_vault(vault)
-                {
+                    || unlock;
+                if requested && let Err(error) = self.switch_vault(vault) {
                     self.error = error;
                 }
             } else {
                 hint(ui, "Create a vault to start tracking your finances.");
             }
         });
+        if let Some(action) = action {
+            self.handle_vault_action(action);
+        }
     }
     pub(super) fn retry_library(&mut self) {
         let updates = std::mem::take(&mut self.updates);
