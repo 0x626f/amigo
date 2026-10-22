@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Amigo
+Comment=Personal task boards and finance vaults
+Exec=amigo
+Icon=amigo
+Terminal=false
+Categories=Office;Finance;ProjectManagement;
+Keywords=Tasks;Kanban;Finance;
+StartupNotify=true
+StartupWMClass=amigo

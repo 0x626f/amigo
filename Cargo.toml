@@ -1,0 +1,57 @@
+[workspace]
+members = [".", "crates/core", "crates/ui", "crates/tasks", "crates/finance", "crates/calendar", "crates/connect"]
+default-members = [".", "crates/core", "crates/ui", "crates/tasks", "crates/finance", "crates/calendar", "crates/connect"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+
+[workspace.dependencies]
+# Native hyperlinks need `links` when eframe defaults are disabled.
+eframe = { version = "0.36.2", default-features = false, features = ["default_fonts", "glow", "links", "x11", "wayland"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+aes-gcm = "0.10"
+pbkdf2 = "0.12"
+sha2 = "0.10"
+base64 = "0.22"
+rand = "0.8"
+zeroize = "1.9"
+egui = "0.36.2"
+amigo-core = { path = "crates/core" }
+amigo-ui = { path = "crates/ui" }
+amigo-tasks = { path = "crates/tasks" }
+amigo-finance = { path = "crates/finance" }
+amigo-calendar = { path = "crates/calendar" }
+amigo-connect = { path = "crates/connect" }
+
+[package]
+name = "amigo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+amigo-core.workspace = true
+amigo-ui.workspace = true
+amigo-tasks.workspace = true
+amigo-finance.workspace = true
+amigo-calendar.workspace = true
+amigo-connect.workspace = true
+eframe.workspace = true
+chrono.workspace = true
+zeroize.workspace = true
+rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal"] }
+
+[dev-dependencies]
+serde_json.workspace = true
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+# Keep application debugging while avoiding expensive unoptimized glyph rendering.
+[profile.dev.package."*"]
+opt-level = 2

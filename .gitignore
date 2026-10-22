@@ -1,0 +1,50 @@
+# Rust build, distribution, and coverage output.
+# Cargo.lock is committed for reproducible application builds.
+target/
+/dist/
+/coverage/
+*.rs.bk
+*.profraw
+*.profdata
+
+# Python helper caches and local virtual environments.
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Local editor settings and temporary files.
+# Shared JetBrains run configurations in .run/ stay versioned.
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.tmp
+*.log
+
+# Operating-system metadata.
+.DS_Store
+._*
+Thumbs.db
+Desktop.ini
+
+# Local environment configuration; example files stay versioned.
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Personal Amigo libraries, credentials, and exported backups.
+.amigo/
+.clerk/
+*.library/
+*.amigo
+credentials.key
+credentials.enc
+/workspace.json
+/amigo-backup.json
+/clerk-backup.json
+/finscreen-*.json

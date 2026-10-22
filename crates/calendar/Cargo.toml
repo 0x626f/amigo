@@ -1,0 +1,11 @@
+[package]
+name = "amigo-calendar"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+amigo-core.workspace = true
+amigo-ui.workspace = true
+egui.workspace = true
+chrono.workspace = true

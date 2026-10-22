@@ -1,0 +1,167 @@
+use super::*;
+
+pub(crate) struct CategorySettings {
+    pub view: FinanceView,
+    pub categories: Vec<StoredValue>,
+    error: String,
+}
+impl CategorySettings {
+    pub fn new(view: FinanceView, plan: &FinancePlan) -> Self {
+        Self {
+            view,
+            categories: if view == FinanceView::Savings {
+                plan.savings_categories.clone()
+            } else {
+                plan.categories.clone()
+            },
+            error: String::new(),
+        }
+    }
+}
+
+fn validate(
+    draft: &CategorySettings,
+    state: &FinanceTab,
+    plan: &FinancePlan,
+) -> Result<(), String> {
+    let mut names = std::collections::BTreeSet::new();
+    for category in &draft.categories {
+        if category.name.trim().is_empty() {
+            return Err("Every category needs a name.".into());
+        }
+        if !names.insert(category.name.trim().to_lowercase()) {
+            return Err("Category names must be unique.".into());
+        }
+    }
+    let retained = |id: &str| id.is_empty() || draft.categories.iter().any(|c| c.id == id);
+    let used = if draft.view == FinanceView::Savings {
+        plan.savings.iter().any(|r| !retained(&r.category_id))
+    } else {
+        plan.expenses.iter().any(|r| !retained(&r.category_id))
+    };
+    let pending = state.drafts.values().any(|d| match &d.record {
+        Record::Expense(r) if draft.view == FinanceView::Expenses => !retained(&r.category_id),
+        Record::Saving(r) if draft.view == FinanceView::Savings => !retained(&r.category_id),
+        _ => false,
+    });
+    if used || pending {
+        return Err(
+            "A removed category is in use. Reassign its records before removing it.".into(),
+        );
+    }
+    Ok(())
+}
+
+pub(crate) fn dialog(state: &mut FinanceTab, plan: &mut FinancePlan, ctx: &egui::Context) {
+    if state.settings.is_some() {
+        return;
+    }
+    let Some(mut draft) = state.category_settings.take() else {
+        return;
+    };
+    let keys = design::ActionKeys::capture(ctx);
+    let mut save = false;
+    let mut cancel = false;
+    let mut vault_settings = false;
+    let modal = design::modal(ctx, egui::Id::new("finance-category-settings")).show(ctx, |ui| {
+        ui.set_width(design::dialog_width(ctx, 600.0));
+        cancel = design::settings_heading(ui, &format!("{} Settings", draft.view.name())).clicked();
+        field_label(ui, "Categories");
+        egui::ScrollArea::vertical()
+            .max_height(design::dialog_body_height(ctx))
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+            .show(ui, |ui| {
+                let mut remove = None;
+                for category in &mut draft.categories {
+                    ui.push_id(&category.id, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.add(
+                                design::input(&mut category.name)
+                                    .desired_width((ui.available_width() - 42.0).max(100.0))
+                                    .hint_text("Category Name"),
+                            );
+                            if design::icon_button(
+                                ui,
+                                ui.id().with("remove"),
+                                Icon::Trash,
+                                "Remove Category",
+                                30.0,
+                            )
+                            .clicked()
+                            {
+                                remove = Some(category.id.clone());
+                            }
+                        });
+                    });
+                    ui.add_space(10.0);
+                }
+                if let Some(id) = remove {
+                    draft.categories.retain(|c| c.id != id);
+                }
+                if design::button(ui, "+ Category").clicked() {
+                    draft.categories.push(StoredValue {
+                        id: id(),
+                        name: String::new(),
+                    });
+                }
+            });
+        if !draft.error.is_empty() {
+            ui.colored_label(colors(ui).red, &draft.error);
+        }
+        design::dialog_footer(ui, |ui| {
+            ui.horizontal(|ui| {
+                vault_settings = design::button(ui, "Vault Settings…").clicked();
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    save = design::dialog_primary(ui, "Save Settings").clicked();
+                    cancel |= design::button(ui, "Cancel").clicked();
+                });
+            });
+        });
+    });
+    let action = keys.dialog(&modal, true);
+    save |= action.confirm;
+    cancel |= action.cancel;
+    if cancel {
+        return;
+    }
+    if vault_settings {
+        state.category_settings = Some(draft);
+        state.configure_vault(plan);
+        return;
+    }
+    if save {
+        match validate(&draft, state, plan) {
+            Ok(()) => {
+                for category in &mut draft.categories {
+                    category.name = category.name.trim().into();
+                }
+                // Pending rows follow renames by their stable category IDs too.
+                for editor in state.drafts.values_mut() {
+                    let fields = match &mut editor.record {
+                        Record::Expense(r) if draft.view == FinanceView::Expenses => {
+                            Some((&mut r.category, &r.category_id))
+                        }
+                        Record::Saving(r) if draft.view == FinanceView::Savings => {
+                            Some((&mut r.category, &r.category_id))
+                        }
+                        _ => None,
+                    };
+                    if let Some((name, id)) = fields
+                        && let Some(c) = draft.categories.iter().find(|c| c.id == *id)
+                    {
+                        *name = c.name.clone();
+                    }
+                }
+                if draft.view == FinanceView::Savings {
+                    plan.savings_categories = draft.categories;
+                } else {
+                    plan.categories = draft.categories;
+                }
+                plan.normalize();
+                return;
+            }
+            Err(error) => draft.error = error,
+        }
+    }
+    state.category_settings = Some(draft);
+}

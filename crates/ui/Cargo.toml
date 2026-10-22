@@ -1,0 +1,9 @@
+[package]
+name = "amigo-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+egui.workspace = true
+chrono.workspace = true

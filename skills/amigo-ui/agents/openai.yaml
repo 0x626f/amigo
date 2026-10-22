@@ -1,0 +1,3 @@
+interface:
+  display_name: "Amigo UI Elements"
+  short_description: "Create native Amigo controls, dialogs, and tables"

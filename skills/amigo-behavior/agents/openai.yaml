@@ -1,0 +1,3 @@
+interface:
+  display_name: "Amigo Shared Behavior"
+  short_description: "Keep Amigo keyboard, editing, and storage consistent"

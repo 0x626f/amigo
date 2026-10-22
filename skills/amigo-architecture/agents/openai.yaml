@@ -1,0 +1,3 @@
+interface:
+  display_name: "Amigo Code Organization"
+  short_description: "Place Amigo changes in the right crates and modules"

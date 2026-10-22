@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" fill="none">
+  <title>Amigo</title>
+  <desc>A geometric lowercase a on a flat cobalt tile.</desc>
+  <rect width="256" height="256" rx="58" fill="#2463EB"/>
+  <circle cx="128" cy="128" r="50" stroke="#FFFFFF" stroke-width="24"/>
+  <path d="M178 78V178" stroke="#FFFFFF" stroke-width="24" stroke-linecap="round"/>
+</svg>

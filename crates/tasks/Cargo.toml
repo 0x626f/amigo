@@ -1,0 +1,12 @@
+[package]
+name = "amigo-tasks"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+amigo-core.workspace = true
+amigo-ui.workspace = true
+egui.workspace = true
+chrono.workspace = true
+rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal"] }
