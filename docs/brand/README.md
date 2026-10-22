@@ -17,6 +17,10 @@ Keep the icon square, retain its transparent corners, and leave space around the
 
 The app uses `packaging/amigo.png` (256px) for its native window and cached sidebar texture.
 Linux packages install both `packaging/amigo.svg` and `packaging/amigo.png`.
+Windows ZIPs and installers include [amigo.ico](../../packaging/amigo.ico), and
+macOS app bundles include [amigo.icns](../../packaging/amigo.icns). These containers
+use the same 256px PNG, with the 1024px PNG also included in the macOS icon.
+Update the platform icon containers when changing the PNG artwork.
 After editing `amigo-icon.svg`, update those copies with ImageMagick:
 
 ```sh

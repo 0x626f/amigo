@@ -18,10 +18,24 @@ use serde_json::json;
 #[cfg(test)]
 use sha2::Sha256;
 use std::{
+    ffi::OsString,
     fs,
     io::Write,
     path::{Path, PathBuf},
 };
+
+/// Preserve HOME overrides while supporting native Windows user environments.
+pub(crate) fn user_home(get: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    let value = |key| get(key).filter(|value| !value.is_empty());
+    value("HOME")
+        .or_else(|| value("USERPROFILE"))
+        .or_else(|| {
+            let mut drive = value("HOMEDRIVE")?;
+            drive.push(value("HOMEPATH")?);
+            Some(drive)
+        })
+        .map(PathBuf::from)
+}
 
 pub fn default_path() -> PathBuf {
     if let Some(path) =
@@ -31,7 +45,7 @@ pub fn default_path() -> PathBuf {
     }
     let root = std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|p| PathBuf::from(p).join(".local/share")))
+        .or_else(|| user_home(|key| std::env::var_os(key)).map(|p| p.join(".local/share")))
         .unwrap_or_else(|| PathBuf::from("."));
     let current = root.join("amigo/workspace.json");
     let previous = root.join("clerk/workspace.json");
@@ -61,6 +75,7 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
         file.write_all(bytes)
             .and_then(|_| file.sync_all())
             .map_err(|e| e.to_string())?;
+        drop(file);
         fs::rename(&temporary, path).map_err(|e| format!("Cannot save {}: {e}", path.display()))?;
         Ok(())
     })();

@@ -76,7 +76,7 @@ dependencies = [
 
 [[package]]
 name = "amigo"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "amigo-calendar",
  "amigo-connect",
@@ -94,7 +94,7 @@ dependencies = [
 
 [[package]]
 name = "amigo-calendar"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "amigo-core",
  "amigo-ui",
@@ -104,7 +104,7 @@ dependencies = [
 
 [[package]]
 name = "amigo-connect"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "amigo-core",
  "chrono",
@@ -118,7 +118,7 @@ dependencies = [
 
 [[package]]
 name = "amigo-core"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",
@@ -134,7 +134,7 @@ dependencies = [
 
 [[package]]
 name = "amigo-finance"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "amigo-core",
  "amigo-ui",
@@ -146,7 +146,7 @@ dependencies = [
 
 [[package]]
 name = "amigo-tasks"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "amigo-core",
  "amigo-ui",
@@ -157,7 +157,7 @@ dependencies = [
 
 [[package]]
 name = "amigo-ui"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "chrono",
  "egui",

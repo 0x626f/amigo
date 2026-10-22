@@ -1,7 +1,7 @@
 Name: amigo
 Version: @VERSION@
 Release: 1
-Summary: Personal task boards and finance vaults
+Summary: Personal tasks, calendars, and finances
 License: @LICENSE@
 Requires: libX11, libXcursor, libXi, libXrandr, libxkbcommon, libxkbcommon-x11
 Requires: wayland-libs, libglvnd-glx, libglvnd-egl
@@ -12,7 +12,7 @@ Requires: dbus-libs, xdg-utils, xdg-desktop-portal
 %global _build_id_links none
 
 %description
-Amigo is a native desktop workspace for personal Kanban boards and finance vaults.
+Amigo is a native desktop workspace for personal Kanban boards, calendars, and finance vaults.
 
 %install
 mkdir -p %{buildroot}
@@ -30,3 +30,5 @@ cp -a %{_sourcedir}/root/. %{buildroot}/
 %doc /usr/share/doc/amigo/reference-data.md
 %doc /usr/share/doc/amigo/countries.tsv
 %license /usr/share/doc/amigo/COUNTRY-DATA-LICENSE
+%license /usr/share/doc/amigo/UNICODE-LICENSE.txt
+%doc /usr/share/doc/amigo/unicode-data.md

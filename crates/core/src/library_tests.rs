@@ -464,6 +464,22 @@ fn amigo_library_paths_support_legacy_overrides_without_changing_the_environment
         PathBuf::from("/home/example/.amigo")
     );
     assert_eq!(
+        resolve(&[("USERPROFILE", r"C:\Users\Example")]),
+        PathBuf::from(r"C:\Users\Example").join(".amigo")
+    );
+    assert_eq!(
+        resolve(&[("HOME", ""), ("USERPROFILE", r"C:\Users\Example")]),
+        PathBuf::from(r"C:\Users\Example").join(".amigo")
+    );
+    assert_eq!(
+        resolve(&[("HOMEDRIVE", "D:"), ("HOMEPATH", r"\Users\Example")]),
+        PathBuf::from(r"D:\Users\Example").join(".amigo")
+    );
+    assert_eq!(
+        resolve(&[("HOME", "/existing"), ("USERPROFILE", "/other")]),
+        PathBuf::from("/existing").join(".amigo")
+    );
+    assert_eq!(
         resolve(&[("CLERK_HOME", "/old-custom")]),
         PathBuf::from("/old-custom")
     );
@@ -486,6 +502,37 @@ fn amigo_library_paths_support_legacy_overrides_without_changing_the_environment
         ]),
         PathBuf::from("/new-custom")
     );
+}
+
+#[test]
+fn windows_line_endings_preserve_tasks_and_plain_vault_records() {
+    let temp = Temp::new();
+    let mut library = Library::open(temp.0.clone(), None).unwrap();
+    let workspace = fixture();
+    let board = library.create_board("Windows edits", &workspace).unwrap();
+    let vault = library
+        .create_vault("Windows finance", &workspace.finance, None)
+        .unwrap();
+    for file in all_files(&temp.0) {
+        if file.extension().is_some_and(|extension| extension == "md") {
+            let text = fs::read_to_string(&file).unwrap();
+            fs::write(&file, text.replace('\n', "\r\n")).unwrap();
+        }
+    }
+    assert_eq!(
+        library.load_board(&board.id).unwrap().tasks,
+        workspace.tasks
+    );
+    assert_eq!(library.load_plain_vault(&vault).unwrap(), workspace.finance);
+    library.save_board(&board.id, &workspace).unwrap();
+    library
+        .save_vault(&vault, &workspace.finance, None)
+        .unwrap();
+    assert_eq!(
+        library.load_board(&board.id).unwrap().tasks,
+        workspace.tasks
+    );
+    assert_eq!(library.load_plain_vault(&vault).unwrap(), workspace.finance);
 }
 
 #[test]

@@ -1,77 +1,92 @@
-# Run `just` to list recipes. Linux packaging prerequisites are in README.md.
-set shell := ["bash", "-eo", "pipefail", "-c"]
+# Python handles arguments directly on every OS; no Bash or PowerShell is needed.
+set shell := ["python3", "-B", "scripts/dev.py", "--just"]
+set windows-shell := ["python", "-B", "scripts/dev.py", "--just"]
 set positional-arguments
 
 # Show available recipes.
 default:
-    @just --list
+    @list
 
-# Run the desktop application; optional arguments are passed to Amigo.
+# Run the desktop application; arguments are passed to Amigo.
 run *args:
-    cargo run --locked --package amigo -- "$@"
+    @run
 
 # Run the optimized application.
 run-release *args:
-    cargo run --locked --release --package amigo -- "$@"
+    @run-release
 
-# Build the optimized native Linux binary used by the packaging recipes.
+# Build the optimized executable for the current operating system.
 build:
-    cargo build --locked --release --package amigo --target-dir target
+    @build
 
-# Run all workspace tests; accepts extra cargo test arguments.
+# Run workspace tests; accepts extra cargo test arguments.
 test *args:
-    cargo test --locked --workspace "$@"
+    @test
 
-# Run optional tests that require Node.js and network access.
+# Run optional tests requiring Node.js or network access.
 test-optional:
-    cargo test --locked --workspace -- --ignored
+    @test-optional
 
 # Format the Rust workspace.
 fmt:
-    cargo fmt --all
+    @fmt
 
-# Check formatting without changing files.
+# Check Rust formatting.
 fmt-check:
-    cargo fmt --all --check
+    @fmt-check
 
 # Check every crate and target for warnings.
 lint:
-    cargo clippy --locked --workspace --all-targets -- -D warnings
+    @lint
 
-# Test the distribution and release preparation helpers without external services.
+# Test build, packaging, and release helpers without external services.
 test-recipes:
-    python3 -B -m unittest discover -s scripts -p 'test_*.py'
+    @test-recipes
 
-# Run the checks used before preparing a release.
-check: fmt-check lint test test-recipes
+# Run formatting, Clippy, workspace tests, and helper tests.
+check:
+    @check
 
-# Check tools and metadata for all formats, or just rpm, deb, or appimage.
+# Check native package tools and metadata, or one specific format.
 dist-check format="all":
-    python3 -B scripts/distribute.py preflight "$1"
+    @dist-check
 
-[private]
-_preflight format:
-    @python3 -B scripts/distribute.py preflight "$1"
+# Build a native Linux RPM.
+package-rpm:
+    @package-rpm
 
-# Create an RPM in dist/<version>/<architecture>/.
-package-rpm: (_preflight "rpm") build
-    python3 -B scripts/distribute.py rpm
+# Build a native Linux DEB.
+package-deb:
+    @package-deb
 
-# Create a DEB in dist/<version>/<architecture>/.
-package-deb: (_preflight "deb") build
-    python3 -B scripts/distribute.py deb
+# Build a native Linux AppImage.
+package-appimage:
+    @package-appimage
 
-# Create an AppImage using linuxdeploy and its AppImage output plugin.
-package-appimage: (_preflight "appimage") build
-    python3 -B scripts/distribute.py appimage
+# Build a native macOS .app inside a ZIP archive.
+package-macos:
+    @package-macos
 
-# Build RPM, DEB, and AppImage packages for the current Linux architecture.
-dist: (_preflight "all") package-rpm package-deb package-appimage
+# Build a native macOS drag-to-install DMG.
+package-dmg:
+    @package-dmg
 
-# Check, build all packages, and write checksums, provenance, and editable notes locally.
-release-prepare: check dist
-    python3 -B scripts/distribute.py prepare
+# Build a native Windows portable ZIP.
+package-windows:
+    @package-windows
 
-# Upload prepared assets as a GitHub DRAFT for an already pushed tag (e.g. v0.1.0).
+# Build a native Windows per-user installer using Inno Setup.
+package-installer:
+    @package-installer
+
+# Build all package formats for the current OS and architecture.
+dist:
+    @dist
+
+# Check, package, and write checksums, source information, and editable notes.
+release-prepare:
+    @release-prepare
+
+# Upload assets to an unpublished GitHub draft for an already pushed tag.
 release-draft tag:
-    python3 -B scripts/distribute.py draft "$1"
+    @release-draft

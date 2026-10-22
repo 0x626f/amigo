@@ -14,15 +14,15 @@ Telegram reminders, and exchange-rate refreshes use network services when config
 Amigo was formerly named Clerk; the Finance area preserves the Finscreen v2 JSON
 model and calculation rules.
 
-**License:** [GPL-3.0-or-later](LICENSE). **Supported builds:** Linux, with Wayland and X11 enabled.
+**License:** [GPL-3.0-or-later](LICENSE). **Build targets:** Linux, macOS, and Windows (x86_64 and ARM64).
 
 [Run](#run) · [Build and package](#distribution-recipes) · [Tasks](#tasks) ·
 [Calendar](#calendar) · [Finance](#finance) · [Backups](#import-export-and-deletion) ·
 [Storage](#user-folder-storage) · [Development](#development) · [License](#license)
 
-The [brand assets](docs/brand/README.md) include scalable logos, light/dark wordmarks, and a high-resolution app icon. The same icon appears in the sidebar, native window, and Linux packages.
+The [brand assets](docs/brand/README.md) include scalable logos, light/dark wordmarks, and a high-resolution app icon. The same artwork is included in the sidebar, native window, and platform packages.
 
-The UI uses [egui and eframe](https://github.com/emilk/egui) 0.36: immediate-mode Rust widgets, with no JavaScript frontend or web server. The app has been built and run on Linux, with Wayland and X11 enabled.
+The UI uses [egui and eframe](https://github.com/emilk/egui) 0.36: immediate-mode Rust widgets, with no JavaScript frontend or web server. Linux supports Wayland and X11. The [native CI workflow](.github/workflows/ci.yml) defines builds, tests, and packages for all three operating systems on x86_64 and ARM64. Native macOS/Windows execution still needs verification on those runners and desktop systems.
 
 [Dark Tasks preview](docs/tasks-dark.png) · [Dark Finance preview](docs/finance-dark.png)
 
@@ -31,19 +31,33 @@ dark, and compact layouts.
 
 ## Run
 
-From the repository root, with a current stable Rust toolchain and a native C/C++
-build toolchain installed:
+Install a current stable Rust toolchain and the platform's native build tools:
+
+| Platform | Build tools | Runtime / package baseline |
+| --- | --- | --- |
+| Linux | C/C++ compiler and linker; your distribution's graphics development libraries | Desktop session with OpenGL, Wayland or X11; glibc minimum depends on the build host |
+| macOS | Xcode Command Line Tools (`xcode-select --install`) | Package recipes default to macOS 12+; x86_64 and Apple Silicon builds are separate |
+| Windows | Visual Studio Build Tools with Desktop development with C++, the Windows SDK, and the native MSVC Rust toolchain | Windows 10+ and OpenGL-capable graphics drivers |
+
+From the repository root:
 
 ```sh
 cargo run --locked
 ```
 
-Build and run the optimized executable:
+Build the optimized executable with `just build` (or the Python command below).
+Run `target/release/amigo` on Linux/macOS, or `target\release\amigo.exe` on Windows.
+Windows MSVC builds statically link the C runtime and launch without a console window.
+
+For a direct Cargo build on Linux/Windows:
 
 ```sh
 cargo build --release --locked
-./target/release/amigo
 ```
+
+On macOS, the build recipe supplies `MACOSX_DEPLOYMENT_TARGET=12.0` unless you
+already set it. The packager reads the executable's deployment target into the
+app bundle and release metadata.
 
 Standalone Linux launches register the Amigo logo and a user desktop launcher when no Amigo desktop entry is installed, so Wayland window menus can resolve the app icon. Packaged installations retain their packaged launcher.
 
@@ -52,7 +66,7 @@ A desktop session and OpenGL support are required. Linux file dialogs use
 requires `xdg-utils`. Your distribution may require development packages for the
 native graphics libraries when building from source.
 
-Data saves automatically in `~/.amigo/`. Use `AMIGO_HOME` to select a different
+Data saves automatically in `~/.amigo/` on Linux/macOS or `%USERPROFILE%\.amigo\` on Windows. Use `AMIGO_HOME` to select a different
 library; see [User-folder storage](#user-folder-storage) for the layout and migration
 options. The first build downloads dependencies; later builds can use `--offline`
 when those dependencies are cached.
@@ -61,7 +75,10 @@ All Tasks, Calendar, and unlocked Finance screens preload together at startup be
 
 ## Just recipes
 
-Install [just](https://just.systems/man/en/) and run `just` to list the recipes:
+Install Python 3.11+ and [just](https://just.systems/man/en/), then run `just` to
+list the recipes. The recipes pass arguments directly to Python; Bash and
+PowerShell are not required. Ensure `python3` is on PATH on Linux/macOS and
+`python` is on PATH on Windows.
 
 ```sh
 just run                 # Development build and launch
@@ -74,85 +91,111 @@ just check               # Formatting, Clippy, workspace tests, release helper t
 ```
 
 Extra test arguments are forwarded, for example `just test -- --nocapture`.
-Application arguments are forwarded by `just run`.
+Application arguments are forwarded by `just run`. Every recipe also works
+without just: use `python3 -B scripts/dev.py COMMAND [ARGS...]` on Linux/macOS,
+or `python -B scripts/dev.py COMMAND [ARGS...]` on Windows. For example:
+
+```powershell
+python -B scripts/dev.py check
+python -B scripts/dev.py package-windows
+```
 
 ### Distribution recipes
 
-The recipes package native **x86_64 or aarch64 Linux** builds. Install Python 3.11+,
-Rust/Cargo, binutils (`readelf`, `strip`), and `desktop-file-utils`. Individual
-formats additionally require:
+Packages are built **on the target operating system**, with a native x86_64 or
+ARM64 Rust toolchain. Build macOS packages on a Mac and Windows packages on Windows.
+`just dist` selects all formats for the current OS and builds the application once.
+Individual package recipes build it too; setting `CARGO_BUILD_TARGET` is rejected
+for native packaging, and executable headers are checked before staging.
 
-| Format | Tool |
-| --- | --- |
-| RPM | `rpmbuild`, from `rpm-build` on Fedora or `rpm` on Debian/Ubuntu |
-| DEB | `dpkg-deb`, from `dpkg` |
-| AppImage | [linuxdeploy](https://github.com/linuxdeploy/linuxdeploy/releases), executable on `PATH` as `linuxdeploy`, with its AppImage output plugin |
-| GitHub draft | [GitHub CLI](https://cli.github.com/), authenticated using `gh auth login` |
+| Platform | Recipe | Output | Additional tools |
+| --- | --- | --- | --- |
+| Linux | `just package-rpm` | RPM | `rpmbuild` |
+| Linux | `just package-deb` | DEB | `dpkg-deb` |
+| Linux | `just package-appimage` | AppImage | [linuxdeploy](https://github.com/linuxdeploy/linuxdeploy/releases) with its AppImage output plugin |
+| macOS | `just package-macos` | ZIP containing `Amigo.app` | Built-in `ditto` and `codesign` |
+| macOS | `just package-dmg` | Drag-to-install DMG | Built-in `hdiutil` and `codesign` |
+| Windows | `just package-windows` | Portable ZIP containing `Amigo/amigo.exe` | Python standard library |
+| Windows | `just package-installer` | Per-user setup EXE and uninstaller | [Inno Setup](https://jrsoftware.org/isinfo.php) 6.3+ (`ISCC.exe`) |
 
-The official linuxdeploy AppImage includes an output plugin. It can be installed
-under the name `linuxdeploy`; the recipe uses `APPIMAGE_EXTRACT_AND_RUN=1` to
-avoid requiring FUSE while packaging. Install native X11, Wayland, and xkbcommon
-runtime libraries too; these are loaded dynamically by the windowing backend.
-The AppImage recipe explicitly passes those libraries to linuxdeploy. System
-OpenGL/EGL drivers are still required on the destination machine.
+Linux packaging also needs binutils (`readelf`, `strip`) and
+`desktop-file-utils`. Install the native X11, Wayland, xkbcommon, and D-Bus runtime
+libraries. These can be loaded dynamically, so the AppImage recipe includes them
+explicitly. The official linuxdeploy AppImage can be installed as `linuxdeploy`
+on PATH; `APPIMAGE_EXTRACT_AND_RUN=1` avoids requiring FUSE during packaging.
+The destination still needs its own OpenGL/EGL drivers.
 
-Amigo is licensed under GPL-3.0-or-later; the full text is in [LICENSE](LICENSE).
-Set the matching license expression and the DEB maintainer in your shell:
+The license expression defaults to `[workspace.package].license` in `Cargo.toml`
+and the full text defaults to the repository's [LICENSE](LICENSE). `AMIGO_LICENSE`
+and `AMIGO_LICENSE_FILE` remain available as explicit overrides. DEB packages
+also require a maintainer:
 
 ```sh
-export AMIGO_LICENSE='GPL-3.0-or-later'
+# Linux: required for package-deb and dist.
 export AMIGO_MAINTAINER='Your Name <you@example.com>'
-# Optional if the license text is stored elsewhere:
-# export AMIGO_LICENSE_FILE=/absolute/path/to/license-text
-
-just dist-check          # Check all required tools and metadata
-just dist-check rpm      # Check one format
-just package-rpm
-just package-deb
-just package-appimage
-just dist                # Build all three
+just dist-check          # Check tools and metadata for this OS
+just dist-check deb      # Check one native format
+just dist                # Build every format for this OS
 ```
 
-Output goes to `dist/<workspace-version>/<architecture>/`, for example
-`dist/0.1.0/x86_64/amigo-0.1.0-x86_64.rpm`. The version comes from
-`[workspace.package]` in `Cargo.toml`; currently the recipes accept stable `X.Y.Z`
-versions. Packages contain the executable, desktop launcher, Amigo icons, README,
-the application and font licenses, and the country catalogue with its license and
-provenance notice. Packaging does not read your personal Amigo library. Build files
-stay under `target/`; staging uses temporary directories that are removed afterward.
-No packaging command needs root.
+On macOS or Windows, run `just dist-check` and `just dist` without the Linux
+maintainer variable. Inno Setup is found on PATH or in its standard installation
+folders. Windows installs to the current user's Programs folder without elevation;
+uninstalling the application preserves the user's Amigo library.
 
-Build on the **oldest Linux distribution you intend to support**. The minimum
-glibc version depends on the build machine; wrapping the executable in an AppImage
-does not lower that requirement. DEB metadata and prepared release notes record
-the binary's actual glibc requirement. Test each package on its intended distribution
-before publishing. Native RPM/DEB dependencies cover both X11 and Wayland backends.
+Output goes to `dist/<version>/<platform>/<architecture>/`, for example:
+
+```text
+dist/0.0.1/linux/x86_64/amigo-0.0.1-linux-x86_64.deb
+dist/0.0.1/macos/aarch64/amigo-0.0.1-macos-aarch64.app.zip
+dist/0.0.1/macos/aarch64/amigo-0.0.1-macos-aarch64.dmg
+dist/0.0.1/windows/x86_64/amigo-0.0.1-windows-x86_64.zip
+dist/0.0.1/windows/x86_64/amigo-0.0.1-windows-x86_64.setup.exe
+```
+
+All formats include the executable, platform icon, README, application license,
+and the bundled font, country-catalogue, and Unicode license notices. macOS keeps
+these documents in `Amigo.app/Contents/Resources/docs`; Windows keeps them in
+`Amigo/docs`; Linux uses `/usr/share/doc/amigo/`. Staging uses temporary directories
+and an explicit file list; personal libraries are never included.
+
+Build Linux packages on the **oldest distribution you intend to support**; an
+AppImage does not lower the executable's glibc requirement. DEB dependencies and
+release notes record that requirement. macOS packages use an ad-hoc signature by
+default, suitable for development. Set `AMIGO_MACOS_SIGN_IDENTITY` to a Developer ID
+Application identity for distribution signing; notarization is a separate step
+requiring your Apple developer credentials. Windows packages are unsigned unless
+you sign the executable/installer separately. Test downloaded packages on their
+intended desktop systems before publishing.
 
 ### Prepare a GitHub release
 
-Commit the source, configure a GitHub `origin` remote, and push the commit first.
-Keep generated files out of Git; `target/` and `dist/` are ignored. Then:
+Commit and push the source to `origin` first. With GitHub CLI authenticated,
+prepare each platform on its native build machine:
 
 ```sh
 just release-prepare
-# Review the three packages and edit dist/0.1.0/x86_64/RELEASE_NOTES.md.
-# Replace the version and architecture in these examples as appropriate.
-git tag -a v0.1.0 -m 'Amigo 0.1.0'
-git push origin v0.1.0
-just release-draft v0.1.0
+# Review packages and edit dist/0.0.1/<platform>/<architecture>/RELEASE_NOTES.md.
+git tag -a v0.0.1 -m 'Amigo 0.0.1'
+git push origin v0.0.1
+just release-draft v0.0.1
 ```
 
-`release-prepare` runs `just check`, creates all three packages, and writes
-`SHA256SUMS`, `SOURCE.json` (source commit, clean state, architecture, version,
-glibc requirement), and editable `RELEASE_NOTES.md`. It only prepares local files
-and preserves notes you already edited. If you prepare with uncommitted changes,
-commit them and run preparation again before uploading.
+Create and push the tag once, then fetch it on the other build machines.
+`release-prepare` runs the checks, builds native packages, and writes
+`SHA256SUMS-<platform>-<architecture>`, `SOURCE-<platform>-<architecture>.json`, and
+editable `RELEASE_NOTES.md`. Source information records the commit, clean state,
+version, platform, architecture, and platform-specific runtime requirement.
+Preparation only writes local files and preserves edited notes. If the source is
+dirty, commit it and prepare again before uploading.
 
-`release-draft` checks checksums, version, source commit, a clean working tree,
-the local tag, and edited notes. GitHub CLI also verifies that the tag exists
-remotely. It uploads the packages, checksums, and source information as a **draft**;
-it does not commit, tag, push, overwrite an existing release, or publish. Review
-the draft on GitHub and publish it there when ready.
+`release-draft` verifies checksums, source state, and the local and remote tag.
+It creates an unpublished draft or adds another platform's assets to the existing
+draft. Asset names include platform and architecture, preventing cross-platform
+collisions. It refuses published releases and never overwrites existing assets,
+creates tags, pushes commits, or publishes the release. Review the combined draft
+on GitHub before publishing it. The [CI workflow](.github/workflows/ci.yml) also
+builds packages and uploads workflow artifacts; it does not create releases.
 
 ## Appearance and settings
 
@@ -186,6 +229,10 @@ Status columns have tinted surfaces, colored accents and headers, separated card
 Open a task and use the **+** icon immediately after **Attachments** (hover for **Attach Files**), or drop files onto its dialog. Files of any type are copied into the board’s attachment folder when you save the task; large copies run in the background. Cancel discards pending files, and failed multi-file imports roll back their copies. Attachment metadata lives in the task’s Markdown front matter. Removing an attachment and saving removes its managed copy when the board is saved, while the original source file is untouched.
 
 Click an attached filename to open the copied file through the system association. **Open With…** lets you select an executable application, including when no default association exists. Common document, image, spreadsheet, archive, code, and media types have colored file icons. On Linux, native file selection uses the desktop portal; install `xdg-desktop-portal` with your desktop’s backend and `xdg-utils`. AppImages use the host desktop’s portal service.
+
+macOS also accepts `.app` bundles in **Open With…**. Windows uses the native file
+association through its built-in PowerShell launcher; document paths are passed
+as data, including filenames containing spaces or shell characters.
 
 ![Personal Kanban](docs/tasks.png)
 
@@ -268,7 +315,10 @@ Board and Vault settings also offer **Delete Board…** and **Delete Vault…**,
 
 ## User-folder storage
 
-The default library is `~/.amigo`. Close Clerk before launching Amigo for the first time. An existing `~/.clerk` library (or the earlier `~/Clerk` folder) moves there automatically if the new folder does not already exist. The complete library moves together, including boards, vaults, attachments, calendar data, credential keys, and backups. An existing Amigo folder is never overwritten:
+The default library is `~/.amigo` on Linux/macOS and `%USERPROFILE%\.amigo` on
+Windows. An existing `HOME` environment override takes precedence on every OS;
+Windows also supports `HOMEDRIVE` + `HOMEPATH` when `USERPROFILE` is unavailable.
+The folder layout and `.amigo` exports are shared across platforms. Close Clerk before launching Amigo for the first time. An existing `~/.clerk` library (or the earlier `~/Clerk` folder) moves there automatically if the new folder does not already exist. The complete library moves together, including boards, vaults, attachments, calendar data, credential keys, and backups. An existing Amigo folder is never overwritten:
 
 ```text
 ~/.amigo/
@@ -293,7 +343,7 @@ The default library is `~/.amigo`. Close Clerk before launching Amigo for the fi
     vault.enc                     # encrypted vaults only; replaces records/
 ```
 
-Folder IDs remain stable when a board or vault is renamed. Record filenames encode their IDs so imported IDs cannot be interpreted as paths. Markdown files use JSON front matter (also valid YAML), followed by a readable task heading and description. You can edit a task's heading, description, or front matter with a text editor. Periodic directory reload is disabled for now. Restart Amigo to load external edits; avoid editing the same records externally while Amigo is open. Invalid files encountered during load are reported and preserved.
+Folder IDs remain stable when a board or vault is renamed. Record filenames encode their IDs so imported IDs cannot be interpreted as paths. Markdown files use JSON front matter (also valid YAML), followed by a readable task heading and description. You can edit a task's heading, description, or front matter with a text editor; both LF and Windows CRLF line endings are accepted. Periodic directory reload is disabled for now. Restart Amigo to load external edits; avoid editing the same records externally while Amigo is open. Invalid files encountered during load are reported and preserved.
 
 Use **+ New board** in Tasks or **+ New vault** in Finance. Each board has its own statuses and categories; each vault has its own finances and reference values. Changes save automatically. Switches save the current data before opening the next board or vault. Task boards and the selected finance vault are independent.
 
@@ -311,12 +361,19 @@ Set `AMIGO_HOME` to choose another library location:
 AMIGO_HOME=/path/to/amigo-library cargo run --locked
 ```
 
+In Windows PowerShell:
+
+```powershell
+$env:AMIGO_HOME = "$env:USERPROFILE\AmigoLibrary"
+cargo run --locked
+```
+
 Use `AMIGO_DATA_FILE` for migration and isolated previews; its library is stored beside it with the `.library` extension. The legacy `CLERK_HOME` and `CLERK_DATA_FILE` overrides still work, with explicit `AMIGO_*` overrides taking precedence. To back up your data, use the **Export Amigo Setup** icon beside the theme switcher, or close Amigo and copy the entire library folder. Keep the password for encrypted vaults; it cannot be recovered by the app. Library folders use owner-only permissions on Unix, and files are saved through temporary files and rename.
 
 ## Development
 
 Run `just check` for formatting, Clippy, workspace tests, and release helper tests,
-or run the checks individually (the Python helpers require Python 3.11+):
+or run the checks individually (use `python` instead of `python3` on Windows):
 
 ```sh
 cargo fmt --all --check
@@ -324,6 +381,12 @@ cargo test --workspace --locked
 cargo clippy --workspace --locked --all-targets -- -D warnings
 python3 -B -m unittest discover -s scripts -p 'test_*.py'
 ```
+
+The [native CI workflow](.github/workflows/ci.yml) runs these checks, compiles the
+preview examples, and creates packages on Linux, macOS, and Windows for x86_64 and
+ARM64. Package-helper tests validate ZIP contents, app-bundle metadata, architecture
+checks, and release integrity using synthetic files. Native desktop behavior and
+OS trust/signing prompts still require platform testing.
 
 The regular tests cover calculations, historical FX selection, recurrence, persistence, encryption, reference renames, custom statuses and reassignment, category filtering, Markdown editing, automatic migration, board/vault switching, encrypted vault locking and password prompts, and pointer-driven board settings, task editing, and drag-and-drop. Optional checks require Node.js (independent browser Web Crypto compatibility) and network access (live fiat rates):
 

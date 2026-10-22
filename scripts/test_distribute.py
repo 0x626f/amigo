@@ -16,28 +16,30 @@ class ReleaseTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="amigo-release-test-")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        (self.root / "Cargo.toml").write_text('[workspace.package]\nversion = "1.2.3"\n')
+        (self.root / "Cargo.toml").write_text('[workspace.package]\nversion = "1.2.3"\nlicense = "GPL-3.0-or-later"\n')
         self.enterContext(patch.object(dist, "ROOT", self.root))
         self.enterContext(patch.object(dist, "arch", return_value="x86_64"))
+        self.enterContext(patch.object(dist, "system", return_value="linux"))
+        self.enterContext(patch.object(dist, "existing_release", return_value=None))
         self.enterContext(patch.object(dist, "glibc_version", return_value="2.34"))
         self.enterContext(patch.object(dist, "source_state", return_value={"commit": "abc123", "clean": True}))
         self.enterContext(contextlib.redirect_stdout(io.StringIO()))
         dist.dist_dir().mkdir(parents=True)
-        for suffix in dist.SUFFIXES:
+        for suffix in (dist.SUFFIXES[kind] for kind in dist.native_formats()):
             dist.artifact(suffix).write_bytes(f"synthetic {suffix}".encode())
 
     def test_prepare_requires_every_format(self):
         dist.artifact("deb").unlink()
         with self.assertRaisesRegex(ValueError, "Missing package"):
             dist.prepare()
-        self.assertFalse((dist.dist_dir() / "SHA256SUMS").exists())
+        self.assertFalse(dist.checksum_path().exists())
 
     def test_checksum_rejects_modified_package_and_provenance(self):
         dist.prepare()
         assets, state = dist.verify_prepared()
         self.assertEqual(len(assets), 4)
         self.assertEqual(state["version"], "1.2.3")
-        for path in (dist.artifact("rpm"), dist.dist_dir() / "SOURCE.json"):
+        for path in (dist.artifact("rpm"), dist.manifest_path()):
             original = path.read_bytes()
             path.write_bytes(original + b"tampered")
             with self.assertRaisesRegex(ValueError, "assets changed"):
@@ -77,7 +79,7 @@ class ReleaseTests(unittest.TestCase):
             self.assertIn("--draft", args)
             self.assertIn("--verify-tag", args)
             self.assertIn("https://github.com/example/amigo.git", args)
-            for suffix in dist.SUFFIXES:
+            for suffix in (dist.SUFFIXES[kind] for kind in dist.native_formats()):
                 self.assertIn(str(dist.artifact(suffix)), args)
 
     def test_remote_annotated_tag_must_resolve_to_prepared_commit(self):
@@ -95,6 +97,21 @@ class ReleaseTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "committed, clean"):
             dist.draft("v1.2.3")
 
+    def test_other_platforms_join_a_draft_without_overwriting_or_publishing(self):
+        dist.prepare()
+        (dist.dist_dir() / "RELEASE_NOTES.md").write_text("First release.\n")
+        with (patch.object(dist, "output", return_value="abc123"),
+              patch.object(dist, "release_remote", return_value="https://github.com/example/amigo.git"),
+              patch.object(dist, "run") as upload):
+            with patch.object(dist, "existing_release", return_value={"isDraft": False}):
+                with self.assertRaisesRegex(ValueError, "published release"):
+                    dist.draft("v1.2.3")
+                upload.assert_not_called()
+            with patch.object(dist, "existing_release", return_value={"isDraft": True}):
+                dist.draft("v1.2.3")
+                self.assertEqual(upload.call_args.args[:4], ("gh", "release", "upload", "v1.2.3"))
+                self.assertNotIn("--clobber", upload.call_args.args)
+
     def test_native_deb_architecture_and_glibc_dependency(self):
         root = self.root / "stage"
         root.mkdir()
@@ -111,7 +128,7 @@ class ReleaseTests(unittest.TestCase):
     def test_staged_amigo_contains_launchers_and_icons_without_personal_data(self):
         sources = [
             "target/release/amigo", "packaging/amigo.desktop", "packaging/amigo.svg", "packaging/amigo.png", "README.md",
-            "docs/reference-data.md", "crates/core/COUNTRY-DATA-LICENSE", "crates/core/src/countries.tsv", "crates/ui/assets/fonts/LICENSE", "LICENSE",
+            "docs/reference-data.md", "crates/core/COUNTRY-DATA-LICENSE", "crates/core/src/countries.tsv", "crates/ui/assets/fonts/LICENSE", "crates/connect/data/UNICODE-LICENSE.txt", "crates/connect/data/README.md", "LICENSE",
         ]
         for name in sources:
             path = self.root / name

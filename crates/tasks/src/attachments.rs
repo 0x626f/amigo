@@ -78,7 +78,19 @@ fn open_default(path: &Path) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     let result = Command::new("open").arg(path).output();
     #[cfg(target_os = "windows")]
-    let result = Command::new("explorer.exe").arg(path).output();
+    let result = {
+        use std::os::windows::process::CommandExt;
+        // Explorer does not reliably report file-association errors. Pass the
+        // path as environment data to Windows' native shell execution instead.
+        Command::new("powershell.exe")
+            .args([
+                "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+                "$ErrorActionPreference = 'Stop'; $info = New-Object System.Diagnostics.ProcessStartInfo; $info.FileName = $env:AMIGO_ATTACHMENT_PATH; $info.UseShellExecute = $true; [System.Diagnostics.Process]::Start($info) | Out-Null",
+            ])
+            .env("AMIGO_ATTACHMENT_PATH", windows_shell_path(path))
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW
+            .output()
+    };
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     let result = Command::new("xdg-open").arg(path).output();
     match result {
@@ -89,6 +101,51 @@ fn open_default(path: &Path) -> Result<(), String> {
         Err(error) => Err(format!(
             "Cannot open file: {error}. Use Open With… to choose a program."
         )),
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_shell_path(path: &Path) -> PathBuf {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    // canonicalize() returns extended-length paths, which shell handlers often
+    // cannot use. Remove only the Windows prefix, preserving every UTF-16 unit.
+    let wide: Vec<_> = path.as_os_str().encode_wide().collect();
+    let unc: Vec<_> = r"\\?\UNC\".encode_utf16().collect();
+    let prefix: Vec<_> = r"\\?\".encode_utf16().collect();
+    if wide.starts_with(&unc) {
+        let mut ordinary: Vec<_> = r"\\".encode_utf16().collect();
+        ordinary.extend_from_slice(&wide[unc.len()..]);
+        PathBuf::from(OsString::from_wide(&ordinary))
+    } else if wide.starts_with(&prefix)
+        && wide.len() >= prefix.len() + 3
+        && matches!(wide[prefix.len()], 65..=90 | 97..=122)
+        && wide[prefix.len() + 1] == b':' as u16
+    {
+        PathBuf::from(OsString::from_wide(&wide[prefix.len()..]))
+    } else {
+        path.into()
+    }
+}
+
+fn application_command(program: &Path, path: &Path, macos: bool) -> Command {
+    #[cfg(target_os = "windows")]
+    let ordinary_path = windows_shell_path(path);
+    #[cfg(target_os = "windows")]
+    let path = ordinary_path.as_path();
+    if macos
+        && program
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("app"))
+    {
+        let mut command = Command::new("open");
+        command.arg("-a").arg(program).arg("--").arg(path);
+        command
+    } else {
+        let mut command = Command::new(program);
+        command.arg(path);
+        command
     }
 }
 
@@ -246,8 +303,7 @@ fn show_content(state: &mut TasksTab, editor: &mut TaskEditor, ui: &mut egui::Ui
                             .set_title("Choose Application")
                             .pick_file()
                         {
-                            Command::new(program)
-                                .arg(path)
+                            application_command(&program, &path, cfg!(target_os = "macos"))
                                 .spawn()
                                 .map(|_| ())
                                 .map_err(|e| format!("Cannot start application: {e}"))
@@ -344,6 +400,57 @@ pub(super) fn save(state: &mut TasksTab, editor: &mut TaskEditor, ctx: &egui::Co
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn macos_application_bundles_use_open_without_interpreting_document_names() {
+        let program = Path::new("/Applications/Example App.app");
+        let path = Path::new("/Users/example/Résumé; $literal.txt");
+        let command = application_command(program, path, true);
+        assert_eq!(command.get_program(), "open");
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            [
+                std::ffi::OsStr::new("-a"),
+                program.as_os_str(),
+                std::ffi::OsStr::new("--"),
+                path.as_os_str()
+            ]
+        );
+        let command = application_command(program, path, false);
+        assert_eq!(command.get_program(), program.as_os_str());
+        assert_eq!(command.get_args().collect::<Vec<_>>(), [path.as_os_str()]);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_canonical_paths_are_usable_by_shell_file_handlers() {
+        for (input, expected) in [
+            (
+                r"\\?\C:\Users\Example User\Résumé.txt",
+                r"C:\Users\Example User\Résumé.txt",
+            ),
+            (
+                r"\\?\UNC\server\share\Résumé.txt",
+                r"\\server\share\Résumé.txt",
+            ),
+            (r"C:\ordinary.txt", r"C:\ordinary.txt"),
+            (
+                r"\\?\Volume{example}\file.txt",
+                r"\\?\Volume{example}\file.txt",
+            ),
+        ] {
+            assert_eq!(
+                windows_shell_path(Path::new(input)),
+                PathBuf::from(expected)
+            );
+            let command = application_command(Path::new("editor.exe"), Path::new(input), false);
+            assert_eq!(
+                command.get_args().collect::<Vec<_>>(),
+                [std::ffi::OsStr::new(expected)]
+            );
+        }
+    }
+
     #[test]
     fn dropping_a_late_import_result_removes_only_the_uncommitted_copy() {
         let root = std::env::temp_dir().join(format!("amigo-late-files-{}", id()));

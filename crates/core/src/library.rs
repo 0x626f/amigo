@@ -98,8 +98,7 @@ fn root_from_environment(get: impl Fn(&str) -> Option<std::ffi::OsString>) -> Pa
     if let Some(file) = get("CLERK_DATA_FILE") {
         return PathBuf::from(file).with_extension("library");
     }
-    get("HOME")
-        .map(PathBuf::from)
+    storage::user_home(get)
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".amigo")
 }
@@ -187,9 +186,11 @@ fn markdown(metadata: &impl Serialize, body: &str) -> Result<Vec<u8>> {
 fn parse_markdown(text: &str) -> Result<(Value, &str)> {
     let text = text
         .strip_prefix("---\n")
+        .or_else(|| text.strip_prefix("---\r\n"))
         .ok_or("Missing Markdown front matter.")?;
     let (metadata, body) = text
         .split_once("\n---\n")
+        .or_else(|| text.split_once("\r\n---\r\n"))
         .ok_or("Unclosed Markdown front matter.")?;
     Ok((
         serde_json::from_str(metadata).map_err(|e| format!("Invalid front matter: {e}"))?,
@@ -236,7 +237,7 @@ fn remove_stale(path: &Path, keep: &HashSet<String>) -> Result<()> {
 impl Library {
     pub fn open(root: PathBuf, legacy: Option<&Path>) -> Result<Self> {
         crate::backup::recover(&root)?;
-        if let Some(home) = std::env::var_os("HOME").map(PathBuf::from)
+        if let Some(home) = storage::user_home(|key| std::env::var_os(key))
             && root == home.join(".amigo")
         {
             move_previous_libraries(&home, &root)?;
@@ -505,7 +506,9 @@ impl Library {
         let mut tasks = vec![];
         let mut ids = HashSet::new();
         for file in md_files(&path)? {
-            let text = fs::read_to_string(&file).map_err(|e| e.to_string())?;
+            let text = fs::read_to_string(&file)
+                .map_err(|e| e.to_string())?
+                .replace("\r\n", "\n");
             let (metadata, body) =
                 parse_markdown(&text).map_err(|e| format!("{}: {e}", file.display()))?;
             let mut task: Task = serde_json::from_value(metadata).map_err(|e| e.to_string())?;

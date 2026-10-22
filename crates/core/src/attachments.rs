@@ -50,6 +50,7 @@ pub fn import(board: &Path, source: &Path) -> Result<TaskAttachment, String> {
         }
         io::copy(&mut input, &mut output).map_err(|e| e.to_string())?;
         output.sync_all().map_err(|e| e.to_string())?;
+        drop(output);
         fs::rename(&temporary, folder.join(&attachment.name)).map_err(|e| e.to_string())
     })();
     if let Err(error) = result {
