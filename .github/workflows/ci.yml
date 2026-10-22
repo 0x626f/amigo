@@ -75,6 +75,9 @@ jobs:
             arch: aarch64
     env:
       CARGO_TERM_COLOR: always
+      # Skip debug symbols for the short-lived CI checks to reduce compile/link time.
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
       MACOSX_DEPLOYMENT_TARGET: "12.0"
       AMIGO_MAINTAINER: "0x626f <0x626f@users.noreply.github.com>"
     steps:
