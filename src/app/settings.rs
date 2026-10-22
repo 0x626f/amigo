@@ -4,7 +4,6 @@ use std::collections::BTreeMap;
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SettingsPage {
     #[default]
-    General,
     Tasks,
     Board(String),
     Calendar,
@@ -32,12 +31,12 @@ impl Amigo {
     }
 
     pub fn open_settings(&mut self, page: SettingsPage) {
-        if self.save_blocked && page != SettingsPage::General {
+        if self.save_blocked {
             self.error = "Open the library before changing settings.".into();
             return;
         }
         let mut state = self.app_settings.take().unwrap_or_else(|| AppSettings {
-            page: SettingsPage::General,
+            page: SettingsPage::Tasks,
             boards: BTreeMap::new(),
             finance: BTreeMap::new(),
             exchange_interval: self.library.settings.sync.exchange_rate_interval_seconds,
@@ -109,7 +108,7 @@ impl Amigo {
         })();
         if let Err(error) = result {
             self.error = error;
-            state.page = SettingsPage::General;
+            state.page = SettingsPage::Tasks;
         }
     }
     fn initialize_finance_settings(&mut self, page: &SettingsPage) {
@@ -153,16 +152,18 @@ impl Amigo {
                                 ui.set_width(190.0);
                                 for (page, label, icon, depth) in rows {
                                     ui.horizontal(|ui| {
-                                        ui.add_space(depth as f32 * 10.0);
                                         ui.push_id((&page, "settings-page"), |ui| {
                                             let response = ui
                                                 .add_enabled_ui(!self.updates.installing(), |ui| {
-                                                    design::nav_row(
+                                                    design::nav_row_with_options(
                                                         ui,
                                                         &label,
                                                         icon,
                                                         state.page == page,
-                                                        None,
+                                                        design::NavRowOptions {
+                                                            indent: depth as f32 * 10.0,
+                                                            ..Default::default()
+                                                        },
                                                     )
                                                 })
                                                 .inner;
@@ -183,7 +184,7 @@ impl Amigo {
                 ui.separator();
                 ui.vertical(|ui| {
                     ui.set_width(ui.available_width().max(200.0));
-                    if self.save_blocked && state.page != SettingsPage::General {
+                    if self.save_blocked {
                         ui.disable();
                     }
                     let result = self.settings_page_ui(&mut state, ui);
@@ -215,10 +216,7 @@ impl Amigo {
         self.app_settings = Some(state);
     }
     fn settings_rows(&self, page: &SettingsPage) -> Vec<(SettingsPage, String, Icon, u8)> {
-        let mut rows = vec![
-            (SettingsPage::General, "General".into(), Icon::Account, 0),
-            (SettingsPage::Tasks, "Tasks".into(), Icon::Board, 0),
-        ];
+        let mut rows = vec![(SettingsPage::Tasks, "Tasks".into(), Icon::Board, 0)];
         rows.extend(self.library.boards.iter().map(|board| {
             (
                 SettingsPage::Board(board.id.clone()),
@@ -259,20 +257,6 @@ impl Amigo {
     }
     fn settings_page_ui(&mut self, state: &mut AppSettings, ui: &mut egui::Ui) -> (bool, bool) {
         match state.page.clone() {
-            SettingsPage::General => {
-                ui.heading("General");
-                ui.add_space(16.0);
-                ui.label(format!("Amigo {}", env!("CARGO_PKG_VERSION")));
-                ui.label("Author: 0x626f");
-                ui.label("License: GPL-3.0-or-later");
-                design::dialog_section(ui, "Working Folder");
-                ui.add(
-                    egui::Label::new(self.data_path.display().to_string())
-                        .wrap()
-                        .selectable(true),
-                );
-                ui.hyperlink_to("Project on GitHub", "https://github.com/0x626f/amigo");
-            }
             SettingsPage::Tasks => {
                 ui.heading("Tasks");
                 design::hint(
@@ -345,13 +329,7 @@ impl Amigo {
                 ui.add_space(16.0);
                 amigo_ui::forms::field_label(ui, "Default Editor Mode");
                 ui.horizontal(|ui| {
-                    for (mode, label) in [
-                        (amigo_core::journal::Mode::Source, "Markdown"),
-                        (amigo_core::journal::Mode::Preview, "Preview"),
-                        (amigo_core::journal::Mode::Split, "Split"),
-                    ] {
-                        ui.selectable_value(&mut state.journal.mode, mode, label);
-                    }
+                    amigo_journal::mode_buttons(ui, &mut state.journal.mode, "journal-default-mode")
                 });
                 ui.horizontal(|ui| {
                     ui.label("Editor Font Size");

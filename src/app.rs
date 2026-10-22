@@ -244,11 +244,27 @@ impl Amigo {
             .frame(egui::Frame::new().fill(colors(ui).sidebar).inner_margin(18))
             .show(ui, |ui| {
                 ui.add_space(14.);
-                ui.horizontal(|ui| {
-                    ui.add_space(26.);
-                    crate::brand::logo(ui, 34.);
-                    ui.label(RichText::new("Amigo").size(20.).strong());
-                });
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), 34.),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.spacing_mut().item_spacing.x = 10.;
+                        let logo = crate::brand::logo(ui, 34.);
+                        ui.interact(
+                            logo.rect,
+                            egui::Id::new("app-brand-logo"),
+                            egui::Sense::hover(),
+                        );
+                        let title = ui.add(
+                            egui::Label::new(RichText::new("Amigo").size(20.).strong()).extend(),
+                        );
+                        ui.interact(
+                            title.rect,
+                            egui::Id::new("app-brand-title"),
+                            egui::Sense::hover(),
+                        );
+                    },
+                );
                 ui.add_space(10.);
                 ui.horizontal(|ui| {
                     ui.add_space(24.);
@@ -261,7 +277,7 @@ impl Amigo {
                     )
                     .clicked()
                     {
-                        self.open_settings(SettingsPage::General);
+                        self.open_settings(SettingsPage::Tasks);
                     }
                     for (name, icon, label, action) in [
                         (

@@ -785,6 +785,19 @@ fn main() -> eframe::Result {
                 app.workspace.normalize();
             }
             if std::env::args().any(|arg| arg == "--structure-scenes") {
+                for name in [
+                    "Rental",
+                    "Insurance",
+                    "Support",
+                    "Health",
+                    "Transport",
+                    "Everyday",
+                ] {
+                    app.workspace.finance.categories.push(model::StoredValue {
+                        id: model::id(),
+                        name: name.into(),
+                    });
+                }
                 let library = library::Library::open(library::default_root(), None).unwrap();
                 let board = library.board_path(&library.settings.board).unwrap();
                 for (name, body) in [

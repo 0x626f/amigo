@@ -229,7 +229,7 @@ builds packages and uploads workflow artifacts; it does not create releases.
 
 The interface follows Apple-inspired macOS conventions: borderless buttons, rounded controls, blue primary actions, restrained hover/press feedback, and a quiet sidebar. Text inputs use soft surfaces, while keyboard focus remains visible. Dialogs keep clear headings, grouped fields, readable labels, and fixed Save/Cancel actions. Use **Light / Dark** at the bottom of the sidebar; the saved appearance transitions smoothly without rebuilding the font atlas. Shared egui helpers keep all four tabs consistent. Adwaita Sans is bundled under the SIL Open Font License; see `crates/ui/assets/fonts/LICENSE`. The project includes an MIT-licensed [Apple design skill](skills/apple-design/SKILL.md) with upstream attribution and Amigo-specific guidance.
 
-Open **Settings** in the action row immediately below the Amigo title. The same row contains **Import Amigo Setup** and **Export Amigo Setup**. One settings window contains General, Tasks and its boards, Calendar, Finance and its vaults/categories, Journal, and Updates. Board and vault drafts survive navigation between settings pages; Save commits the current page, while closing the window discards unconfirmed drafts.
+Open **Settings** in the action row immediately below the Amigo title. The same row contains **Import Amigo Setup** and **Export Amigo Setup**. One settings window contains Tasks and its boards, Calendar, Finance and its vaults/categories, Journal, and Updates. Board and vault drafts survive navigation between settings pages; Save commits the current page, while closing the window discards unconfirmed drafts.
 
 **Settings → Calendar** contains URL subscriptions, refresh timing, and Telegram notifications. **Settings → Finance** owns exchange refresh timing (60 seconds by default). **Settings → Journal** sets the default editor mode, font size, and wrapping. Confirmed changes autosave; periodic directory polling remains disabled.
 
@@ -335,15 +335,15 @@ Finance uses the same **Search → Settings → Filters → Create** toolbar as 
 
 ## Journal
 
-Journal stores ordinary UTF-8 `.md` files below the working library's `journal/` folder, including imported notes. It offers nested folders, title/content search, rename/move, import/export, and recoverable deletion to `.trash`. Folder names can be entered as `Projects/Plan`. Imported originals remain untouched; duplicate names receive a suffix.
+Journal stores ordinary UTF-8 `.md` files below the working library's `journal/` folder, including imported notes. It offers nested folders, title/content search, rename/move, Markdown import, and recoverable deletion to `.trash`. Folder names can be entered as `Projects/Plan`. Imported originals remain untouched; duplicate names receive a suffix.
 
-Choose **Markdown**, **Preview**, or **Split** in the note toolbar. Preview renders headings, lists, tables, code, quotes, and links. Relative Markdown links and Obsidian-style `[[Note]]` or `[[Note|label]]` links navigate within the notebook; YAML front matter stays in the file and is hidden from preview. No graph view is included.
+Choose the **Markdown**, **Split**, or **Preview** icon in the note toolbar; tooltips identify each view. Journal keeps its page title visible while the note name stays centered above a bordered notebook area. Double-click the note name to rename it in place; Enter saves and Escape cancels. Folder arrows show whether their contents are expanded. Preview renders headings, lists, tables, code, quotes, and links. Relative Markdown links and Obsidian-style `[[Note]]` or `[[Note|label]]` links navigate within the notebook; YAML front matter stays in the file and is hidden from preview. No graph view is included.
 
 Select text and right-click for bold, italic, strikethrough, headings, code, lists, tasks, quotes, links, tables, and dividers. Ctrl/Cmd+B and Ctrl/Cmd+I also work; editor undo restores formatting changes. Notes autosave after a short idle period and before switching files, exporting a setup, updating, or closing. Preview layout is cached and rendered by visible blocks; file operations and searches run in the background. Each note supports up to 8 MiB of UTF-8 text.
 
 Use **Refresh** after editing notes in another application. If an external edit conflicts with an unsaved draft, Amigo preserves both and offers to reload or save a recovered copy. Journal notes are plain files, independent of Finance vault encryption; setup exports include them.
 
-[Split editor](docs/journal-split.png) · [Rendered notebook](docs/journal-preview.png) · [Dark Markdown editor](docs/journal-source-dark.png)
+[Split editor](docs/journal-split.png) · [Rendered notebook](docs/journal-preview.png) · [Dark Markdown editor](docs/journal-source-dark.png) · [Inline note rename](docs/journal-rename.png)
 
 ## Updates
 

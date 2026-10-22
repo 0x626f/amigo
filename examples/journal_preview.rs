@@ -15,7 +15,7 @@ struct Preview {
     board: String,
     vault: String,
 }
-const SCENES: [&str; 8] = [
+const SCENES: [&str; 9] = [
     "journal-split",
     "journal-preview",
     "journal-source",
@@ -24,9 +24,25 @@ const SCENES: [&str; 8] = [
     "journal-settings",
     "board-settings",
     "vault-settings",
+    "journal-rename",
 ];
 impl App for Preview {
     fn raw_input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
+        if self.step == 8
+            && [5, 7].contains(&self.frames)
+            && let Some(response) = ctx.read_response(egui::Id::new("journal-note-title"))
+        {
+            let pos = response.rect.center();
+            input.events.push(egui::Event::PointerMoved(pos));
+            for pressed in [true, false] {
+                input.events.push(egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+        }
         if self.frames == 5 && self.step < 3 {
             let mode = [Mode::Split, Mode::Preview, Mode::Source][self.step];
             if let Some(response) = ctx.read_response(egui::Id::new(("journal-mode", mode))) {
@@ -73,7 +89,7 @@ impl App for Preview {
         if self.frames == 0 {
             self.app.section = Section::Journal;
             let page = match self.step {
-                3 => Some(SettingsPage::General),
+                3 => Some(SettingsPage::Tasks),
                 4 => Some(SettingsPage::Updates),
                 5 => Some(SettingsPage::Journal),
                 6 => Some(SettingsPage::Board(self.board.clone())),

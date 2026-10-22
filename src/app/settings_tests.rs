@@ -31,6 +31,7 @@ fn single_settings_entry_navigates_all_pages_and_fits_both_themes_and_sizes() {
         for dark in [false, true] {
             let (mut app, ctx) = harness();
             app.workspace.dark_mode = dark;
+            app.section = Section::Journal;
             settle(&mut app, &ctx, size);
             let open = ctx
                 .read_response(egui::Id::new("app-settings-open"))
@@ -56,7 +57,7 @@ fn single_settings_entry_navigates_all_pages_and_fits_both_themes_and_sizes() {
                 SettingsPage::Savings(vault),
                 SettingsPage::Journal,
                 SettingsPage::Updates,
-                SettingsPage::General,
+                SettingsPage::Tasks,
             ] {
                 settle(&mut app, &ctx, size);
                 let nav = ctx
@@ -88,8 +89,15 @@ fn journal_preferences_save_through_enter_and_survive_reload() {
     let (mut app, ctx) = harness();
     let size = egui::vec2(980., 640.);
     app.open_settings(SettingsPage::Journal);
-    let output = settle(&mut app, &ctx, size);
-    click(&mut app, &ctx, size, text_rect(&output, "Preview").center());
+    settle(&mut app, &ctx, size);
+    let preview = ctx
+        .read_response(egui::Id::new((
+            "journal-default-mode",
+            amigo_core::journal::Mode::Preview,
+        )))
+        .unwrap()
+        .rect;
+    click(&mut app, &ctx, size, preview.center());
     for pressed in [true, false] {
         render_sized(
             &mut app,
@@ -198,4 +206,81 @@ fn stashed_vault_save_does_not_revert_the_shared_finance_refresh_interval() {
     assert_eq!(app.finance.exchange_interval_seconds, 317);
     app.close_settings();
     std::fs::remove_dir_all(app.data_path).unwrap();
+}
+
+#[test]
+fn settings_rows_and_category_fields_share_edges_in_both_themes_and_sizes() {
+    for size in [egui::vec2(980., 640.), egui::vec2(1440., 900.)] {
+        for dark in [false, true] {
+            let (mut app, ctx) = harness();
+            app.workspace.dark_mode = dark;
+            app.workspace.finance.categories = [
+                "Rental",
+                "Subscription",
+                "Insurance",
+                "Support",
+                "Health",
+                "Transport",
+                "Long category with Unicode 🌍",
+                "X",
+            ]
+            .into_iter()
+            .enumerate()
+            .map(|(i, name)| StoredValue {
+                id: format!("geometry-{i}"),
+                name: name.into(),
+            })
+            .collect();
+            let ids: Vec<_> = app
+                .workspace
+                .finance
+                .categories
+                .iter()
+                .map(|c| c.id.clone())
+                .collect();
+            let vault = app.library.settings.vault.clone();
+            app.open_settings(SettingsPage::Expenses(vault));
+            let output = settle(&mut app, &ctx, size);
+            assert!(crate::app::tests::text_rect_optional(&output, "General").is_none());
+            let rows = app.settings_rows(&app.app_settings.as_ref().unwrap().page);
+            let mut expected: Option<egui::Rect> = None;
+            for (page, _, _, _) in rows {
+                let row = ctx
+                    .read_response(egui::Id::new(("settings-page", &page)))
+                    .unwrap()
+                    .rect;
+                if let Some(expected) = expected {
+                    assert!((row.left() - expected.left()).abs() < 0.1);
+                    assert!((row.right() - expected.right()).abs() < 0.1);
+                }
+                expected = Some(row);
+            }
+            let mut expected: Option<egui::Rect> = None;
+            for id in ids {
+                let field = ctx
+                    .read_response(egui::Id::new(("finance-category-name", id)))
+                    .unwrap()
+                    .rect;
+                assert!(field.right() < size.x - 50.);
+                if let Some(expected) = expected {
+                    assert!((field.left() - expected.left()).abs() < 0.1);
+                    assert!((field.right() - expected.right()).abs() < 0.1);
+                }
+                expected = Some(field);
+            }
+            app.close_settings();
+            settle(&mut app, &ctx, size);
+            let logo = ctx
+                .read_response(egui::Id::new("app-brand-logo"))
+                .unwrap()
+                .rect;
+            let title = ctx
+                .read_response(egui::Id::new("app-brand-title"))
+                .unwrap()
+                .rect;
+            assert!((logo.center().y - title.center().y).abs() < 1.);
+            assert!(logo.right() < title.left());
+            std::fs::remove_dir_all(app.data_path).unwrap();
+        }
+    }
 }

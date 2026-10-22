@@ -48,3 +48,9 @@ For implementation examples and geometry checks, read [Control patterns](referen
 Reuse `animate_toggle`, the animated palette, and `page_transition`. Animation IDs belong to stable entities, not row positions. Reverse transitions from their current value, request repaint while moving, and keep hit targets stationary. Theme changes update visuals without reinstalling fonts or rebuilding the font atlas.
 
 Check affected screens in both themes and at the supported 980 × 640 minimum and 1440 × 900 default sizes. Verify focus, popup bounds, long values, and scrolling as well as appearance. Use the synthetic preview in `examples/preview.rs`; isolate its data from the real library. Prefer existing behavior/geometry tests when interaction changes; a cosmetic adjustment does not automatically require a new test.
+
+## Settings and Journal layout
+
+App settings starts with Tasks and has no General page. Navigation rows keep equal outside edges, with hierarchy indentation inside the shared row. Reserve the actual action width and current item spacing when sizing inputs next to buttons; do not recalculate list widths from a previous row's expanded bounds.
+
+Journal keeps its page heading at the left and note name centered above a bordered notebook. Double-clicking the note name starts an inline rename, with Enter/check to save and Escape/cross to cancel. Markdown, Split, and Preview use distinct vector icons with tooltips and a selected state. Folder rows show expand/collapse arrows. Note export has no toolbar button.

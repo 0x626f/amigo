@@ -90,12 +90,17 @@ fn show_mode(
             .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
             .show(ui, |ui| {
                 let mut remove = None;
+                let row_width = ui.available_width();
+                let field_width = (row_width - 30. - ui.spacing().item_spacing.x).max(24.);
                 for category in &mut draft.categories {
                     ui.push_id(&category.id, |ui| {
                         ui.horizontal(|ui| {
-                            ui.add(
+                            ui.set_width(row_width);
+                            ui.add_sized(
+                                [field_width, design::CONTROL_HEIGHT],
                                 design::input(&mut category.name)
-                                    .desired_width((ui.available_width() - 42.0).max(100.0))
+                                    .id(egui::Id::new(("finance-category-name", &category.id)))
+                                    .desired_width(field_width)
                                     .hint_text("Category Name"),
                             );
                             if design::icon_button(

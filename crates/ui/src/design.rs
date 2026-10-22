@@ -8,7 +8,8 @@ pub use crate::dialogs::{
 pub use crate::keyboard::{ActionKeys, ActionShortcut, contains_keyboard_focus};
 pub use crate::search::SearchField;
 pub use controls::{
-    Button, button, checkbox, chip, icon_button, menu_button, small_button, small_checkbox,
+    Button, button, checkbox, chip, icon_button, menu_button, selected_icon_button, small_button,
+    small_checkbox,
 };
 use egui::{self, Color32, Rect, RichText, Stroke, StrokeKind, Vec2};
 
@@ -321,6 +322,9 @@ pub fn dot_with_size(ui: &mut egui::Ui, color: Color32, size: f32) {
 
 #[derive(Clone, Copy)]
 pub enum Icon {
+    Markdown,
+    Split,
+    Preview,
     Book,
     Lock,
     Unlock,
@@ -374,6 +378,33 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, kind: Icon, color: Color3
         )
     };
     match kind {
+        Icon::Markdown => {
+            box_at((3., 3.), (21., 21.), 2);
+            line(&[(9., 8.), (6., 12.), (9., 16.)]);
+            line(&[(15., 8.), (18., 12.), (15., 16.)]);
+        }
+        Icon::Split => {
+            box_at((3., 3.), (21., 21.), 2);
+            line(&[(12., 3.), (12., 21.)]);
+            for y in [8., 12., 16.] {
+                line(&[(6., y), (9., y)]);
+                line(&[(15., y), (18., y)]);
+            }
+        }
+        Icon::Preview => {
+            line(&[
+                (2., 12.),
+                (6., 7.),
+                (12., 5.),
+                (18., 7.),
+                (22., 12.),
+                (18., 17.),
+                (12., 19.),
+                (6., 17.),
+                (2., 12.),
+            ]);
+            painter.circle_stroke(p(12., 12.), rect.width() * 3. / 24., stroke);
+        }
         Icon::Book => {
             box_at((4., 3.), (20., 21.), 2);
             line(&[(8., 3.), (8., 21.)]);
@@ -580,6 +611,35 @@ pub fn nav_row(
     selected: bool,
     count: Option<usize>,
 ) -> egui::Response {
+    nav_row_with_options(
+        ui,
+        label,
+        kind,
+        selected,
+        NavRowOptions {
+            count,
+            ..Default::default()
+        },
+    )
+}
+#[derive(Default)]
+pub struct NavRowOptions {
+    pub indent: f32,
+    pub disclosure: Option<bool>,
+    pub count: Option<usize>,
+}
+pub fn nav_row_with_options(
+    ui: &mut egui::Ui,
+    label: &str,
+    kind: Icon,
+    selected: bool,
+    options: NavRowOptions,
+) -> egui::Response {
+    let NavRowOptions {
+        indent,
+        disclosure,
+        count,
+    } = options;
     let p = colors(ui);
     let (rect, response) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), 38.0), egui::Sense::click());
@@ -599,7 +659,7 @@ pub fn nav_row(
     paint_icon(
         ui.painter(),
         Rect::from_center_size(
-            egui::pos2(rect.left() + 22., rect.center().y),
+            egui::pos2(rect.left() + 22. + indent, rect.center().y),
             Vec2::splat(18.),
         ),
         kind,
@@ -610,14 +670,39 @@ pub fn nav_row(
         .into_galley(
             ui,
             Some(egui::TextWrapMode::Truncate),
-            (rect.width() - if count.is_some() { 77.0 } else { 54.0 }).max(0.0),
+            (rect.width()
+                - indent
+                - if count.is_some() || disclosure.is_some() {
+                    77.0
+                } else {
+                    54.0
+                })
+            .max(0.0),
             egui::TextStyle::Body,
         );
     ui.painter().galley(
-        egui::pos2(rect.left() + 43.0, rect.center().y - galley.size().y / 2.0),
+        egui::pos2(
+            rect.left() + 43.0 + indent,
+            rect.center().y - galley.size().y / 2.0,
+        ),
         galley,
         text_color,
     );
+    if let Some(open) = disclosure {
+        paint_icon(
+            ui.painter(),
+            Rect::from_center_size(
+                egui::pos2(rect.right() - 17., rect.center().y),
+                Vec2::splat(15.),
+            ),
+            if open {
+                Icon::ChevronUp
+            } else {
+                Icon::ChevronDown
+            },
+            color,
+        );
+    }
     if let Some(count) = count {
         ui.painter().text(
             egui::pos2(rect.right() - 13., rect.center().y),

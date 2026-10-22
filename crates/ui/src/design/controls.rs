@@ -208,6 +208,16 @@ pub fn menu_button<'a, R>(
     egui::InnerResponse::new(inner, response)
 }
 pub fn icon_button(ui: &mut Ui, id: egui::Id, kind: Icon, label: &str, size: f32) -> Response {
+    selected_icon_button(ui, id, kind, label, size, false)
+}
+pub fn selected_icon_button(
+    ui: &mut Ui,
+    id: egui::Id,
+    kind: Icon,
+    label: &str,
+    size: f32,
+    selected: bool,
+) -> Response {
     let (rect, _) = ui.allocate_exact_size(Vec2::splat(size), egui::Sense::hover());
     let response = ui.interact(rect, id, egui::Sense::click());
     let amount = hover_amount(ui, id, response.hovered() || response.has_focus());
@@ -216,14 +226,22 @@ pub fn icon_button(ui: &mut Ui, id: egui::Id, kind: Icon, label: &str, size: f32
     ui.painter().rect_filled(
         rect,
         8,
-        p.hover.gamma_multiply(if pressed { 1.0 } else { amount }),
+        if selected {
+            p.blue_tint
+        } else {
+            p.hover.gamma_multiply(if pressed { 1.0 } else { amount })
+        },
     );
     let glyph_size = size * 0.57 * (1.0 + 0.04 * amount - if pressed { 0.04 } else { 0.0 });
     paint_icon(
         ui.painter(),
         Rect::from_center_size(rect.center(), Vec2::splat(glyph_size)),
         kind,
-        p.muted.lerp_to_gamma(p.ink, amount),
+        if selected {
+            p.accent
+        } else {
+            p.muted.lerp_to_gamma(p.ink, amount)
+        },
     );
     if response.has_focus() {
         ui.painter()

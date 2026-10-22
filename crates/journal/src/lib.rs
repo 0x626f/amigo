@@ -71,6 +71,12 @@ pub struct JournalTab {
     expanded: BTreeSet<String>,
     folder: String,
     dialog: Option<NameDialog>,
+    title_edit: Option<TitleEdit>,
+}
+struct TitleEdit {
+    path: String,
+    value: String,
+    focus: bool,
 }
 struct NameDialog {
     kind: NameKind,
@@ -89,6 +95,7 @@ impl JournalTab {
             .path
             .rsplit_once('/')
             .map_or(String::new(), |(parent, _)| parent.into());
+        self.title_edit = None;
         self.editor = Some(Editor::new(document));
         self.error.clear();
     }
@@ -196,7 +203,6 @@ impl JournalTab {
                 entry.path.matches('/').count()
             };
             ui.horizontal(|ui| {
-                ui.add_space(depth as f32 * 12.);
                 let label = if self.matches.is_some() {
                     entry.path.strip_suffix(".md").unwrap_or(&entry.path)
                 } else {
@@ -212,7 +218,7 @@ impl JournalTab {
                     .editor
                     .as_ref()
                     .is_some_and(|e| e.document.path == entry.path);
-                let row = design::nav_row(
+                let row = design::nav_row_with_options(
                     ui,
                     label,
                     if entry.folder {
@@ -221,7 +227,16 @@ impl JournalTab {
                         Icon::Book
                     },
                     selected,
-                    None,
+                    design::NavRowOptions {
+                        indent: depth as f32 * 12.,
+                        disclosure: entry.folder.then(|| self.expanded.contains(&entry.path)),
+                        ..Default::default()
+                    },
+                );
+                ui.interact(
+                    row.rect,
+                    egui::Id::new(("journal-entry", &entry.path)),
+                    egui::Sense::hover(),
                 );
                 if row.clicked() {
                     if entry.folder {
@@ -267,45 +282,27 @@ impl JournalTab {
     }
     pub fn show(&mut self, ui: &mut egui::Ui, preferences: &mut Preferences) -> Option<Action> {
         let mut action = None;
-        let title_width = (ui.available_width() - 390.).max(0.);
+        let title_width = (ui.available_width() - 270.).max(0.);
         ui.horizontal(|ui| {
-            let title = self.editor.as_ref().map_or("Journal", |e| {
-                e.document.path.rsplit('/').next().unwrap_or("Journal")
-            });
-            let title = title.strip_suffix(".md").unwrap_or(title);
             ui.allocate_ui_with_layout(
                 egui::vec2(title_width, 38.),
                 egui::Layout::left_to_right(egui::Align::Center),
                 |ui| {
-                    ui.add_sized(
-                        [title_width, 38.],
-                        egui::Label::new(RichText::new(title).size(26.).strong()).truncate(),
-                    )
-                    .on_hover_text(title);
+                    let response = ui.add(
+                        egui::Label::new(RichText::new("Journal").size(32.).strong())
+                            .halign(egui::Align::Min),
+                    );
+                    ui.interact(
+                        response.rect,
+                        egui::Id::new("journal-page-title"),
+                        egui::Sense::hover(),
+                    );
                 },
             );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                for (mode, label) in [
-                    (Mode::Preview, "Preview"),
-                    (Mode::Split, "Split"),
-                    (Mode::Source, "Markdown"),
-                ] {
-                    let response = ui.selectable_value(&mut preferences.mode, mode, label);
-                    ui.interact(
-                        response.rect,
-                        egui::Id::new(("journal-mode", mode)),
-                        egui::Sense::hover(),
-                    );
-                }
+                mode_buttons(ui, &mut preferences.mode, "journal-mode");
+                ui.separator();
                 for (key, icon, label, candidate) in [
-                    (
-                        "export",
-                        Icon::Export,
-                        "Export Note",
-                        self.editor
-                            .as_ref()
-                            .map(|e| Action::Export(e.document.path.clone())),
-                    ),
                     (
                         "import",
                         Icon::Import,
@@ -368,45 +365,79 @@ impl JournalTab {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(40));
         }
-        let Some(editor) = &mut self.editor else {
-            ui.vertical_centered(|ui| {
-                ui.add_space(80.);
-                design::icon(ui, Icon::Book, colors(ui).muted, 44.);
-                ui.heading("Your Journal");
-                design::hint(ui, "Create a Markdown note or import existing .md files.");
-            });
-            return action;
-        };
         let width = ui.available_width();
         let height = ui.available_height().max(100.);
-        ui.add_enabled_ui(!self.loading, |ui| {
-            ui.allocate_ui_with_layout(
-                egui::vec2(width, height),
-                egui::Layout::left_to_right(egui::Align::Min),
-                |ui| match preferences.mode {
-                    Mode::Source => source(editor, preferences, ui, width, height),
-                    Mode::Preview => preview(editor, ui, width, height),
-                    Mode::Split => {
-                        let half = (width - ui.spacing().item_spacing.x - 1.) / 2.;
+        let palette = colors(ui);
+        let notebook = egui::Frame::new()
+            .fill(palette.card)
+            .stroke(egui::Stroke::new(1., palette.hover_line))
+            .corner_radius(6)
+            .inner_margin(0)
+            .show(ui, |ui| {
+                ui.set_min_size(egui::vec2(width - 2., height - 2.));
+                ui.set_max_size(egui::vec2(width - 2., height - 2.));
+                if self.editor.is_some() {
+                    action = self.note_header(ui).or(action.take());
+                    let Some(editor) = &mut self.editor else {
+                        return;
+                    };
+                    let width = ui.available_width();
+                    let height = ui.available_height().max(80.);
+                    ui.add_enabled_ui(!self.loading, |ui| {
                         ui.allocate_ui_with_layout(
-                            egui::vec2(half, height),
-                            egui::Layout::top_down(egui::Align::Min),
+                            egui::vec2(width, height),
+                            egui::Layout::left_to_right(egui::Align::Min),
                             |ui| {
-                                source(editor, preferences, ui, half, height);
+                                ui.spacing_mut().item_spacing.x = 0.;
+                                match preferences.mode {
+                                    Mode::Source => {
+                                        editor_pane(ui, width, height, |ui, width, height| {
+                                            source(editor, preferences, ui, width, height)
+                                        })
+                                    }
+                                    Mode::Preview => {
+                                        editor_pane(ui, width, height, |ui, width, height| {
+                                            preview(editor, ui, width, height)
+                                        })
+                                    }
+                                    Mode::Split => {
+                                        let half = (width - 1.) / 2.;
+                                        editor_pane(ui, half, height, |ui, width, height| {
+                                            source(editor, preferences, ui, width, height)
+                                        });
+                                        let (divider, _) = ui.allocate_exact_size(
+                                            egui::vec2(1., height),
+                                            egui::Sense::hover(),
+                                        );
+                                        ui.painter().line_segment(
+                                            [divider.center_top(), divider.center_bottom()],
+                                            egui::Stroke::new(1., palette.hover_line),
+                                        );
+                                        editor_pane(ui, half, height, |ui, width, height| {
+                                            preview(editor, ui, width, height)
+                                        });
+                                    }
+                                }
                             },
                         );
-                        ui.separator();
-                        ui.allocate_ui_with_layout(
-                            egui::vec2(half, height),
-                            egui::Layout::top_down(egui::Align::Min),
-                            |ui| {
-                                preview(editor, ui, half, height);
-                            },
-                        );
-                    }
-                },
-            );
-        });
+                    });
+                } else {
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(80.);
+                        design::icon(ui, Icon::Book, colors(ui).muted, 44.);
+                        ui.heading("Your Journal");
+                        design::hint(ui, "Create a Markdown note or import existing .md files.");
+                    });
+                }
+            });
+        ui.interact(
+            notebook.response.rect,
+            egui::Id::new("journal-notebook"),
+            egui::Sense::hover(),
+        );
+        let Some(editor) = &mut self.editor else {
+            return action;
+        };
         if let Some(target) = editor
             .preview_links
             .iter()
@@ -419,6 +450,124 @@ impl JournalTab {
                 target,
             });
         }
+        action
+    }
+    fn note_header(&mut self, ui: &mut egui::Ui) -> Option<Action> {
+        let keys = design::ActionKeys::capture(ui.ctx());
+        let editor = self.editor.as_ref()?;
+        let path = editor.document.path.clone();
+        let filename = path.rsplit('/').next().unwrap_or(&path);
+        let name = filename.strip_suffix(".md").unwrap_or(filename);
+        let width = ui.available_width();
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 46.), egui::Sense::hover());
+        let title_rect = egui::Rect::from_center_size(
+            rect.center(),
+            egui::vec2((width - 170.).clamp(80., 500.), 34.),
+        );
+        let mut action = None;
+        if let Some(edit) = &mut self.title_edit {
+            let id = egui::Id::new("journal-title-edit");
+            let response = ui.put(
+                title_rect,
+                design::input(&mut edit.value)
+                    .id(id)
+                    .font(egui::FontId::proportional(20.))
+                    .horizontal_align(egui::Align::Center)
+                    .interactive(!self.loading),
+            );
+            if edit.focus {
+                response.request_focus();
+                if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), id) {
+                    state
+                        .cursor
+                        .set_char_range(Some(egui::text::CCursorRange::two(
+                            egui::text::CCursor::new(0),
+                            egui::text::CCursor::new(edit.value.chars().count()),
+                        )));
+                    state.store(ui.ctx(), id);
+                }
+                edit.focus = false;
+            }
+            let valid = !edit.value.trim().is_empty() && !edit.value.contains(['/', '\\']);
+            let mut save = false;
+            let mut cancel = false;
+            let controls = egui::Rect::from_min_size(
+                egui::pos2(rect.right() - 78., rect.top() + 7.),
+                egui::vec2(72., 32.),
+            );
+            ui.scope_builder(
+                egui::UiBuilder::new()
+                    .max_rect(controls)
+                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                |ui| {
+                    ui.spacing_mut().item_spacing.x = 4.;
+                    save = ui
+                        .add_enabled_ui(valid && !self.loading, |ui| {
+                            design::icon_button(
+                                ui,
+                                egui::Id::new("journal-title-save"),
+                                Icon::Check,
+                                "Save Note Name",
+                                32.,
+                            )
+                        })
+                        .inner
+                        .clicked();
+                    cancel = design::icon_button(
+                        ui,
+                        egui::Id::new("journal-title-cancel"),
+                        Icon::Close,
+                        "Cancel Rename",
+                        32.,
+                    )
+                    .clicked();
+                },
+            );
+            let shortcut = keys.in_ui(ui, valid && !self.loading);
+            if save || shortcut.confirm {
+                let value = edit.value.trim();
+                let new = edit.path.rsplit_once('/').map_or_else(
+                    || value.to_owned(),
+                    |(parent, _)| format!("{parent}/{value}"),
+                );
+                action = Some(Action::Rename {
+                    old: edit.path.clone(),
+                    name: new,
+                });
+                // Retain the typed name if the background rename fails.
+                ui.memory_mut(|m| m.surrender_focus(id));
+            } else if !self.loading && (cancel || shortcut.cancel) {
+                self.title_edit = None;
+                ui.memory_mut(|m| m.surrender_focus(id));
+            }
+        } else {
+            let response = ui
+                .put(
+                    title_rect,
+                    egui::Label::new(RichText::new(name).size(20.).strong())
+                        .truncate()
+                        .halign(egui::Align::Center)
+                        .sense(egui::Sense::click()),
+                )
+                .on_hover_text("Double-click to rename note");
+            ui.interact(
+                response.rect,
+                egui::Id::new("journal-note-title"),
+                egui::Sense::hover(),
+            );
+            if response.double_clicked() && !self.loading {
+                self.title_edit = Some(TitleEdit {
+                    value: name.into(),
+                    path,
+                    focus: true,
+                });
+                ui.ctx().request_repaint();
+            }
+        }
+        ui.painter().line_segment(
+            [rect.left_bottom(), rect.right_bottom()],
+            egui::Stroke::new(1., colors(ui).hover_line),
+        );
         action
     }
     pub fn dialogs(&mut self, ctx: &egui::Context) -> Option<Action> {
@@ -486,6 +635,50 @@ impl JournalTab {
         self.dialog = Some(dialog);
         None
     }
+}
+pub fn mode_buttons(ui: &mut egui::Ui, mode: &mut Mode, prefix: &str) {
+    let mut modes = [
+        (Mode::Source, Icon::Markdown, "Markdown"),
+        (Mode::Split, Icon::Split, "Split"),
+        (Mode::Preview, Icon::Preview, "Preview"),
+    ];
+    if ui.layout().main_dir == egui::Direction::RightToLeft {
+        modes.reverse();
+    }
+    for (value, icon, label) in modes {
+        if design::selected_icon_button(
+            ui,
+            egui::Id::new((prefix, value)),
+            icon,
+            label,
+            32.,
+            *mode == value,
+        )
+        .clicked()
+        {
+            *mode = value;
+        }
+    }
+}
+fn editor_pane(
+    ui: &mut egui::Ui,
+    width: f32,
+    height: f32,
+    contents: impl FnOnce(&mut egui::Ui, f32, f32),
+) {
+    ui.allocate_ui_with_layout(
+        egui::vec2(width, height),
+        egui::Layout::top_down(egui::Align::Min),
+        |ui| {
+            egui::Frame::new().inner_margin(14).show(ui, |ui| {
+                let width = (width - 28.).max(24.);
+                let height = (height - 28.).max(24.);
+                ui.set_min_size(egui::vec2(width, height));
+                ui.set_max_size(egui::vec2(width, height));
+                contents(ui, width, height);
+            });
+        },
+    );
 }
 fn source(editor: &mut Editor, prefs: &Preferences, ui: &mut egui::Ui, width: f32, height: f32) {
     let id = egui::Id::new(("journal-editor", &editor.document.path));
@@ -733,6 +926,7 @@ fn encode_target(value: &str) -> String {
 mod tests {
     use super::*;
     struct Harness {
+        action: Option<Action>,
         tab: JournalTab,
         prefs: Preferences,
     }
@@ -750,7 +944,7 @@ mod tests {
             },
             |ui| {
                 egui::CentralPanel::default().show(ui, |ui| {
-                    app.tab.show(ui, &mut app.prefs);
+                    app.action = app.tab.show(ui, &mut app.prefs);
                 });
             },
         );
@@ -779,6 +973,7 @@ mod tests {
         let ctx = egui::Context::default();
         design::install(&ctx);
         let mut app = Harness {
+            action: None,
             tab: JournalTab::default(),
             prefs: Preferences {
                 mode: Mode::Source,
@@ -865,6 +1060,7 @@ mod tests {
         let ctx = egui::Context::default();
         design::install(&ctx);
         let mut app = Harness {
+            action: None,
             tab: JournalTab::default(),
             prefs: Preferences {
                 mode: Mode::Source,
@@ -910,12 +1106,201 @@ mod tests {
                 .contains("Allowed")
         );
     }
+    fn click(app: &mut Harness, ctx: &egui::Context, pos: egui::Pos2, size: egui::Vec2) {
+        for pressed in [true, false] {
+            frame(
+                app,
+                ctx,
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+                size,
+            );
+        }
+    }
+    #[test]
+    fn notebook_keeps_title_borders_and_icon_controls_and_double_click_renames() {
+        for size in [egui::vec2(680., 500.), egui::vec2(1160., 760.)] {
+            let ctx = egui::Context::default();
+            design::install(&ctx);
+            let mut app = Harness {
+                action: None,
+                tab: JournalTab::default(),
+                prefs: Preferences::default(),
+            };
+            app.tab.open(Document {
+                path: "Folder/Original.md".into(),
+                text: "# Original\n\nBody".into(),
+                fingerprint: "test".into(),
+            });
+            for _ in 0..4 {
+                frame(&mut app, &ctx, vec![], size);
+            }
+            let title = ctx
+                .read_response(egui::Id::new("journal-note-title"))
+                .unwrap()
+                .rect;
+            let notebook = ctx
+                .read_response(egui::Id::new("journal-notebook"))
+                .unwrap()
+                .rect;
+            let heading = ctx
+                .read_response(egui::Id::new("journal-page-title"))
+                .unwrap()
+                .rect;
+            assert!((title.center().x - notebook.center().x).abs() < 1.);
+            assert!(heading.left() < notebook.left() + 1.);
+            assert!(notebook.right() <= size.x && notebook.bottom() <= size.y);
+            assert!(
+                ctx.read_response(egui::Id::new(("journal", "export")))
+                    .is_none()
+            );
+            click(&mut app, &ctx, title.center(), size);
+            click(&mut app, &ctx, title.center(), size);
+            frame(&mut app, &ctx, vec![], size);
+            assert!(app.tab.title_edit.is_some());
+            assert_eq!(
+                ctx.memory(|m| m.focused()),
+                Some(egui::Id::new("journal-title-edit"))
+            );
+            frame(
+                &mut app,
+                &ctx,
+                vec![egui::Event::Text("Renamed 🌍".into())],
+                size,
+            );
+            frame(
+                &mut app,
+                &ctx,
+                vec![egui::Event::Key {
+                    key: egui::Key::Enter,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                size,
+            );
+            assert!(
+                matches!(&app.action, Some(Action::Rename {old, name}) if old == "Folder/Original.md" && name == "Folder/Renamed 🌍")
+            );
+            assert_eq!(
+                app.tab.editor.as_ref().unwrap().document.text,
+                "# Original\n\nBody"
+            );
+            app.tab.title_edit = Some(TitleEdit {
+                path: "Folder/Original.md".into(),
+                value: "Discard me".into(),
+                focus: true,
+            });
+            frame(&mut app, &ctx, vec![], size);
+            frame(
+                &mut app,
+                &ctx,
+                vec![egui::Event::Key {
+                    key: egui::Key::Escape,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                size,
+            );
+            assert!(app.tab.title_edit.is_none());
+            assert!(app.action.is_none());
+            for mode in [Mode::Source, Mode::Split, Mode::Preview] {
+                let button = ctx
+                    .read_response(egui::Id::new(("journal-mode", mode)))
+                    .unwrap()
+                    .rect;
+                click(&mut app, &ctx, button.center(), size);
+                assert_eq!(app.prefs.mode, mode);
+            }
+        }
+    }
+    #[test]
+    fn folder_disclosure_opens_and_closes_nested_notes() {
+        let ctx = egui::Context::default();
+        design::install(&ctx);
+        let mut tab = JournalTab {
+            loaded: true,
+            entries: vec![
+                Entry {
+                    path: "Folder".into(),
+                    folder: true,
+                },
+                Entry {
+                    path: "Folder/Note.md".into(),
+                    folder: false,
+                },
+            ],
+            ..Default::default()
+        };
+        fn render(tab: &mut JournalTab, ctx: &egui::Context, events: Vec<egui::Event>) {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(224., 600.),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::CentralPanel::default().show(ui, |ui| {
+                        tab.sidebar(ui);
+                    });
+                },
+            );
+            output.textures_delta.clear();
+        }
+        for _ in 0..3 {
+            render(&mut tab, &ctx, vec![]);
+        }
+        for open in [true, false] {
+            let folder = ctx
+                .read_response(egui::Id::new(("journal-entry", "Folder")))
+                .unwrap()
+                .rect;
+            for pressed in [true, false] {
+                render(
+                    &mut tab,
+                    &ctx,
+                    vec![
+                        egui::Event::PointerMoved(folder.center()),
+                        egui::Event::PointerButton {
+                            pos: folder.center(),
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                );
+            }
+            render(&mut tab, &ctx, vec![]);
+            render(&mut tab, &ctx, vec![]);
+            assert_eq!(tab.expanded.contains("Folder"), open);
+            assert_eq!(
+                ctx.read_response(egui::Id::new(("journal-entry", "Folder/Note.md")))
+                    .is_some(),
+                open
+            );
+        }
+        assert!(!tab.expanded.contains("Folder"));
+    }
     #[test]
     fn every_mode_fits_both_window_sizes_and_cache_tracks_edits() {
         for size in [egui::vec2(680., 500.), egui::vec2(1160., 760.)] {
             let ctx = egui::Context::default();
             design::install(&ctx);
             let mut app = Harness {
+                action: None,
                 tab: JournalTab::default(),
                 prefs: Preferences::default(),
             };
