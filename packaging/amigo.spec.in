@@ -1,13 +1,16 @@
 Name: amigo
 Version: @VERSION@
-Release: 1
+Release: 2
 Summary: Personal tasks, calendars, and finances
 License: @LICENSE@
 URL: https://github.com/0x626f/amigo
 Vendor: 0x626f
 Packager: 0x626f
 Requires: libX11, libXcursor, libXi, libXrandr, libxkbcommon, libxkbcommon-x11
-Requires: wayland-libs, libglvnd-glx, libglvnd-egl
+# Wayland is split into separate packages on newer Fedora releases. Require the
+# actual 64-bit libraries rather than a distribution-specific package name.
+Requires: libwayland-client.so.0()(64bit), libwayland-cursor.so.0()(64bit), libwayland-egl.so.1()(64bit)
+Requires: libglvnd-glx, libglvnd-egl
 Requires: dbus-libs, xdg-utils, xdg-desktop-portal
 
 # Package the already-built executable. Keep automatic ELF dependency discovery.

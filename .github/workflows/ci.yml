@@ -130,6 +130,17 @@ jobs:
       - name: Build all native packages
         run: python -B scripts/dev.py dist
 
+      - name: Verify RPM installation on Fedora
+        if: runner.os == 'Linux'
+        run: |
+          docker run --rm \
+            -v "$PWD/dist:/packages:ro" \
+            registry.fedoraproject.org/fedora:44 bash -euc '
+              dnf -y --setopt=install_weak_deps=False install /packages/*/linux/*/*.rpm
+              rpm -q amigo
+              rpm -V amigo
+            '
+
       - name: Record checksums and source commit
         run: python -B scripts/distribute.py prepare
 

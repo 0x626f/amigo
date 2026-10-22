@@ -138,14 +138,20 @@ button stays on **Loading…**, close Discover and reopen the file after pending
 system package operations finish, or install with Fedora's package manager:
 
 ```sh
-sudo dnf install ./amigo-0.0.2-linux-x86_64.rpm
+sudo dnf install ./amigo-0.0.2-2-linux-x86_64.rpm
 ```
+
+For v0.0.2, use the **revision 2 RPM** (`amigo-0.0.2-2-linux-<arch>.rpm`).
+The original revision requires the obsolete `wayland-libs` package name and
+cannot install on Fedora 44. Revision 2 requires the Wayland libraries directly
+and contains the same application binary. CI also tests RPM installation in a
+Fedora 44 container for both supported architectures.
 
 To inspect the package without installing it:
 
 ```sh
-rpm -qp --queryformat 'Name: %{NAME}\nLicense: %{LICENSE}\nPackager: %{PACKAGER}\nVendor: %{VENDOR}\n' ./amigo-0.0.2-linux-x86_64.rpm
-pkcon get-details-local ./amigo-0.0.2-linux-x86_64.rpm
+rpm -qp --queryformat 'Name: %{NAME}\nLicense: %{LICENSE}\nPackager: %{PACKAGER}\nVendor: %{VENDOR}\n' ./amigo-0.0.2-2-linux-x86_64.rpm
+pkcon get-details-local ./amigo-0.0.2-2-linux-x86_64.rpm
 ```
 
 The license expression defaults to `[workspace.package].license` in `Cargo.toml`
