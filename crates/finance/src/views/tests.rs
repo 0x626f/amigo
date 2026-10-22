@@ -49,7 +49,7 @@ fn wallet_currency_picker_precedes_settings_and_persists_selection() {
             .unwrap()
             .rect;
         let settings = ctx
-            .read_response(egui::Id::new("vault-settings"))
+            .read_response(egui::Id::new("vault-import"))
             .unwrap()
             .rect;
         assert!(picker.right() < settings.left());
@@ -74,7 +74,7 @@ fn wallet_currency_picker_precedes_settings_and_persists_selection() {
                 app.plan.meta.reporting_currency_id
             );
         }
-        click(&mut app, &ctx, size, settings.center());
+        app.tab.configure_vault(&app.plan);
         for _ in 0..4 {
             let _ = frame(&mut app, &ctx, size, vec![]);
         }
@@ -327,7 +327,7 @@ fn finance_toolbar_orders_controls_and_combines_search_currency_filters_and_crea
             .unwrap()
             .rect;
         let settings = ctx
-            .read_response(egui::Id::new("vault-settings"))
+            .read_response(egui::Id::new("vault-import"))
             .unwrap()
             .rect;
         let filters = ctx
@@ -2309,11 +2309,7 @@ fn expense_and_savings_categories_are_separate_settings_owned_dropdowns() {
             for _ in 0..3 {
                 let _ = frame(&mut app, &ctx, size, vec![]);
             }
-            let settings = ctx
-                .read_response(egui::Id::new("vault-settings"))
-                .unwrap()
-                .rect;
-            click(&mut app, &ctx, size, settings.center());
+            app.tab.configure_categories(&app.plan);
             assert!(app.tab.category_settings.is_some());
             click_text(&mut app, &ctx, size, "+ Category");
             app.tab

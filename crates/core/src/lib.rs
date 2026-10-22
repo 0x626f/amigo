@@ -3,6 +3,7 @@ pub mod attachments;
 pub mod audit;
 pub mod backup;
 pub mod credentials;
+pub mod journal;
 pub mod library;
 pub mod model;
 #[cfg(test)]
@@ -11,3 +12,4 @@ pub mod organizer;
 pub mod recurrence;
 pub mod reference_data;
 pub mod storage;
+pub mod updates;

@@ -354,3 +354,62 @@ fn exports_reject_symlinks_without_reading_files_outside_the_library() {
     std::os::unix::fs::symlink("/etc/hostname", library.root.join("external")).unwrap();
     assert!(Archive::capture(&library, Scope::Setup).is_err());
 }
+
+#[test]
+fn calendar_delete_preserves_journal_boards_vaults_and_telegram_and_setup_roundtrips_markdown() {
+    let temp = Temp::new();
+    let library = fixture(&temp.0.join("source"));
+    let journal = crate::journal::Journal::open(&library.root).unwrap();
+    let note = "---\ntags: [notes]\n---\n# Journal 🌍\n\n**Markdown**\n";
+    journal.create("Note", note).unwrap();
+    let mut organizer = Organizer {
+        name: "Work Calendar".into(),
+        ..Default::default()
+    };
+    organizer.events.push(CalendarEvent::default());
+    organizer.save(&library.root).unwrap();
+    let mut credentials = Credentials {
+        telegram_token: "secret-token".into(),
+        telegram_chat: "chat".into(),
+        ..Default::default()
+    };
+    credentials
+        .calendar_urls
+        .insert("feed".into(), "https://example.com/feed.ics".into());
+    credentials.save(&library.root).unwrap();
+    let board = library.load_board(&library.settings.board).unwrap();
+    let vault = library.load_plain_vault(&library.vaults[0]).unwrap();
+    delete(&library, &Scope::Calendar).unwrap();
+    assert!(Organizer::load(&library.root).unwrap().events.is_empty());
+    assert!(
+        Credentials::load(&library.root)
+            .unwrap()
+            .calendar_urls
+            .is_empty()
+    );
+    assert_eq!(
+        Credentials::load(&library.root).unwrap().telegram_token,
+        "secret-token"
+    );
+    let reloaded = Library::open(library.root.clone(), None).unwrap();
+    assert_eq!(
+        reloaded.load_board(&reloaded.settings.board).unwrap(),
+        board
+    );
+    assert_eq!(
+        reloaded.load_plain_vault(&reloaded.vaults[0]).unwrap(),
+        vault
+    );
+    assert_eq!(journal.read("Note.md").unwrap().text, note);
+    let archive = Archive::capture(&reloaded, Scope::Setup).unwrap();
+    let dest = Library::open(temp.0.join("dest"), None).unwrap();
+    archive.import(&dest).unwrap();
+    assert_eq!(
+        crate::journal::Journal::open(&dest.root)
+            .unwrap()
+            .read("Note.md")
+            .unwrap()
+            .text,
+        note
+    );
+}

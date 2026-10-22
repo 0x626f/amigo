@@ -4,9 +4,7 @@ impl TasksUi<'_> {
     fn new_task(&mut self, status: &str) {
         self.state.new_task(self.workspace, status);
     }
-    fn manage_board(&mut self) {
-        self.state.manage_board(self.workspace);
-    }
+
     fn filters(&mut self, ui: &mut egui::Ui) {
         let response = design::icon_button(
             ui,
@@ -124,8 +122,9 @@ impl TasksUi<'_> {
         let title_width = (ui.available_width()
             - search_width
             - create_width.max(110.0)
-            - design::CONTROL_HEIGHT * 2.0
-            - ui.spacing().item_spacing.x * 4.0)
+            - design::CONTROL_HEIGHT
+            - 4.0 * 32.0
+            - ui.spacing().item_spacing.x * 7.0)
             .max(0.0);
         ui.horizontal(|ui| {
             ui.allocate_ui_with_layout(
@@ -145,16 +144,43 @@ impl TasksUi<'_> {
                     self.new_task(&status);
                 }
                 self.filters(ui);
-                if design::icon_button(
-                    ui,
-                    egui::Id::new("task-board-options"),
-                    Icon::Settings,
-                    "Board Settings",
-                    design::CONTROL_HEIGHT,
-                )
-                .clicked()
-                {
-                    self.manage_board();
+                for (key, icon, label, action) in [
+                    (
+                        "rename",
+                        Icon::Edit,
+                        "Rename Board",
+                        TasksAction::RenameBoardRequested,
+                    ),
+                    (
+                        "delete",
+                        Icon::Trash,
+                        "Delete Board",
+                        TasksAction::DeleteBoard,
+                    ),
+                    (
+                        "export",
+                        Icon::Export,
+                        "Export Board",
+                        TasksAction::ExportBoard,
+                    ),
+                    (
+                        "import",
+                        Icon::Import,
+                        "Import Board",
+                        TasksAction::ImportBoard,
+                    ),
+                ] {
+                    if design::icon_button(
+                        ui,
+                        egui::Id::new(format!("board-{key}")),
+                        icon,
+                        label,
+                        32.,
+                    )
+                    .clicked()
+                    {
+                        self.state.action = Some(action);
+                    }
                 }
                 self.state.search_control.show(
                     ui,

@@ -2,92 +2,98 @@
 use super::*;
 use amigo_ui::forms::field_label;
 impl Amigo {
-    pub(in crate::app) fn calendar_settings_ui(&mut self, ctx: &egui::Context) {
+    pub(in crate::app) fn calendar_settings_in(&mut self, ui: &mut egui::Ui) -> bool {
+        let ctx = ui.ctx().clone();
+        self.calendar_settings_mode(&ctx, Some(ui))
+    }
+    fn calendar_settings_mode(
+        &mut self,
+        ctx: &egui::Context,
+        embedded: Option<&mut egui::Ui>,
+    ) -> bool {
         let available = !self.productivity.credentials_blocked && !self.productivity.blocked;
         let Some(settings) = &mut self.productivity.settings else {
-            return;
+            return false;
         };
         let keys = design::ActionKeys::capture(ctx);
         let mut close = false;
         let mut save = false;
         let mut remove_subscription = None;
         let mut refresh = false;
-        let mut data_action = None;
-        let response =
-            design::modal(ctx, egui::Id::new("calendar-settings-dialog")).show(ctx, |ui| {
+        let data_action: Option<design::DataAction> = None;
+        let inline = embedded.is_some();
+        let mut body = |ui: &mut egui::Ui| {
+            if inline {
+                ui.heading("Calendar Settings");
+            } else {
                 ui.set_width(design::dialog_width(ctx, 680.));
-                let heading = design::data_settings_heading(
-                    ui,
-                    "Calendar Settings",
-                    "Calendar",
-                    "calendar-settings",
-                    false,
-                    available,
-                );
-                close = heading.close.clicked();
-                data_action = heading.data_action;
-                ui.horizontal(|ui| {
-                    for (page, label) in [
-                        (SettingsPage::Calendar, "Calendars"),
-                        (SettingsPage::Notifications, "Notifications"),
-                    ] {
-                        ui.selectable_value(&mut settings.page, page, label);
-                    }
-                });
-                ui.add_space(12.);
-                egui::ScrollArea::vertical()
-                    .max_height((design::dialog_body_height(ctx) - 52.).max(160.))
-                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-                    .show(ui, |ui| {
-                        ui.add_enabled_ui(available, |ui| {
-                            if settings.page == SettingsPage::Calendar {
-                                ui.horizontal(|ui| {
-                                    field_label(ui, "Refresh Every:");
-                                    ui.add(
-                                        egui::DragValue::new(
-                                            &mut settings
-                                                .calendar_settings
-                                                .refresh_interval_seconds,
-                                        )
-                                        .range(1..=86_400)
-                                        .suffix(" s"),
-                                    );
-                                    refresh = design::button(ui, "Refresh Now")
-                                        .on_hover_text("Refresh saved calendars")
-                                        .clicked();
-                                });
-                                ui.add_space(20.);
-                                remove_subscription = calendar_form(settings, ui);
-                            }
-                            if settings.page == SettingsPage::Notifications {
-                                telegram_form(settings, ui);
-                            }
-                        });
-                    });
-                if !settings.error.is_empty() {
-                    ui.colored_label(colors(ui).red, &settings.error);
+                close = design::settings_heading(ui, "Calendar Settings").clicked();
+            }
+            ui.horizontal(|ui| {
+                for (page, label) in [
+                    (SettingsPage::Calendar, "Calendars"),
+                    (SettingsPage::Notifications, "Notifications"),
+                ] {
+                    ui.selectable_value(&mut settings.page, page, label);
                 }
-                design::dialog_footer(ui, |ui| {
-                    if design::button(ui, "Cancel").clicked() {
-                        close = true;
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .add_enabled_ui(available, |ui| {
-                                design::dialog_primary(ui, "Save Settings")
-                            })
-                            .inner
-                            .clicked()
-                        {
-                            save = true;
+            });
+            ui.add_space(12.);
+            egui::ScrollArea::vertical()
+                .max_height((design::dialog_body_height(ctx) - 52.).max(160.))
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                .show(ui, |ui| {
+                    ui.add_enabled_ui(available, |ui| {
+                        if settings.page == SettingsPage::Calendar {
+                            ui.horizontal(|ui| {
+                                field_label(ui, "Refresh Every:");
+                                ui.add(
+                                    egui::DragValue::new(
+                                        &mut settings.calendar_settings.refresh_interval_seconds,
+                                    )
+                                    .range(1..=86_400)
+                                    .suffix(" s"),
+                                );
+                                refresh = design::button(ui, "Refresh Now")
+                                    .on_hover_text("Refresh saved calendars")
+                                    .clicked();
+                            });
+                            ui.add_space(20.);
+                            remove_subscription = calendar_form(settings, ui);
+                        }
+                        if settings.page == SettingsPage::Notifications {
+                            telegram_form(settings, ui);
                         }
                     });
                 });
+            if !settings.error.is_empty() {
+                ui.colored_label(colors(ui).red, &settings.error);
+            }
+            design::dialog_footer(ui, |ui| {
+                if design::button(ui, "Cancel").clicked() {
+                    close = true;
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .add_enabled_ui(available, |ui| design::dialog_primary(ui, "Save Settings"))
+                        .inner
+                        .clicked()
+                    {
+                        save = true;
+                    }
+                });
             });
+        };
+        let shortcut = if let Some(ui) = embedded {
+            body(ui);
+            keys.in_ui(ui, available)
+        } else {
+            let response =
+                design::modal(ctx, egui::Id::new("calendar-settings-dialog")).show(ctx, body);
+            keys.dialog(&response, available)
+        };
         if let Some(id) = remove_subscription {
             settings.subscriptions.retain(|s| s.id != id);
         }
-        let shortcut = keys.dialog(&response, available);
         close |= shortcut.cancel;
         save |= shortcut.confirm;
         if save {
@@ -187,6 +193,7 @@ impl Amigo {
         if let Some(action) = data_action {
             self.open_data_dialog(amigo_core::backup::Scope::Calendar, action);
         }
+        close && !save
     }
 }
 

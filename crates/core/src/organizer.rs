@@ -137,6 +137,7 @@ impl CalendarEvent {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Organizer {
+    pub name: String,
     pub version: u32,
     pub calendars: Vec<CalendarSource>,
     pub subscriptions: Vec<CalendarSubscription>,
@@ -150,6 +151,7 @@ pub struct Organizer {
 impl Default for Organizer {
     fn default() -> Self {
         Self {
+            name: "Personal".into(),
             version: 3,
             calendars: vec![],
             subscriptions: vec![],

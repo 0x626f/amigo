@@ -321,6 +321,10 @@ pub fn dot_with_size(ui: &mut egui::Ui, color: Color32, size: f32) {
 
 #[derive(Clone, Copy)]
 pub enum Icon {
+    Book,
+    Lock,
+    Unlock,
+    Refresh,
     Grip,
     Account,
     Board,
@@ -370,6 +374,42 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, kind: Icon, color: Color3
         )
     };
     match kind {
+        Icon::Book => {
+            box_at((4., 3.), (20., 21.), 2);
+            line(&[(8., 3.), (8., 21.)]);
+            line(&[(11., 8.), (17., 8.)]);
+            line(&[(11., 12.), (17., 12.)]);
+        }
+        Icon::Lock | Icon::Unlock => {
+            box_at((5., 10.), (19., 21.), 2);
+            if matches!(kind, Icon::Unlock) {
+                line(&[(9., 10.), (9., 5.), (11., 3.), (15., 3.), (18., 5.)]);
+            } else {
+                line(&[
+                    (8., 10.),
+                    (8., 5.),
+                    (10., 3.),
+                    (14., 3.),
+                    (16., 5.),
+                    (16., 10.),
+                ]);
+            }
+            line(&[(12., 14.), (12., 17.)]);
+        }
+        Icon::Refresh => {
+            line(&[
+                (20., 9.),
+                (17., 5.),
+                (11., 3.),
+                (6., 5.),
+                (3., 10.),
+                (4., 16.),
+                (8., 20.),
+                (14., 21.),
+                (19., 18.),
+            ]);
+            line(&[(20., 3.), (20., 9.), (14., 9.)]);
+        }
         Icon::Grip => {
             for x in [9., 15.] {
                 for y in [6., 12., 18.] {

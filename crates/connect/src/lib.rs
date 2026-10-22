@@ -1,5 +1,6 @@
 //! Provider APIs run only on shell-owned worker threads. No GUI or persistence here.
 pub mod calendar_feed;
+pub mod updates;
 use amigo_core::{credentials::Credentials, organizer::*};
 use reqwest::blocking::{Client, RequestBuilder};
 use std::{ops::Deref, sync::atomic::Ordering, time::Instant};

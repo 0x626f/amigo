@@ -16,6 +16,10 @@ pub enum View {
 }
 pub enum CalendarAction {
     Settings,
+    Import,
+    Export,
+    Delete,
+    Rename,
     Sync,
 }
 pub struct CalendarTab {
@@ -56,7 +60,7 @@ impl CalendarTab {
             ui.spacing_mut().item_spacing.y = 4.0;
             design::eyebrow(ui, "MY CALENDARS");
             let mut local = !self.hidden.contains("local");
-            if calendar_name(ui, &mut local, "Personal").changed() {
+            if calendar_name(ui, &mut local, &o.name).changed() {
                 self.toggle("local", local);
             }
             for c in o.calendars.iter().filter(|c| o.source_enabled(&c.account)) {
@@ -80,7 +84,7 @@ impl CalendarTab {
     pub fn show(&mut self, o: &Organizer, ui: &mut egui::Ui) -> Option<CalendarAction> {
         let mut action = None;
         let search_width = self.search_control.width(ui, "calendar-search", 190.);
-        let tools_width = search_width + 3. * 38. + 3. * ui.spacing().item_spacing.x;
+        let tools_width = search_width + 2. * 38. + 4. * 30. + 6. * ui.spacing().item_spacing.x;
         let heading_width =
             (ui.available_width() - tools_width - ui.spacing().item_spacing.x).max(160.);
         ui.horizontal(|ui| {
@@ -165,16 +169,43 @@ impl CalendarTab {
                 {
                     self.hidden = hidden;
                 }
-                if design::icon_button(
-                    ui,
-                    egui::Id::new("calendar-settings"),
-                    Icon::Settings,
-                    "Calendars & Telegram",
-                    38.,
-                )
-                .clicked()
-                {
-                    action = Some(CalendarAction::Settings);
+                for (key, icon, label, candidate) in [
+                    (
+                        "rename",
+                        Icon::Edit,
+                        "Rename Calendar",
+                        CalendarAction::Rename,
+                    ),
+                    (
+                        "delete",
+                        Icon::Trash,
+                        "Delete Calendar",
+                        CalendarAction::Delete,
+                    ),
+                    (
+                        "export",
+                        Icon::Export,
+                        "Export Calendar",
+                        CalendarAction::Export,
+                    ),
+                    (
+                        "import",
+                        Icon::Import,
+                        "Import Calendar",
+                        CalendarAction::Import,
+                    ),
+                ] {
+                    if design::icon_button(
+                        ui,
+                        egui::Id::new(format!("calendar-{key}")),
+                        icon,
+                        label,
+                        30.,
+                    )
+                    .clicked()
+                    {
+                        action = Some(candidate);
+                    }
                 }
 
                 self.search_control.show(

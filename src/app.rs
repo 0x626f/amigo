@@ -22,7 +22,11 @@ use std::{
 };
 
 mod autosave;
+mod journal;
 mod library_ui;
+mod settings;
+mod updates;
+pub use settings::SettingsPage;
 mod loading;
 mod notifications;
 mod organizer;
@@ -37,6 +41,7 @@ pub enum Section {
     Tasks,
     Calendar,
     Finance,
+    Journal,
 }
 pub struct Amigo {
     pub workspace: Workspace,
@@ -46,6 +51,10 @@ pub struct Amigo {
     pub organizer: amigo_core::organizer::Organizer,
     productivity: organizer::Productivity,
     pub section: Section,
+    pub journal: amigo_journal::JournalTab,
+    app_settings: Option<settings::AppSettings>,
+    updates: updates::Updates,
+    journal_io: journal::JournalIo,
     library: Library,
     vault_key: Option<VaultKey>,
     vault_unlocked: bool,
@@ -67,7 +76,12 @@ pub struct Amigo {
 impl Amigo {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         Self::configure(&cc.egui_ctx);
-        let app = Self::load_library(library::default_root(), Some(storage::default_path()));
+        let mut app = Self::load_library(library::default_root(), Some(storage::default_path()));
+        app.updates.enabled = std::env::var_os("AMIGO_DATA_FILE").is_none()
+            && std::env::var_os("AMIGO_DISABLE_UPDATES").is_none();
+        if let Ok(error) = std::env::var("AMIGO_UPDATE_ERROR") {
+            app.error = error;
+        }
         design::apply_theme(&cc.egui_ctx, app.workspace.dark_mode);
         app
     }
@@ -157,6 +171,10 @@ impl Amigo {
             library_dialog: None,
             vault_job: None,
             section: Section::Tasks,
+            journal: Default::default(),
+            app_settings: None,
+            updates: Default::default(),
+            journal_io: Default::default(),
             data_path,
             legacy_path: legacy,
             last_save: Instant::now(),
@@ -221,119 +239,85 @@ impl Amigo {
     }
     fn sidebar(&mut self, ui: &mut egui::Ui) {
         egui::Panel::left("navigation")
-            .exact_size(224.0)
+            .exact_size(224.)
             .resizable(false)
             .frame(egui::Frame::new().fill(colors(ui).sidebar).inner_margin(18))
             .show(ui, |ui| {
+                ui.add_space(14.);
+                ui.horizontal(|ui| {
+                    ui.add_space(26.);
+                    crate::brand::logo(ui, 34.);
+                    ui.label(RichText::new("Amigo").size(20.).strong());
+                });
+                ui.add_space(10.);
+                ui.horizontal(|ui| {
+                    ui.add_space(24.);
+                    if design::icon_button(
+                        ui,
+                        egui::Id::new("app-settings-open"),
+                        Icon::Settings,
+                        "App Settings",
+                        32.,
+                    )
+                    .clicked()
+                    {
+                        self.open_settings(SettingsPage::General);
+                    }
+                    for (name, icon, label, action) in [
+                        (
+                            "import",
+                            Icon::Import,
+                            "Import Amigo Setup",
+                            design::DataAction::Import,
+                        ),
+                        (
+                            "export",
+                            Icon::Export,
+                            "Export Amigo Setup",
+                            design::DataAction::Export,
+                        ),
+                    ] {
+                        if design::icon_button(
+                            ui,
+                            egui::Id::new(format!("app-settings-{name}")),
+                            icon,
+                            label,
+                            32.,
+                        )
+                        .clicked()
+                        {
+                            self.start_setup_transfer(action, ui.ctx());
+                        }
+                    }
+                });
+                ui.add_space(12.);
+                ui.separator();
+                ui.add_space(12.);
                 egui::ScrollArea::vertical()
-                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
                     .id_salt("sidebar-navigation-scroll")
+                    .max_height((ui.available_height() - 52.).max(100.))
                     .auto_shrink([false, false])
+                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
                     .show(ui, |ui| {
-                        ui.spacing_mut().interact_size.y = 24.0;
-                        ui.add_space(14.0);
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().interact_size.y = 18.0;
-                            let name =
-                                egui::WidgetText::from(RichText::new("Amigo").size(20.0).strong())
-                                    .into_galley(
-                                        ui,
-                                        Some(egui::TextWrapMode::Extend),
-                                        f32::INFINITY,
-                                        egui::TextStyle::Body,
-                                    );
-                            let width = 34.0 + ui.spacing().item_spacing.x + name.size().x;
-                            ui.add_space(((ui.available_width() - width) * 0.5).max(0.0));
-                            crate::brand::logo(ui, 34.0);
-                            ui.add(egui::Label::new(name));
-                        });
-                        ui.add_space(12.0);
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 6.0;
-                            let theme = ui
-                                .scope(|ui| {
-                                    design::segmented(
-                                        ui,
-                                        &mut self.workspace.dark_mode,
-                                        "Light",
-                                        "Dark",
-                                    )
-                                })
-                                .response;
-                            ui.interact(
-                                theme.rect,
-                                egui::Id::new("app-theme-switcher"),
-                                egui::Sense::hover(),
-                            );
-                            for (name, icon, label, action) in [
-                                (
-                                    "import",
-                                    Icon::Import,
-                                    "Import Amigo Setup",
-                                    design::DataAction::Import,
-                                ),
-                                (
-                                    "export",
-                                    Icon::Export,
-                                    "Export Amigo Setup",
-                                    design::DataAction::Export,
-                                ),
-                            ] {
-                                if design::icon_button(
-                                    ui,
-                                    egui::Id::new(format!("app-settings-{name}")),
-                                    icon,
-                                    label,
-                                    28.0,
-                                )
+                        design::eyebrow(ui, "WORKSPACE");
+                        ui.add_space(3.);
+                        for (section, label, icon) in [
+                            (Section::Tasks, "Tasks", Icon::Board),
+                            (Section::Calendar, "Calendar", Icon::Calendar),
+                            (Section::Finance, "Finance", Icon::Wallet),
+                            (Section::Journal, "Journal", Icon::Book),
+                        ] {
+                            if design::nav_row(ui, label, icon, self.section == section, None)
                                 .clicked()
-                                {
-                                    self.start_setup_transfer(action, ui.ctx());
+                            {
+                                self.section = section;
+                                self.tasks.cancel_card_interaction();
+                                if section == Section::Finance {
+                                    self.prompt_locked_vault();
                                 }
                             }
-                        });
-                        ui.add_space(16.0);
-                        ui.separator();
-                        ui.add_space(12.0);
-                        design::eyebrow(ui, "WORKSPACE");
-                        ui.add_space(3.0);
-                        if design::nav_row(
-                            ui,
-                            "Tasks",
-                            Icon::Board,
-                            self.section == Section::Tasks,
-                            None,
-                        )
-                        .clicked()
-                        {
-                            self.section = Section::Tasks;
                         }
-                        if design::nav_row(
-                            ui,
-                            "Calendar",
-                            Icon::Calendar,
-                            self.section == Section::Calendar,
-                            None,
-                        )
-                        .clicked()
-                        {
-                            self.section = Section::Calendar;
-                            self.tasks.cancel_card_interaction();
-                        }
-                        if design::nav_row(
-                            ui,
-                            "Finance",
-                            Icon::Wallet,
-                            self.section == Section::Finance,
-                            None,
-                        )
-                        .clicked()
-                        {
-                            self.section = Section::Finance;
-                            self.tasks.cancel_card_interaction();
-                            self.prompt_locked_vault();
-                        }
-                        ui.add_space(28.0);
+                        ui.add_space(24.);
                         match self.section {
                             Section::Tasks | Section::Finance => self.library_navigation(ui),
                             Section::Calendar => {
@@ -341,19 +325,37 @@ impl Amigo {
                                     self.calendar_action(action);
                                 }
                             }
+                            Section::Journal => {
+                                if let Some(action) = self.journal.sidebar(ui) {
+                                    self.journal_action(action, ui.ctx());
+                                }
+                            }
                         }
-                        ui.add_space(18.0);
+                        ui.add_space(16.);
                         if self.section == Section::Finance && self.vault_unlocked {
                             self.finance.sidebar(ui);
                         }
                     });
+                ui.add_space(8.);
+                ui.horizontal(|ui| {
+                    let response = ui
+                        .scope(|ui| {
+                            design::segmented(ui, &mut self.workspace.dark_mode, "Light", "Dark")
+                        })
+                        .response;
+                    ui.interact(
+                        response.rect,
+                        egui::Id::new("app-theme-switcher"),
+                        egui::Sense::hover(),
+                    );
+                });
             });
     }
     pub fn new_task(&mut self, status: &str) {
         self.tasks.new_task(&self.workspace, status);
     }
     pub fn manage_board(&mut self) {
-        self.tasks.manage_board(&self.workspace);
+        self.open_settings(SettingsPage::Board(self.library.settings.board.clone()));
     }
     fn render(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
@@ -373,6 +375,9 @@ impl Amigo {
             self.show_notifications(&ctx);
             return;
         }
+        self.tick_journal(&ctx);
+        self.journal_close_request(&ctx);
+        self.tick_updates(&ctx);
         self.poll_vault_job();
         self.poll_autosave();
         self.finance.poll_rates(&mut self.workspace.finance);
@@ -420,6 +425,17 @@ impl Amigo {
                     if let Some(action) = result {
                         self.calendar_action(action);
                     }
+                } else if self.section == Section::Journal {
+                    let previous = self.library.settings.journal.clone();
+                    if let Some(action) = self.journal.show(ui, &mut self.library.settings.journal)
+                    {
+                        self.journal_action(action, &ctx);
+                    }
+                    if self.library.settings.journal != previous
+                        && let Err(error) = self.library.save_settings()
+                    {
+                        self.error = error;
+                    }
                 } else if self.vault_unlocked {
                     let vault = self.current_vault().cloned();
                     self.finance
@@ -450,7 +466,8 @@ impl Amigo {
         {
             self.calendar_action(action);
         }
-        self.calendar_settings_ui(&ctx);
+        self.journal_dialogs(&ctx);
+        self.app_settings_ui(&ctx);
         self.library_dialog_ui(&ctx);
         self.transfer_ui(&ctx);
         if self.workspace != self.last_saved || self.organizer != self.productivity.saved {
@@ -469,6 +486,7 @@ impl Amigo {
             ctx.request_repaint_after(Duration::from_millis(200));
         }
         self.show_notifications(&ctx);
+        self.update_notice(&ctx);
     }
 }
 impl eframe::App for Amigo {
@@ -476,6 +494,7 @@ impl eframe::App for Amigo {
         self.render(ui);
     }
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.finish_journal();
         self.finish_transfer();
         self.save_local();
     }
@@ -708,88 +727,45 @@ mod tests {
         std::fs::remove_dir_all(&app.data_path).unwrap();
     }
     #[test]
-    fn task_and_vault_settings_rename_inline_and_preserve_their_records() {
+    fn toolbar_rename_preserves_records_and_vault_security_opens_password_dialog() {
         let (mut app, ctx) = harness();
-        for _ in 0..3 {
-            let _ = render(&mut app, &ctx, vec![]);
-        }
         let board = app.workspace.tasks.clone();
-        let settings = ctx
-            .read_response(egui::Id::new("task-board-options"))
-            .unwrap()
-            .rect;
-        click(&mut app, &ctx, settings.center());
-        for _ in 0..4 {
-            let _ = render(&mut app, &ctx, vec![]);
-        }
-        let rename = ctx
-            .read_response(egui::Id::new("board-settings-rename"))
-            .unwrap()
-            .rect;
-        click(&mut app, &ctx, rename.center());
-        let _ = render(&mut app, &ctx, vec![]);
-        assert_eq!(
-            ctx.memory(|memory| memory.focused()),
-            Some(egui::Id::new("board-settings-name"))
-        );
-        let _ = render(&mut app, &ctx, vec![egui::Event::Text("Work Board".into())]);
-        let output = render(&mut app, &ctx, vec![]);
-        click(&mut app, &ctx, text_rect(&output, "Save Board").center());
-        assert_eq!(app.current_board_name(), "Work Board");
-        assert!(app.library_dialog.is_none());
-        assert_eq!(app.workspace.tasks, board);
-        app.section = Section::Finance;
-        for _ in 0..3 {
-            let _ = render(&mut app, &ctx, vec![]);
-        }
         let plan = app.workspace.finance.clone();
-        let settings = ctx
-            .read_response(egui::Id::new("vault-settings"))
-            .unwrap()
-            .rect;
-        click(&mut app, &ctx, settings.center());
-        for _ in 0..4 {
-            let _ = render(&mut app, &ctx, vec![]);
+        for (section, button, new_name) in [
+            (Section::Tasks, "board-rename", "Work Board"),
+            (Section::Finance, "vault-rename", "Household"),
+        ] {
+            app.section = section;
+            for _ in 0..4 {
+                render(&mut app, &ctx, vec![]);
+            }
+            let rect = ctx.read_response(egui::Id::new(button)).unwrap().rect;
+            click(&mut app, &ctx, rect.center());
+            for _ in 0..4 {
+                render(&mut app, &ctx, vec![]);
+            }
+            assert_eq!(
+                ctx.memory(|m| m.focused()),
+                Some(egui::Id::new("library-name"))
+            );
+            render(&mut app, &ctx, vec![egui::Event::Text(new_name.into())]);
+            let output = render(&mut app, &ctx, vec![]);
+            click(&mut app, &ctx, text_rect(&output, "Rename").center());
+            assert!(app.library_dialog.is_none());
         }
-        let rename = ctx
-            .read_response(egui::Id::new("vault-settings-rename"))
-            .unwrap()
-            .rect;
-        click(&mut app, &ctx, rename.center());
-        let _ = render(&mut app, &ctx, vec![]);
-        assert_eq!(
-            ctx.memory(|memory| memory.focused()),
-            Some(egui::Id::new("vault-settings-name"))
-        );
-        let _ = render(&mut app, &ctx, vec![egui::Event::Text("Household".into())]);
-        let output = render(&mut app, &ctx, vec![]);
-        assert!(text_rect_optional(&output, "Finance Name").is_none());
-        assert!(text_rect_optional(&output, "Reporting Currency").is_none());
-        click(&mut app, &ctx, text_rect(&output, "Save Settings").center());
+        assert_eq!(app.current_board_name(), "Work Board");
         assert_eq!(app.current_vault().unwrap().entry.name, "Household");
+        assert_eq!(app.workspace.tasks, board);
         assert_eq!(app.workspace.finance, plan);
-        assert!(app.library_dialog.is_none());
         assert!(app.save_local());
         let reopened = Amigo::load(app.data_path.clone());
         assert_eq!(reopened.current_board_name(), "Work Board");
         assert_eq!(reopened.current_vault().unwrap().entry.name, "Household");
-        for _ in 0..3 {
-            let _ = render(&mut app, &ctx, vec![]);
-        }
-        let settings = ctx
-            .read_response(egui::Id::new("vault-settings"))
-            .unwrap()
-            .rect;
-        click(&mut app, &ctx, settings.center());
         for _ in 0..4 {
-            let _ = render(&mut app, &ctx, vec![]);
+            render(&mut app, &ctx, vec![]);
         }
-        let output = render(&mut app, &ctx, vec![]);
-        click(
-            &mut app,
-            &ctx,
-            text_rect(&output, "Encrypt Vault…").center(),
-        );
+        let rect = ctx.read_response(egui::Id::new("vault-lock")).unwrap().rect;
+        click(&mut app, &ctx, rect.center());
         let output = render(&mut app, &ctx, vec![]);
         assert!(text_rect_optional(&output, "Confirm Password").is_some());
         click(&mut app, &ctx, text_rect(&output, "Cancel").center());

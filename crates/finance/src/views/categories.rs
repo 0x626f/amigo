@@ -53,6 +53,18 @@ fn validate(
 }
 
 pub(crate) fn dialog(state: &mut FinanceTab, plan: &mut FinancePlan, ctx: &egui::Context) {
+    show_mode(state, plan, ctx, None)
+}
+pub(crate) fn show_in(state: &mut FinanceTab, plan: &mut FinancePlan, ui: &mut egui::Ui) {
+    let ctx = ui.ctx().clone();
+    show_mode(state, plan, &ctx, Some(ui))
+}
+fn show_mode(
+    state: &mut FinanceTab,
+    plan: &mut FinancePlan,
+    ctx: &egui::Context,
+    embedded: Option<&mut egui::Ui>,
+) {
     if state.settings.is_some() {
         return;
     }
@@ -63,9 +75,15 @@ pub(crate) fn dialog(state: &mut FinanceTab, plan: &mut FinancePlan, ctx: &egui:
     let mut save = false;
     let mut cancel = false;
     let mut vault_settings = false;
-    let modal = design::modal(ctx, egui::Id::new("finance-category-settings")).show(ctx, |ui| {
-        ui.set_width(design::dialog_width(ctx, 600.0));
-        cancel = design::settings_heading(ui, &format!("{} Settings", draft.view.name())).clicked();
+    let inline = embedded.is_some();
+    let mut body = |ui: &mut egui::Ui| {
+        if inline {
+            ui.heading(format!("{} Categories", draft.view.name()));
+        } else {
+            ui.set_width(design::dialog_width(ctx, 600.0));
+            cancel =
+                design::settings_heading(ui, &format!("{} Settings", draft.view.name())).clicked();
+        }
         field_label(ui, "Categories");
         egui::ScrollArea::vertical()
             .max_height(design::dialog_body_height(ctx))
@@ -110,18 +128,27 @@ pub(crate) fn dialog(state: &mut FinanceTab, plan: &mut FinancePlan, ctx: &egui:
         }
         design::dialog_footer(ui, |ui| {
             ui.horizontal(|ui| {
-                vault_settings = design::button(ui, "Vault Settings…").clicked();
+                if !inline {
+                    vault_settings = design::button(ui, "Vault Settings…").clicked();
+                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     save = design::dialog_primary(ui, "Save Settings").clicked();
                     cancel |= design::button(ui, "Cancel").clicked();
                 });
             });
         });
-    });
-    let action = keys.dialog(&modal, true);
+    };
+    let action = if let Some(ui) = embedded {
+        body(ui);
+        keys.in_ui(ui, true)
+    } else {
+        let modal = design::modal(ctx, egui::Id::new("finance-category-settings")).show(ctx, body);
+        keys.dialog(&modal, true)
+    };
     save |= action.confirm;
     cancel |= action.cancel;
     if cancel {
+        state.settings_cancelled = true;
         return;
     }
     if vault_settings {

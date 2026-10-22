@@ -19,7 +19,7 @@ pub(super) struct Productivity {
     credentials_blocked: bool,
     job: Option<Job>,
     queue: VecDeque<Request>,
-    settings: Option<SettingsDraft>,
+    pub(super) settings: Option<SettingsDraft>,
     last_sync: Instant,
     last_notify: Instant,
 }
@@ -28,7 +28,7 @@ enum SettingsPage {
     Calendar,
     Notifications,
 }
-struct SettingsDraft {
+pub(super) struct SettingsDraft {
     page: SettingsPage,
     credentials: Credentials,
     subscriptions: Vec<SubscriptionDraft>,
@@ -110,7 +110,7 @@ impl Amigo {
             }
         }
     }
-    fn calendar_settings(&mut self) {
+    pub(super) fn calendar_settings(&mut self) {
         self.productivity.settings = Some(SettingsDraft {
             credentials: self.productivity.credentials.clone(),
             page: SettingsPage::Calendar,
@@ -136,8 +136,21 @@ impl Amigo {
     }
     pub(super) fn calendar_action(&mut self, action: CalendarAction) {
         match action {
-            CalendarAction::Settings => self.calendar_settings(),
+            CalendarAction::Settings => self.open_settings(super::settings::SettingsPage::Calendar),
             CalendarAction::Sync => self.sync_calendars(),
+            CalendarAction::Rename => self.prompt_calendar_rename(),
+            CalendarAction::Import => self.open_data_dialog(
+                amigo_core::backup::Scope::Calendar,
+                design::DataAction::Import,
+            ),
+            CalendarAction::Export => self.open_data_dialog(
+                amigo_core::backup::Scope::Calendar,
+                design::DataAction::Export,
+            ),
+            CalendarAction::Delete => self.open_data_dialog(
+                amigo_core::backup::Scope::Calendar,
+                design::DataAction::Delete,
+            ),
         }
     }
     fn request_allowed(&self, request: &Request) -> bool {

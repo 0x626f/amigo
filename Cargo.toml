@@ -1,6 +1,6 @@
 [workspace]
-members = [".", "crates/core", "crates/ui", "crates/tasks", "crates/finance", "crates/calendar", "crates/connect"]
-default-members = [".", "crates/core", "crates/ui", "crates/tasks", "crates/finance", "crates/calendar", "crates/connect"]
+members = [".", "crates/core", "crates/ui", "crates/tasks", "crates/finance", "crates/calendar", "crates/connect", "crates/journal"]
+default-members = [".", "crates/core", "crates/ui", "crates/tasks", "crates/finance", "crates/calendar", "crates/connect", "crates/journal"]
 resolver = "3"
 
 [workspace.package]
@@ -30,6 +30,9 @@ amigo-tasks = { path = "crates/tasks" }
 amigo-finance = { path = "crates/finance" }
 amigo-calendar = { path = "crates/calendar" }
 amigo-connect = { path = "crates/connect" }
+amigo-journal = { path = "crates/journal" }
+semver = "1"
+percent-encoding = "2"
 
 [package]
 name = "amigo"
@@ -45,6 +48,10 @@ amigo-tasks.workspace = true
 amigo-finance.workspace = true
 amigo-calendar.workspace = true
 amigo-connect.workspace = true
+amigo-journal.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
 eframe.workspace = true
 chrono.workspace = true
 zeroize.workspace = true

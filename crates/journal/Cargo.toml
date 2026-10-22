@@ -1,0 +1,14 @@
+[package]
+name = "amigo-journal"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+amigo-core.workspace = true
+amigo-ui.workspace = true
+egui.workspace = true
+egui_commonmark = { version = "0.25", default-features = false, features = ["pulldown_cmark"] }
+
+pulldown-cmark = { version = "0.13", default-features = false }

@@ -4,6 +4,9 @@ use zeroize::Zeroizing;
 
 #[derive(Clone)]
 enum Action {
+    RenameBoard(String),
+    RenameVault(Vault),
+    RenameCalendar,
     NewBoard,
     NewVault,
     Unlock(Vault),
@@ -18,6 +21,7 @@ pub(super) struct LibraryDialog {
     current_password: Zeroizing<String>,
     confirmation: Zeroizing<String>,
     error: String,
+    focus_name: bool,
 }
 impl LibraryDialog {
     fn new(action: Action, name: String) -> Self {
@@ -29,6 +33,7 @@ impl LibraryDialog {
             current_password: Zeroizing::new(String::new()),
             confirmation: Zeroizing::new(String::new()),
             error: String::new(),
+            focus_name: true,
         }
     }
 }
@@ -45,6 +50,18 @@ pub(super) struct VaultJob {
 }
 
 impl Amigo {
+    pub(super) fn prompt_board_rename(&mut self) {
+        self.library_dialog = Some(LibraryDialog::new(
+            Action::RenameBoard(self.library.settings.board.clone()),
+            self.current_board_name().into(),
+        ));
+    }
+    pub(super) fn prompt_calendar_rename(&mut self) {
+        self.library_dialog = Some(LibraryDialog::new(
+            Action::RenameCalendar,
+            self.organizer.name.clone(),
+        ));
+    }
     pub(super) fn current_vault(&self) -> Option<&Vault> {
         self.library
             .vaults
@@ -87,7 +104,7 @@ impl Amigo {
         self.vault_key = key;
         self.vault_unlocked = true;
     }
-    fn switch_board(&mut self, id: &str) -> Result<(), String> {
+    pub(super) fn switch_board(&mut self, id: &str) -> Result<(), String> {
         if !self.save_local() {
             return Err(self.error.clone());
         }
@@ -134,6 +151,7 @@ impl Amigo {
     pub(super) fn library_navigation(&mut self, ui: &mut egui::Ui) {
         let mut selected_board = None;
         let mut selected_vault = None;
+        let mut security = None;
         if self.section == Section::Tasks {
             design::eyebrow(ui, "BOARDS");
             for board in self.library.boards.clone() {
@@ -155,25 +173,67 @@ impl Amigo {
         } else {
             design::eyebrow(ui, "VAULTS");
             for vault in self.library.vaults.clone() {
-                let label = if vault.encrypted {
-                    format!("{} · protected", vault.entry.name)
-                } else {
-                    vault.entry.name.clone()
-                };
-                if design::nav_row(
-                    ui,
-                    &label,
-                    Icon::Wallet,
-                    self.library.settings.vault == vault.entry.id,
-                    None,
-                )
-                .clicked()
-                {
-                    selected_vault = Some(vault);
-                }
+                ui.horizontal(|ui| {
+                    let width = (ui.available_width() - 30. - ui.spacing().item_spacing.x).max(80.);
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(width, 32.),
+                        egui::Layout::top_down(egui::Align::Min),
+                        |ui| {
+                            if design::nav_row(
+                                ui,
+                                &vault.entry.name,
+                                Icon::Wallet,
+                                self.library.settings.vault == vault.entry.id,
+                                None,
+                            )
+                            .clicked()
+                            {
+                                selected_vault = Some(vault.clone());
+                            }
+                        },
+                    );
+                    let unlocked =
+                        self.library.settings.vault == vault.entry.id && self.vault_unlocked;
+                    let label = if !vault.encrypted {
+                        "Set Vault Password"
+                    } else if unlocked {
+                        "Lock Vault"
+                    } else {
+                        "Unlock Vault"
+                    };
+                    if design::icon_button(
+                        ui,
+                        egui::Id::new(("vault-security", &vault.entry.id)),
+                        if vault.encrypted && !unlocked {
+                            Icon::Lock
+                        } else {
+                            Icon::Unlock
+                        },
+                        label,
+                        28.,
+                    )
+                    .clicked()
+                    {
+                        security = Some(vault.clone());
+                    }
+                });
             }
             if design::button(ui, "+ New Vault").clicked() {
                 self.library_dialog = Some(LibraryDialog::new(Action::NewVault, String::new()));
+            }
+        }
+        if let Some(vault) = security {
+            let same = self.library.settings.vault == vault.entry.id;
+            if !same && let Err(error) = self.switch_vault(vault.clone()) {
+                self.error = error;
+                return;
+            }
+            if !vault.encrypted {
+                self.handle_vault_action(VaultAction::Encrypt);
+            } else if same && self.vault_unlocked {
+                self.handle_vault_action(VaultAction::Lock);
+            } else {
+                self.prompt_locked_vault();
             }
         }
         if let Some(id) = selected_board
@@ -192,6 +252,12 @@ impl Amigo {
             return;
         };
         match action {
+            VaultAction::RenameVaultRequested => {
+                self.library_dialog = Some(LibraryDialog::new(
+                    Action::RenameVault(vault.clone()),
+                    vault.entry.name,
+                ));
+            }
             VaultAction::ImportVault | VaultAction::ExportVault | VaultAction::DeleteVault => {
                 let operation = match action {
                     VaultAction::ImportVault => design::DataAction::Import,
@@ -276,8 +342,10 @@ impl Amigo {
         });
     }
     pub(super) fn retry_library(&mut self) {
+        let updates = std::mem::take(&mut self.updates);
         let replacement = Self::load_library(self.data_path.clone(), self.legacy_path.clone());
         *self = replacement;
+        self.updates = updates;
     }
     fn execute_dialog(
         &mut self,
@@ -351,6 +419,18 @@ impl Amigo {
             return Ok(false);
         }
         match &dialog.action {
+            Action::RenameBoard(id) => self.library.rename_board(id, &dialog.name)?,
+            Action::RenameVault(vault) => {
+                self.library.rename_vault(&vault.entry.id, &dialog.name)?
+            }
+            Action::RenameCalendar => {
+                let old = self.organizer.name.clone();
+                self.organizer.name = dialog.name.clone();
+                if !self.save_organizer() {
+                    self.organizer.name = old;
+                    return Err(self.error.clone());
+                }
+            }
             Action::NewBoard => {
                 if !self.save_local() {
                     return Err(self.error.clone());
@@ -479,6 +559,9 @@ impl Amigo {
         let mut submit = false;
         let mut cancel = false;
         let title = match dialog.action {
+            Action::RenameBoard(_) => "Rename Board",
+            Action::RenameVault(_) => "Rename Vault",
+            Action::RenameCalendar => "Rename Calendar",
             Action::NewBoard => "New Board",
             Action::NewVault => "New Vault",
             Action::Unlock(_) => "Unlock Vault",
@@ -490,7 +573,11 @@ impl Amigo {
             cancel = design::dialog_heading(ui,title).clicked();
             ui.add_enabled_ui(!busy,|ui| {
                 if matches!(dialog.action,Action::Unlock(_)|Action::Encrypt(_)|Action::ChangePassword(_)) {ui.label(RichText::new(&dialog.name).strong());}
-                else {text_field(ui,"Name",&mut dialog.name);}
+                else {
+                    amigo_ui::forms::field_label(ui,"Name");
+                    let response=ui.add(design::input(&mut dialog.name).id(egui::Id::new("library-name")).desired_width(f32::INFINITY));
+                    if dialog.focus_name{response.request_focus();let mut state=egui::TextEdit::load_state(ctx,response.id).unwrap_or_default();state.cursor.set_char_range(Some(egui::text::CCursorRange::two(egui::text::CCursor::new(0),egui::text::CCursor::new(dialog.name.chars().count()))));state.store(ctx,response.id);dialog.focus_name=false;}
+                }
                 if matches!(dialog.action,Action::NewVault) {design::checkbox(ui, &mut dialog.encrypted,"Encrypt This Vault");}
                 if matches!(dialog.action,Action::Unlock(_)|Action::Encrypt(_)|Action::ChangePassword(_)) || matches!(dialog.action,Action::NewVault)&&dialog.encrypted {
                     if matches!(dialog.action, Action::ChangePassword(_)) {
@@ -509,7 +596,7 @@ impl Amigo {
             if busy {ui.horizontal(|ui| {ui.spinner();hint(ui,"Processing vault…");});}
             design::dialog_footer(ui, |ui| {
               ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                submit |= ui.add_enabled_ui(!busy, |ui| design::dialog_primary(ui,match dialog.action {Action::Unlock(_)=>"Unlock",Action::Encrypt(_)=>"Encrypt",Action::ChangePassword(_)=>"Change Password",Action::NewBoard|Action::NewVault=>"Create"})).inner.clicked();
+                submit |= ui.add_enabled_ui(!busy, |ui| design::dialog_primary(ui,match dialog.action {Action::Unlock(_)=>"Unlock",Action::Encrypt(_)=>"Encrypt",Action::ChangePassword(_)=>"Change Password",Action::NewBoard|Action::NewVault=>"Create",Action::RenameBoard(_)|Action::RenameVault(_)|Action::RenameCalendar=>"Rename"})).inner.clicked();
                 cancel |= design::button(ui, "Cancel").clicked();
               });
             });

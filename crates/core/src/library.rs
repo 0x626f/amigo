@@ -43,6 +43,10 @@ pub struct Settings {
     #[serde(default)]
     pub sync: SyncSettings,
     #[serde(default)]
+    pub journal: crate::journal::Preferences,
+    #[serde(default)]
+    pub updates: crate::updates::Preferences,
+    #[serde(default)]
     migration: Option<Migration>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]

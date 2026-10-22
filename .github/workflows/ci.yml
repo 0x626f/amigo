@@ -2,7 +2,7 @@ name: Native builds and packages
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
   workflow_dispatch:
 

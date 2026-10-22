@@ -2,9 +2,27 @@ use super::*;
 
 pub(crate) fn show_settings(
     state: &mut FinanceTab,
+    plan: &mut FinancePlan,
+    vault: Option<&Vault>,
+    ctx: &egui::Context,
+) -> Option<VaultAction> {
+    show_mode(state, plan, vault, ctx, None)
+}
+pub(crate) fn show_settings_in(
+    state: &mut FinanceTab,
+    plan: &mut FinancePlan,
+    vault: Option<&Vault>,
+    ui: &mut egui::Ui,
+) -> Option<VaultAction> {
+    let ctx = ui.ctx().clone();
+    show_mode(state, plan, vault, &ctx, Some(ui))
+}
+fn show_mode(
+    state: &mut FinanceTab,
     _plan: &mut FinancePlan,
     vault: Option<&Vault>,
     ctx: &egui::Context,
+    embedded: Option<&mut egui::Ui>,
 ) -> Option<VaultAction> {
     let mut draft = state.settings.take()?;
     let vault = vault?;
@@ -12,23 +30,34 @@ pub(crate) fn show_settings(
     let mut save = false;
     let mut cancel = false;
     let mut action = None;
-    let modal = design::modal(ctx, egui::Id::new("vault-settings-dialog")).show(ctx, |ui| {
-        ui.set_width(design::dialog_width(ctx, 720.0));
-        let heading = design::named_dialog_heading(
-            ui,
-            &vault.entry.name,
-            "Vault Settings",
-            &mut draft.name_edit,
-            "vault-settings",
-            "Vault",
-        );
-        cancel = heading.close.clicked();
-        if let Some(data) = heading.data_action {
-            action = Some(match data {
-                design::DataAction::Import => VaultAction::ImportVault,
-                design::DataAction::Export => VaultAction::ExportVault,
-                design::DataAction::Delete => VaultAction::DeleteVault,
-            });
+    let valid = draft
+        .name_edit
+        .as_ref()
+        .is_none_or(|edit| amigo_core::library::name(&edit.value).is_ok());
+    let inline = embedded.is_some();
+    let mut body = |ui: &mut egui::Ui| {
+        if !inline {
+            ui.set_width(design::dialog_width(ctx, 720.0));
+        }
+        if inline {
+            ui.heading(format!("{} Vault Settings", vault.entry.name));
+        } else {
+            let heading = design::named_dialog_heading(
+                ui,
+                &vault.entry.name,
+                "Vault Settings",
+                &mut draft.name_edit,
+                "vault-settings",
+                "Vault",
+            );
+            cancel = heading.close.clicked();
+            if let Some(data) = heading.data_action {
+                action = Some(match data {
+                    design::DataAction::Import => VaultAction::ImportVault,
+                    design::DataAction::Export => VaultAction::ExportVault,
+                    design::DataAction::Delete => VaultAction::DeleteVault,
+                });
+            }
         }
         egui::ScrollArea::vertical()
             .id_salt("vault-settings-content")
@@ -74,16 +103,18 @@ pub(crate) fn show_settings(
                             action = Some(VaultAction::Encrypt);
                         }
                     });
-                ui.add_space(20.);
-                design::dialog_section(ui, "Exchange");
-                ui.horizontal(|ui| {
-                    field_label(ui, "Refresh Every:");
-                    ui.add(
-                        egui::DragValue::new(&mut draft.exchange_interval_seconds)
-                            .range(1..=86_400)
-                            .suffix(" s"),
-                    );
-                });
+                if !inline {
+                    ui.add_space(20.);
+                    design::dialog_section(ui, "Exchange");
+                    ui.horizontal(|ui| {
+                        field_label(ui, "Refresh Every:");
+                        ui.add(
+                            egui::DragValue::new(&mut draft.exchange_interval_seconds)
+                                .range(1..=86_400)
+                                .suffix(" s"),
+                        );
+                    });
+                }
             });
         if !draft.error.is_empty() {
             ui.colored_label(colors(ui).red, &draft.error);
@@ -103,17 +134,24 @@ pub(crate) fn show_settings(
                 cancel |= design::button(ui, "Cancel").clicked();
             });
         });
-    });
-    let shortcut = keys.dialog(
-        &modal,
-        draft
-            .name_edit
-            .as_ref()
-            .is_none_or(|edit| amigo_core::library::name(&edit.value).is_ok()),
-    );
+    };
+    let shortcut = if let Some(ui) = embedded {
+        body(ui);
+        keys.in_ui(ui, valid)
+    } else {
+        let modal = design::modal(ctx, egui::Id::new("vault-settings-dialog")).show(ctx, body);
+        keys.dialog(
+            &modal,
+            draft
+                .name_edit
+                .as_ref()
+                .is_none_or(|edit| amigo_core::library::name(&edit.value).is_ok()),
+        )
+    };
     cancel |= shortcut.cancel;
     save |= shortcut.confirm;
     if cancel {
+        state.settings_cancelled = true;
         return None;
     }
     if save {
@@ -126,7 +164,11 @@ pub(crate) fn show_settings(
             Ok(vault_name) => {
                 action = Some(VaultAction::SaveSettings {
                     vault_name,
-                    exchange_interval_seconds: draft.exchange_interval_seconds,
+                    exchange_interval_seconds: if inline {
+                        state.exchange_interval_seconds
+                    } else {
+                        draft.exchange_interval_seconds
+                    },
                 })
             }
             Err(error) => {

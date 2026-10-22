@@ -30,11 +30,19 @@ struct Preview {
     capture_pending: bool,
     captures: Vec<std::thread::JoinHandle<()>>,
     protected_vault: Option<library::Vault>,
+    vault_id: String,
 }
 impl App for Preview {
     fn raw_input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
         if self.app.is_page_loading() {
             return;
+        }
+        if self.finance_settings && self.frames == 5 {
+            self.app.open_settings(app::SettingsPage::Finance);
+        }
+        if self.structure_scenes && self.step == 0 && self.frames == 5 {
+            self.app
+                .open_settings(app::SettingsPage::Expenses(self.vault_id.clone()));
         }
         if self.structure_scenes {
             if self.step == 3 && self.frames == 5 {
@@ -74,7 +82,7 @@ impl App for Preview {
             }
             if self.frames == 5 {
                 let target = match self.step {
-                    0 => Some(egui::Id::new("vault-settings")),
+                    0 => None,
                     2 => Some(egui::Id::new((
                         "finance-table-cell",
                         &self.app.workspace.finance.savings[0].id,
@@ -224,11 +232,7 @@ impl App for Preview {
             }
             return;
         }
-        let clicking = if self.finance_settings {
-            matches!(self.frames, 5 | 6)
-        } else {
-            self.search_motion && self.step == 1 && matches!(self.frames, 1 | 2)
-        };
+        let clicking = self.search_motion && self.step == 1 && matches!(self.frames, 1 | 2);
         if clicking
             && let Some(response) = ctx.read_response(egui::Id::new(if self.finance_settings {
                 "vault-settings"
@@ -334,6 +338,7 @@ impl App for Preview {
                 .unwrap();
                 println!("Captured {}", path.display());
             }));
+            self.app.close_settings();
             self.capture_pending = false;
             self.step += 1;
             self.frames = 0;
@@ -387,8 +392,7 @@ impl App for Preview {
             self.app.section = app::Section::Finance;
             if self.frames == 0 {
                 self.app
-                    .finance
-                    .configure_vault(&self.app.workspace.finance);
+                    .open_settings(app::SettingsPage::Vault(self.vault_id.clone()));
             }
         }
         if self.step == 13 {
@@ -800,7 +804,12 @@ fn main() -> eframe::Result {
                         .push(amigo_core::attachments::import(&board, &source).unwrap());
                 }
             }
+            let vault_id = library::Library::open(library::default_root(), None)
+                .unwrap()
+                .settings
+                .vault;
             Ok(Box::new(Preview {
+                vault_id,
                 app,
                 output,
                 filters: std::env::args().any(|arg| arg == "--filters"),

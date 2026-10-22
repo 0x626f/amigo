@@ -42,6 +42,10 @@ impl Amigo {
                 "A task file operation is still running. Try again when it finishes.".into();
             return;
         }
+        if self.journal.dirty() || self.journal.busy {
+            self.journal_io.pending_setup = Some(action);
+            return;
+        }
         if !self.save_local() {
             return;
         }
@@ -82,6 +86,10 @@ impl Amigo {
     }
     pub(super) fn handle_tasks_action(&mut self, action: TasksAction) {
         let data = match action {
+            TasksAction::RenameBoardRequested => {
+                self.prompt_board_rename();
+                return;
+            }
             TasksAction::RenameBoard(name) => {
                 if let Err(error) = self
                     .library
@@ -116,6 +124,7 @@ impl Amigo {
                 .find(|v| v.entry.id == *id)
                 .map(|v| v.entry.name.clone())
                 .unwrap_or_default(),
+            Scope::Calendar => self.organizer.name.clone(),
             _ => scope.label().into(),
         };
         self.transfers.dialog = Some(TransferDialog {
@@ -168,8 +177,10 @@ impl Amigo {
                 if reload {
                     let section = self.section;
                     let notifications = std::mem::take(&mut self.notifications);
+                    let updates = std::mem::take(&mut self.updates);
                     let app = Self::load_library(self.data_path.clone(), None);
                     *self = app;
+                    self.updates = updates;
                     self.section = section;
                     self.notifications = notifications;
                 }
@@ -261,6 +272,7 @@ impl Amigo {
                 DataAction::Delete => {
                     hint(ui, "Delete this item and all of its data permanently? This cannot be undone.");
                     if matches!(dialog.scope, Scope::Board(_)) { hint(ui, "Task attachments are also deleted. If this is your last board, an empty Personal board is created."); }
+                    else if dialog.scope==Scope::Calendar{hint(ui,"Calendar events and subscriptions are deleted. Other app data and Telegram credentials stay in place.");}
                     else { hint(ui, "If this is your last vault, an empty Personal vault is created."); }
                 }
             }

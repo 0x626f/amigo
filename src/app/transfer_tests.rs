@@ -218,37 +218,28 @@ fn invalid_import_and_wrong_file_type_show_errors_without_changing_data() {
 }
 
 #[test]
-fn settings_buttons_route_to_the_correct_transfer_dialog() {
-    for size in [egui::vec2(980.0, 640.0), egui::vec2(1440.0, 900.0)] {
+fn toolbar_actions_route_to_the_correct_transfer_dialog_and_theme_stays_at_bottom() {
+    for size in [egui::vec2(980., 640.), egui::vec2(1440., 900.)] {
         for target in ["Board", "Vault", "Calendar", "Amigo Setup"] {
             let (mut app, ctx) = harness();
-            match target {
-                "Board" => app.manage_board(),
-                "Vault" => {
-                    app.section = Section::Finance;
-                    app.finance.configure_vault(&app.workspace.finance);
-                }
-                "Calendar" => {
-                    app.section = Section::Calendar;
-                    app.calendar_action(amigo_calendar::CalendarAction::Settings);
-                }
-                _ => (),
-            }
-            let output = settle(&mut app, &ctx, size);
+            app.section = match target {
+                "Vault" => Section::Finance,
+                "Calendar" => Section::Calendar,
+                _ => Section::Tasks,
+            };
+            settle(&mut app, &ctx, size);
             let prefix = match target {
-                "Board" => "board-settings",
-                "Vault" => "vault-settings",
-                "Calendar" => "calendar-settings",
+                "Board" => "board",
+                "Vault" => "vault",
+                "Calendar" => "calendar",
                 _ => "app-settings",
             };
-            let names = if matches!(target, "Board" | "Vault") {
-                vec!["import", "export", "delete", "rename", "close"]
-            } else if target == "Calendar" {
-                vec!["import", "export", "close"]
+            let names = if target == "Amigo Setup" {
+                vec!["open", "import", "export"]
             } else {
-                vec!["import", "export"]
+                vec!["import", "export", "delete", "rename"]
             };
-            let rects: Vec<_> = names
+            let mut rects: Vec<_> = names
                 .iter()
                 .map(|name| {
                     ctx.read_response(egui::Id::new(format!("{prefix}-{name}")))
@@ -256,34 +247,37 @@ fn settings_buttons_route_to_the_correct_transfer_dialog() {
                         .rect
                 })
                 .collect();
+            rects.sort_by(|a, b| a.left().total_cmp(&b.left()));
             for rect in &rects {
                 assert!(
-                    rect.left() >= 0.0
+                    rect.left() >= 0.
                         && rect.right() < size.x
-                        && rect.top() > 0.0
-                        && rect.bottom() < size.y
+                        && rect.top() > 0.
+                        && rect.bottom() < size.y,
+                    "{target} {rect:?}"
                 );
             }
             for pair in rects.windows(2) {
                 assert!(pair[0].right() < pair[1].left());
-                assert!((pair[0].center().y - pair[1].center().y).abs() < 1.0);
+                assert!((pair[0].center().y - pair[1].center().y).abs() < 1.);
             }
             if target == "Amigo Setup" {
                 let theme = ctx
                     .read_response(egui::Id::new("app-theme-switcher"))
                     .unwrap()
                     .rect;
-                assert!(theme.right() < rects[0].left());
-                assert!((theme.center().y - rects[0].center().y).abs() < 1.0);
-                assert!(rects[1].right() <= 206.0);
-                assert!(text_rect_optional(&output, "App Settings").is_none());
-                assert!(app.transfers.dialog.is_none());
+                assert!(theme.top() > rects[0].bottom() + 100.);
+                assert!(theme.bottom() <= size.y);
                 std::fs::remove_dir_all(app.data_path).unwrap();
                 continue;
             }
+            let pos = ctx
+                .read_response(egui::Id::new(format!("{prefix}-export")))
+                .unwrap()
+                .rect
+                .center();
             for pressed in [true, false] {
-                let pos = rects[1].center();
-                let _ = render_sized(
+                render_sized(
                     &mut app,
                     &ctx,
                     vec![

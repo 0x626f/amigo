@@ -12,6 +12,7 @@ mod board;
 mod cards;
 mod editor;
 mod settings;
+pub use settings::{BoardEditor as BoardSettingsDraft, SettingsOutcome};
 use settings::{BoardEditor, status_color};
 
 struct TaskEditor {
@@ -33,6 +34,8 @@ pub struct TasksTab {
     filter_snapshot: Option<(BTreeSet<String>, BTreeSet<String>, String)>,
     editor: Option<TaskEditor>,
     board_editor: Option<BoardEditor>,
+    embedded_settings: bool,
+    action: Option<TasksAction>,
     board_name: String,
     cards: cards::CardInteraction,
     board_folder: Option<std::path::PathBuf>,
@@ -41,6 +44,7 @@ pub struct TasksTab {
 #[derive(Clone, Debug, PartialEq)]
 pub enum TasksAction {
     RenameBoard(String),
+    RenameBoardRequested,
     ImportBoard,
     ExportBoard,
     DeleteBoard,
@@ -71,6 +75,39 @@ impl TasksTab {
         self.cards.clear();
         self.editor = None;
         self.board_editor = Some(BoardEditor::new(workspace));
+    }
+    pub fn configure_in_app(&mut self, workspace: &Workspace) {
+        self.manage_board(workspace);
+        self.embedded_settings = true;
+    }
+    pub fn settings_open(&self) -> bool {
+        self.board_editor.is_some()
+    }
+    pub fn take_settings(&mut self) -> Option<BoardSettingsDraft> {
+        self.board_editor.take()
+    }
+    pub fn restore_settings(&mut self, draft: BoardSettingsDraft) {
+        self.board_editor = Some(draft);
+        self.embedded_settings = true;
+    }
+
+    pub fn close_settings(&mut self) {
+        self.board_editor = None;
+        self.embedded_settings = false;
+    }
+    pub fn settings_in(
+        &mut self,
+        workspace: &mut Workspace,
+        name: &str,
+        ui: &mut egui::Ui,
+    ) -> SettingsOutcome {
+        let outcome = settings::show_in(&mut self.board_editor, workspace, name, ui);
+        if outcome.saved {
+            self.categories.retain(|id| {
+                id.is_empty() || workspace.task_categories.iter().any(|c| c.id == *id)
+            });
+        }
+        outcome
     }
     pub fn new_task(&mut self, workspace: &Workspace, status: &str) {
         self.cards.clear();
@@ -134,6 +171,12 @@ impl TasksTab {
             board_name: "",
         }
         .task_dialog(ctx);
+        if let Some(action) = self.action.take() {
+            return Some(action);
+        }
+        if self.embedded_settings {
+            return None;
+        }
         let outcome = settings::show(&mut self.board_editor, workspace, &self.board_name, ctx);
         if outcome.saved {
             self.editor = None;

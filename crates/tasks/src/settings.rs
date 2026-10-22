@@ -63,6 +63,7 @@ pub fn status_color(ui: &egui::Ui, color: StatusColor) -> egui::Color32 {
 #[derive(Default)]
 pub struct SettingsOutcome {
     pub saved: bool,
+    pub cancelled: bool,
     pub rename: Option<String>,
     pub data_action: Option<design::DataAction>,
 }
@@ -75,6 +76,24 @@ pub fn show(
     board_name: &str,
     ctx: &egui::Context,
 ) -> SettingsOutcome {
+    show_mode(state, workspace, board_name, ctx, None)
+}
+pub fn show_in(
+    state: &mut Option<BoardEditor>,
+    workspace: &mut Workspace,
+    board_name: &str,
+    ui: &mut egui::Ui,
+) -> SettingsOutcome {
+    let ctx = ui.ctx().clone();
+    show_mode(state, workspace, board_name, &ctx, Some(ui))
+}
+fn show_mode(
+    state: &mut Option<BoardEditor>,
+    workspace: &mut Workspace,
+    board_name: &str,
+    ctx: &egui::Context,
+    embedded: Option<&mut egui::Ui>,
+) -> SettingsOutcome {
     let Some(mut editor) = state.take() else {
         return SettingsOutcome::default();
     };
@@ -82,18 +101,25 @@ pub fn show(
     let mut save = false;
     let mut cancel = false;
     let mut outcome = SettingsOutcome::default();
-    let modal = design::modal(ctx, egui::Id::new("board-settings")).show(ctx, |ui| {
-        ui.set_width(design::dialog_width(ctx, 790.0));
-        let heading = design::named_dialog_heading(
-            ui,
-            board_name,
-            "Board Settings",
-            &mut editor.name_edit,
-            "board-settings",
-            "Board",
-        );
-        cancel = heading.close.clicked();
-        outcome.data_action = heading.data_action;
+    let inline = embedded.is_some();
+    let mut body = |ui: &mut egui::Ui| {
+        if !inline {
+            ui.set_width(design::dialog_width(ctx, 790.0));
+        }
+        if inline {
+            ui.heading(format!("{board_name} Board Settings"));
+        } else {
+            let heading = design::named_dialog_heading(
+                ui,
+                board_name,
+                "Board Settings",
+                &mut editor.name_edit,
+                "board-settings",
+                "Board",
+            );
+            cancel = heading.close.clicked();
+            outcome.data_action = heading.data_action;
+        }
         design::segmented(ui, &mut editor.categories_tab, "Statuses", "Categories");
         ui.add_space(8.0);
         egui::ScrollArea::both()
@@ -137,8 +163,14 @@ pub fn show(
                 cancel |= design::button(ui, "Cancel").clicked();
             });
         });
-    });
-    let shortcut = keys.dialog(&modal, true);
+    };
+    let shortcut = if let Some(ui) = embedded {
+        body(ui);
+        keys.in_ui(ui, true)
+    } else {
+        let modal = design::modal(ctx, egui::Id::new("board-settings")).show(ctx, body);
+        keys.dialog(&modal, true)
+    };
     if editor.removing_status.is_some() || editor.removing_category.is_some() {
         if shortcut.cancel {
             editor.removing_status = None;
@@ -152,6 +184,7 @@ pub fn show(
         save |= shortcut.confirm;
     }
     if cancel {
+        outcome.cancelled = true;
         if egui::DragAndDrop::has_payload_of_type::<StatusDrag>(ctx) {
             egui::DragAndDrop::clear_payload(ctx);
         }

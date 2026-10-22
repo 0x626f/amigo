@@ -46,6 +46,9 @@ pub struct FinanceTab {
     filters_open: bool,
     filter_snapshot: Option<FilterSnapshot>,
     settings: Option<VaultSettings>,
+    embedded_settings: bool,
+    settings_cancelled: bool,
+    toolbar_action: Option<VaultAction>,
     currency_editor: Option<views::currencies::CurrencyEditor>,
     category_settings: Option<views::categories::CategorySettings>,
     exchange_base: String,
@@ -70,6 +73,10 @@ struct FilterSnapshot {
     search: String,
 }
 
+pub struct AppSettingsDraft {
+    vault: Option<VaultSettings>,
+    categories: Option<views::categories::CategorySettings>,
+}
 struct VaultSettings {
     exchange_interval_seconds: u64,
     name_edit: Option<amigo_ui::design::NameEdit>,
@@ -77,6 +84,7 @@ struct VaultSettings {
 }
 #[derive(Clone, Debug, PartialEq)]
 pub enum VaultAction {
+    RenameVaultRequested,
     Lock,
     Encrypt,
     ChangePassword,
@@ -108,6 +116,9 @@ impl Default for FinanceTab {
             filters_open: false,
             filter_snapshot: None,
             settings: None,
+            embedded_settings: false,
+            settings_cancelled: false,
+            toolbar_action: None,
             currency_editor: None,
             category_settings: None,
             exchange_base: String::new(),
@@ -139,6 +150,52 @@ impl FinanceTab {
             name_edit: None,
             error: String::new(),
         });
+    }
+    pub fn configure_in_app(&mut self, plan: &FinancePlan) {
+        self.configure_vault(plan);
+        self.embedded_settings = true;
+    }
+    pub fn settings_open(&self) -> bool {
+        self.settings.is_some()
+    }
+    pub fn take_settings_cancelled(&mut self) -> bool {
+        std::mem::take(&mut self.settings_cancelled)
+    }
+    pub fn take_settings(&mut self) -> AppSettingsDraft {
+        AppSettingsDraft {
+            vault: self.settings.take(),
+            categories: self.category_settings.take(),
+        }
+    }
+    pub fn restore_settings(&mut self, draft: AppSettingsDraft) {
+        self.settings = draft.vault;
+        self.category_settings = draft.categories;
+        self.embedded_settings = true;
+    }
+
+    pub fn categories_open(&self) -> bool {
+        self.category_settings.is_some()
+    }
+    pub fn close_settings(&mut self) {
+        self.settings = None;
+        self.category_settings = None;
+        self.embedded_settings = false;
+    }
+    pub fn settings_in(
+        &mut self,
+        plan: &mut FinancePlan,
+        vault: Option<&Vault>,
+        ui: &mut egui::Ui,
+    ) -> Option<VaultAction> {
+        views::show_settings_in(self, plan, vault, ui)
+    }
+    pub fn configure_categories_in_app(&mut self, view: FinanceView, plan: &FinancePlan) {
+        self.settings = None;
+        self.category_settings = Some(views::categories::CategorySettings::new(view, plan));
+        self.embedded_settings = true;
+    }
+    pub fn categories_in(&mut self, plan: &mut FinancePlan, ui: &mut egui::Ui) {
+        views::categories::show_in(self, plan, ui);
     }
     pub fn configure_categories(&mut self, plan: &FinancePlan) {
         if matches!(self.view, FinanceView::Expenses | FinanceView::Savings) {
@@ -192,13 +249,18 @@ impl FinanceTab {
         vault: Option<&Vault>,
         ctx: &egui::Context,
     ) -> Option<VaultAction> {
+        if self.embedded_settings {
+            views::currencies::dialog(self, plan, ctx);
+            return self.toolbar_action.take();
+        }
+        let toolbar_action = self.toolbar_action.take();
         let vault_settings_open = self.settings.is_some();
         let action = views::show_settings(self, plan, vault, ctx);
         views::currencies::dialog(self, plan, ctx);
         if !vault_settings_open {
             views::categories::dialog(self, plan, ctx);
         }
-        action
+        toolbar_action.or(action)
     }
     pub fn sidebar(&mut self, ui: &mut egui::Ui) {
         amigo_ui::design::eyebrow(ui, "FINANCE");

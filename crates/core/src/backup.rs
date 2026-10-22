@@ -440,7 +440,13 @@ pub fn delete(library: &Library, scope: &Scope) -> Result<()> {
                 staged.settings.vault = staged.vaults[0].entry.id.clone();
             }
         }
-        _ => return Err("Only boards and vaults can be deleted here.".into()),
+        Scope::Calendar => {
+            Organizer::default().save(&stage.0)?;
+            let mut credentials = Credentials::load(&stage.0)?;
+            credentials.calendar_urls.clear();
+            credentials.save(&stage.0)?;
+        }
+        _ => return Err("Choose a board, vault, or Calendar to delete.".into()),
     }
     staged.save_settings()?;
     validate_library(&stage.0)?;

@@ -21,24 +21,9 @@ const SCENES: [&str; 6] = [
     "calendar-url-settings",
 ];
 impl App for Preview {
-    fn raw_input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
-        if self.app.is_page_loading() {
-            return;
-        }
-        if self.step == 5
-            && self.frames == 5
-            && let Some(r) = ctx.read_response(egui::Id::new("calendar-settings"))
-        {
-            let p = r.rect.center();
-            input.events.push(egui::Event::PointerMoved(p));
-            for pressed in [true, false] {
-                input.events.push(egui::Event::PointerButton {
-                    pos: p,
-                    button: egui::PointerButton::Primary,
-                    pressed,
-                    modifiers: egui::Modifiers::NONE,
-                });
-            }
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, _input: &mut egui::RawInput) {
+        if self.step == 5 && self.frames == 5 && !self.app.is_page_loading() {
+            self.app.open_settings(amigo::SettingsPage::Calendar);
         }
     }
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {

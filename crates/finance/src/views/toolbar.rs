@@ -49,8 +49,9 @@ impl FinanceUi<'_> {
             } else {
                 0.0
             }
-            - design::CONTROL_HEIGHT * 2.0
-            - ui.spacing().item_spacing.x * 4.0)
+            - design::CONTROL_HEIGHT
+            - 5.0 * 30.0
+            - ui.spacing().item_spacing.x * 8.0)
             .max(0.0);
         ui.horizontal(|ui| {
             ui.allocate_ui_with_layout(

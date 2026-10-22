@@ -25,7 +25,7 @@ use std::{
 };
 
 /// Preserve HOME overrides while supporting native Windows user environments.
-pub(crate) fn user_home(get: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+pub fn user_home(get: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
     let value = |key| get(key).filter(|value| !value.is_empty());
     value("HOME")
         .or_else(|| value("USERPROFILE"))

@@ -968,11 +968,7 @@ fn board_settings_can_be_opened_saved_and_cancelled() {
     let original = app.workspace.clone();
     let _ = render(&mut app, &ctx, vec![]);
     let _ = render(&mut app, &ctx, vec![]);
-    let options = ctx
-        .read_response(egui::Id::new("task-board-options"))
-        .unwrap()
-        .rect;
-    click(&mut app, &ctx, options.center());
+    app.manage_board();
     let _ = render(&mut app, &ctx, vec![]);
     let output = render(&mut app, &ctx, vec![]);
     click(&mut app, &ctx, text_rect(&output, "+ Add Status").center());
@@ -1068,7 +1064,7 @@ fn checkbox_filter_menu_supports_multiple_selections_and_overflow_at_minimum_siz
         .unwrap()
         .rect;
     let settings = ctx
-        .read_response(egui::Id::new("task-board-options"))
+        .read_response(egui::Id::new("board-import"))
         .unwrap()
         .rect;
     let search = ctx
@@ -1143,11 +1139,7 @@ fn configuration_dialog_edits_only_the_board_name_in_its_heading() {
     for _ in 0..3 {
         let _ = render(&mut app, &ctx, vec![]);
     }
-    let settings = ctx
-        .read_response(egui::Id::new("task-board-options"))
-        .unwrap()
-        .rect;
-    click(&mut app, &ctx, settings.center());
+    app.manage_board();
     for _ in 0..3 {
         let _ = render(&mut app, &ctx, vec![]);
     }
@@ -1208,7 +1200,7 @@ fn search_expands_focuses_and_collapses_on_blur_or_escape_without_losing_the_que
             .rect;
         assert!(input.width() >= 180.0);
         let settings = ctx
-            .read_response(egui::Id::new("task-board-options"))
+            .read_response(egui::Id::new("board-import"))
             .unwrap()
             .rect;
         assert!(input.right() < settings.left() && input.left() > 252.0);
@@ -1283,7 +1275,7 @@ fn task_modal_groups_properties_and_blocks_background_without_losing_drafts() {
         assert!(save.bottom() < size.y - 20.0 && save.right() < size.x - 20.0);
         assert!(due.bottom() < save.top() && due.right() < size.x - 20.0);
         let settings = ctx
-            .read_response(egui::Id::new("task-board-options"))
+            .read_response(egui::Id::new("board-import"))
             .unwrap()
             .rect
             .center();

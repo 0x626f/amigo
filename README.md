@@ -2,12 +2,13 @@
 
 ![Amigo logo](docs/brand/amigo-logo.png)
 
-Amigo is a native Rust desktop workspace for personal tasks, calendars, and finances.
-It stores your data locally and provides three areas:
+Amigo is a native Rust desktop workspace for personal tasks, calendars, finances, and Markdown notes.
+It stores your data locally and provides four areas:
 
 - **Tasks:** multiple Kanban boards, custom statuses and categories, due dates, and attachments.
 - **Calendar:** personal events and tasks, recurring items, iCalendar URL subscriptions, and Telegram reminders.
 - **Finance:** income, expenses, savings, budgets, exchange rates, and optional encrypted vaults.
+- **Journal:** a local Markdown notebook with folders, search, text formatting, and source, preview, or split editing.
 
 Personal boards, events, and finance records work offline. Calendar subscriptions,
 Telegram reminders, and exchange-rate refreshes use network services when configured.
@@ -17,7 +18,7 @@ model and calculation rules.
 **Author:** [0x626f](https://github.com/0x626f). **License:** [GPL-3.0-or-later](LICENSE). **Build targets:** Linux, macOS, and Windows (x86_64 and ARM64).
 
 [Run](#run) · [Build and package](#distribution-recipes) · [Tasks](#tasks) ·
-[Calendar](#calendar) · [Finance](#finance) · [Backups](#import-export-and-deletion) ·
+[Calendar](#calendar) · [Finance](#finance) · [Journal](#journal) · [Updates](#updates) · [Backups](#import-export-and-deletion) ·
 [Storage](#user-folder-storage) · [Development](#development) · [License](#license)
 
 The [brand assets](docs/brand/README.md) include scalable logos, light/dark wordmarks, and a high-resolution app icon. The same artwork is included in the sidebar, native window, and platform packages.
@@ -226,9 +227,11 @@ builds packages and uploads workflow artifacts; it does not create releases.
 
 ## Appearance and settings
 
-The interface follows Apple-inspired macOS conventions: borderless buttons, rounded controls, blue primary actions, restrained hover/press feedback, and a quiet sidebar. Text inputs use soft surfaces, while keyboard focus remains visible. Dialogs keep clear headings, grouped fields, readable labels, and fixed Save/Cancel actions. Use **Light / Dark** below the Amigo logo; the saved appearance transitions smoothly without rebuilding the font atlas. Shared egui helpers keep all three tabs consistent. Adwaita Sans is bundled under the SIL Open Font License; see `crates/ui/assets/fonts/LICENSE`. The project includes an MIT-licensed [Apple design skill](skills/apple-design/SKILL.md) with upstream attribution and Amigo-specific guidance.
+The interface follows Apple-inspired macOS conventions: borderless buttons, rounded controls, blue primary actions, restrained hover/press feedback, and a quiet sidebar. Text inputs use soft surfaces, while keyboard focus remains visible. Dialogs keep clear headings, grouped fields, readable labels, and fixed Save/Cancel actions. Use **Light / Dark** at the bottom of the sidebar; the saved appearance transitions smoothly without rebuilding the font atlas. Shared egui helpers keep all four tabs consistent. Adwaita Sans is bundled under the SIL Open Font License; see `crates/ui/assets/fonts/LICENSE`. The project includes an MIT-licensed [Apple design skill](skills/apple-design/SKILL.md) with upstream attribution and Amigo-specific guidance.
 
-Each tab owns its settings. **Calendar → Settings** contains calendar URL subscriptions, a configurable refresh interval (60 seconds by default) and Telegram notifications. **Finance → Settings** contains **Exchange → Refresh Every** (60 seconds by default), saved in `~/.amigo/library.json`. Rates refresh for the open, unlocked vault and keep their previous values if a provider fails. Periodic directory polling is disabled; confirmed changes still autosave.
+Open **Settings** in the action row immediately below the Amigo title. The same row contains **Import Amigo Setup** and **Export Amigo Setup**. One settings window contains General, Tasks and its boards, Calendar, Finance and its vaults/categories, Journal, and Updates. Board and vault drafts survive navigation between settings pages; Save commits the current page, while closing the window discards unconfirmed drafts.
+
+**Settings → Calendar** contains URL subscriptions, refresh timing, and Telegram notifications. **Settings → Finance** owns exchange refresh timing (60 seconds by default). **Settings → Journal** sets the default editor mode, font size, and wrapping. Confirmed changes autosave; periodic directory polling remains disabled.
 
 App status messages appear as compact popups at the bottom right. Their width follows the content, with longer text wrapping up to four lines and the full message available on hover. Up to three notifications stack upward and fade out after five seconds; the close icon dismisses one immediately. Success and error notifications use distinct icons and colors without shifting the page content.
 
@@ -292,7 +295,7 @@ See the [Calendar URLs and Telegram guide](docs/calendar.md) for setup and stora
 - **Exchange:** choose Base and Quote currencies, view their exchange rate, and swap the pair. Refresh Rates retrieves dated fiat and cryptocurrency prices from the [Currency API](https://github.com/fawazahmed0/exchange-api), alongside automatic refresh. Failed lookups preserve existing rates.
 - Multiple named finance vaults with optional encryption. Plain vaults open immediately; encrypted vaults ask for their password when opened.
 
-The settings icon in **Expenses** or **Savings** opens that view’s category settings. Add or rename categories there; a category in use must be reassigned before removal. Category IDs preserve assignments through renames. **Vault Settings…** opens the shared vault configuration and preserves your category draft when you return. In other finance views, the settings icon opens **Vault Settings** directly. The title shows the vault name, with a name-edit icon before Close. Clicking the icon edits only the vault name in the title and focuses its text field; Save Settings commits the rename. Reporting currency is always enabled, defaults to EUR, and is selected from the Wallet toolbar immediately before Settings. **Save Settings** applies the changes; **Cancel** discards them. Security provides encryption for plain vaults and Lock Vault plus Change Password for encrypted vaults. Changing a password requires the current password, a new password, and confirmation.
+Open **Settings → Finance → your vault** for vault configuration and security, or select its **Expenses** and **Savings** child pages for categories. Category IDs preserve assignments through renames; categories in use must be reassigned before removal. Reporting currency remains available in the Wallet toolbar. The toolbar contains import, export, delete, rename, and a security icon. That icon locks an open encrypted vault, unlocks a locked vault, or offers to set a password for a plain vault. The same security action is available beside vault names in the sidebar. Changing a password requires the current password, a new password, and confirmation.
 
 Currency conversion is always enabled. Every income, expense, saving, budget, and budget expense stores its creation timestamp and exchange snapshots in its metadata. Snapshots include USD and EUR, the reporting currency, and the parent budget currency for budget items. New records use the creation date, independently of editable transaction or due dates. Copying income creates a fresh timestamp and snapshots.
 
@@ -330,15 +333,35 @@ Finance uses the same **Search → Settings → Filters → Create** toolbar as 
 
 [Vault settings preview](docs/vault-settings.png) · [Finance filters](docs/finance-filters.png) · [Date picker](docs/date-picker.png)
 
+## Journal
+
+Journal stores ordinary UTF-8 `.md` files below the working library's `journal/` folder, including imported notes. It offers nested folders, title/content search, rename/move, import/export, and recoverable deletion to `.trash`. Folder names can be entered as `Projects/Plan`. Imported originals remain untouched; duplicate names receive a suffix.
+
+Choose **Markdown**, **Preview**, or **Split** in the note toolbar. Preview renders headings, lists, tables, code, quotes, and links. Relative Markdown links and Obsidian-style `[[Note]]` or `[[Note|label]]` links navigate within the notebook; YAML front matter stays in the file and is hidden from preview. No graph view is included.
+
+Select text and right-click for bold, italic, strikethrough, headings, code, lists, tasks, quotes, links, tables, and dividers. Ctrl/Cmd+B and Ctrl/Cmd+I also work; editor undo restores formatting changes. Notes autosave after a short idle period and before switching files, exporting a setup, updating, or closing. Preview layout is cached and rendered by visible blocks; file operations and searches run in the background. Each note supports up to 8 MiB of UTF-8 text.
+
+Use **Refresh** after editing notes in another application. If an external edit conflicts with an unsaved draft, Amigo preserves both and offers to reload or save a recovered copy. Journal notes are plain files, independent of Finance vault encryption; setup exports include them.
+
+[Split editor](docs/journal-split.png) · [Rendered notebook](docs/journal-preview.png) · [Dark Markdown editor](docs/journal-source-dark.png)
+
+## Updates
+
+**Settings → Updates** checks published stable releases from [0x626f/amigo](https://github.com/0x626f/amigo/releases). Automatic checks run daily and show a popup when a newer release is available. Manual checks are also available. Updates are downloaded only after choosing **Download Update**; progress and cancellation are shown. Amigo checks the package's GitHub SHA-256 digest, platform, architecture, and size before **Install and Restart**.
+
+The installer uses the matching RPM/DEB package manager on Linux, replaces an AppImage, updates the macOS app bundle, or runs the Windows setup. Native authorization prompts appear when required. Standalone Linux builds install updates as `~/.local/bin/Amigo.AppImage`. Your `.amigo` library is preserved. Journal edits and confirmed workspace changes save before restart; unresolved drafts or conflicts must be handled first. If a release has no compatible package or checksum, automatic installation is unavailable.
+
+[Shared settings](docs/app-settings.png) · [Update settings](docs/update-settings.png)
+
 ## Import, export, and deletion
 
-Board Settings, Vault Settings, and Calendar Settings contain **Import** and **Export** icons in their headers for portable `.amigo` files. Board and Vault headers place **Import → Export → Delete → Edit Name → Close** in that order. Hover an icon to see its action. Use **Browse…** to choose a file or enter its path. Board files include tasks, statuses, categories, ordering, and binary attachments. Vault files include every finance record and reference value; encrypted vaults retain their original encryption and password. Calendar files contain the Calendar collection, subscriptions, refresh settings, reminder receipts, and subscription URLs. Calendar import replaces that collection while preserving other connection settings.
+Board, Calendar, and Vault toolbars contain **Import → Export → Delete → Rename** icons for portable `.amigo` files. Vaults also show a security icon. Hover an icon to see its action. Use **Browse…** to choose a file or enter its path. Board files include tasks, statuses, categories, ordering, and binary attachments. Vault files include every finance record and reference value; encrypted vaults retain their original encryption and password. Calendar files contain the Calendar collection, subscriptions, refresh settings, reminder receipts, and subscription URLs. Calendar import replaces that collection while preserving other connection settings.
 
 An individual board or vault import adds the item and opens it. If its stable identity already exists in the destination, import replaces that matching item after confirmation. Other boards and vaults remain in place. Imports show a validated summary before the final action. Malformed files, damaged checksums, invalid paths, and incomplete attachments are rejected before live data changes.
 
-The **Import Amigo Setup** and **Export Amigo Setup** icons sit immediately after the Light/Dark switcher in the sidebar. They open the native file chooser directly. A setup file contains the entire library, including all boards, vaults, attachments, Calendar data, appearance, selected items, and connection settings. After choosing an import file, **Replace All Data** replaces all existing library data with the reviewed backup. Export the current setup first to keep a copy. Setup and Calendar files include connection credentials, so store them privately. Vault passwords are still required after restoring encrypted vaults.
+The **Import Amigo Setup** and **Export Amigo Setup** icons sit beside Settings beneath the app title in the sidebar. They open the native file chooser directly. A setup file contains the entire library, including all boards, vaults, attachments, Calendar data, Journal notes and trash, appearance, selected items, and connection settings. After choosing an import file, **Replace All Data** replaces all existing library data with the reviewed backup. Export the current setup first to keep a copy. Setup and Calendar files include connection credentials, so store them privately. Vault passwords are still required after restoring encrypted vaults.
 
-Board and Vault settings also offer **Delete Board…** and **Delete Vault…**, each with a separate confirmation dialog. Cancel or Escape preserves the item; Enter does not confirm destructive actions. Deleting a board removes its attachments too. Deleting the last board or vault creates an empty Personal replacement so Amigo remains usable. File work runs on a background worker with a loading indicator, and staged replacement retains recovery information until the new library is installed.
+The board, Calendar, and vault toolbar delete actions each open a separate confirmation dialog. Calendar deletion clears its collection and URL credentials while preserving other tabs and Telegram settings. Cancel or Escape preserves the item; Enter does not confirm destructive actions. Deleting a board removes its attachments too. Deleting the last board or vault creates an empty Personal replacement so Amigo remains usable. File work runs on a background worker with a loading indicator, and staged replacement retains recovery information until the new library is installed.
 
 ## User-folder storage
 
@@ -349,10 +372,14 @@ The folder layout and `.amigo` exports are shared across platforms. Close Clerk 
 
 ```text
 ~/.amigo/
-  library.json                    # appearance, exchange refresh timing, selected board/vault IDs
+  library.json                    # appearance, Journal/update preferences, refresh timing, selected IDs
   organizer.json                  # Calendar items, subscription metadata/cache, reminder receipts
   credentials.enc                 # encrypted subscription URLs and Telegram settings
   credentials.key                 # owner-only credential encryption key
+  journal/                        # ordinary UTF-8 Markdown notes and folders
+    Welcome.md
+    Projects/Plan.md
+    .trash/                       # recoverable deleted notes/folders
   boards/<board-id>/
     board.json                    # board name, statuses, categories, task order
     <task-id>.md                  # one task per Markdown file
@@ -395,7 +422,7 @@ $env:AMIGO_HOME = "$env:USERPROFILE\AmigoLibrary"
 cargo run --locked
 ```
 
-Use `AMIGO_DATA_FILE` for migration and isolated previews; its library is stored beside it with the `.library` extension. The legacy `CLERK_HOME` and `CLERK_DATA_FILE` overrides still work, with explicit `AMIGO_*` overrides taking precedence. To back up your data, use the **Export Amigo Setup** icon beside the theme switcher, or close Amigo and copy the entire library folder. Keep the password for encrypted vaults; it cannot be recovered by the app. Library folders use owner-only permissions on Unix, and files are saved through temporary files and rename.
+Use `AMIGO_DATA_FILE` for migration and isolated previews; its library is stored beside it with the `.library` extension. The legacy `CLERK_HOME` and `CLERK_DATA_FILE` overrides still work, with explicit `AMIGO_*` overrides taking precedence. To back up your data, use the **Export Amigo Setup** icon beneath the app title, or close Amigo and copy the entire library folder. Keep the password for encrypted vaults; it cannot be recovered by the app. Library folders use owner-only permissions on Unix, and files are saved through temporary files and rename.
 
 ## Development
 
@@ -430,7 +457,7 @@ AMIGO_DATA_FILE=/tmp/amigo-preview/workspace.json \
 
 Add `--structure-scenes` to preview category settings, Savings, expanded comments, nested budgets, and task attachments; combine with `--compact` or `--dark`. The preview requires a separate data path and exits after capturing PNGs. Its screenshots contain synthetic data.
 
-Append `--dark` after the output directory to capture the dark appearance. Use `--filters`, `--finance-filters`, or `--date-picker` for a single screenshot with the corresponding popup open, `--finance-settings` to open Finance settings through its toolbar button, and `--compact` to preview the minimum 980 × 640 window size.
+Append `--dark` after the output directory to capture the dark appearance. Use `--filters`, `--finance-filters`, or `--date-picker` for a single screenshot with the corresponding popup open, `--finance-settings` to open the Finance page in app settings, and `--compact` to preview the minimum 980 × 640 window size.
 
 Append `--custom-board` to preview five statuses and sample task categories. Append `--library-scenes` to include multiple boards, vaults, and the encrypted-vault password prompt (synthetic data only).
 
@@ -443,6 +470,15 @@ Use `--search-motion` to click the real Search control and capture collapsed, in
 Use `--task-drag` to exercise a fast double-click-and-hold gesture in the native window. It batches click and movement events, verifies that the task stays in its original column while held, and checks the final drop before capturing `task-drag.png` and `task-drop.png`.
 
 Use `--touchpad-drag` to replay the touchpad tap-and-drag event sequence: one synthesized primary-button hold, pointer movement, and release. It verifies the final drop and captures `touchpad-drag.png` and `touchpad-drop.png`.
+
+Capture Journal modes and shared settings with synthetic notes in a fresh library:
+
+```sh
+AMIGO_DATA_FILE=/tmp/amigo-journal-review/workspace.json \
+  cargo run --locked --example journal_preview -- /tmp/amigo-journal-review/screens
+```
+
+Add `--dark` or `--compact` for appearance and minimum-size checks. Use a fresh temporary path for each run.
 
 Capture Calendar views and settings separately with isolated synthetic data:
 
@@ -464,7 +500,7 @@ and bundled assets under `docs/` and `packaging/` in Git.
 
 ### Workspace layout
 
-The desktop shell composes three independent tab crates. Tabs own their UI state, views, editors, and sidebar content. They return typed actions such as `RenameBoard` or `Lock` for the shell to handle. Tab crates do not depend on the shell or on each other.
+The desktop shell composes four independent tab crates. Tabs own their UI state, views, editors, and sidebar content. They return typed actions such as `RenameBoard` or `Lock` for the shell to handle. Tab crates do not depend on the shell or on each other.
 
 | Crate / path | Responsibility |
 | --- | --- |
@@ -472,6 +508,7 @@ The desktop shell composes three independent tab crates. Tabs own their UI state
 | `amigo` · `src/app.rs`, `src/app/autosave.rs`, `src/app/library_ui.rs`, `src/app/sync.rs`, `src/app/organizer/` | Tab navigation, board/vault selection, password prompts, autosave, background refresh, tab settings coordination, and shared workspace ownership |
 | `amigo-tasks` · `crates/tasks/` | Kanban, filters, task editor, and board settings |
 | `amigo-finance` · `crates/finance/` | Finance subviews, record editing, validation, reference management, and background FX refresh |
+| `amigo-journal` · `crates/journal/` | Markdown editor, formatting, folder tree, search UI, and cached preview |
 | `amigo-calendar` · `crates/calendar/` | Calendar views, personal scheduling, repeat editing, and reminder settings |
 | `amigo-connect` · `crates/connect/` | Calendar URL downloads/iCalendar parsing and Telegram transport; no GUI |
 | `amigo-ui` · `crates/ui/` | Themes, typography, bundled fonts, icons, cards, and reusable form controls |

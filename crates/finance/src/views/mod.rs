@@ -22,7 +22,7 @@ mod toolbar;
 use dashboard::wallet;
 use records::{budgets, expenses, income, savings};
 use references::{exchange_rates, list, list_mut, stored_values};
-pub(crate) use settings::show_settings;
+pub(crate) use settings::{show_settings, show_settings_in};
 
 struct FinanceUi<'a> {
     state: &'a mut FinanceTab,
@@ -493,30 +493,57 @@ pub(crate) fn show_tab(
 }
 impl FinanceUi<'_> {
     fn vault_controls(&mut self, ui: &mut egui::Ui) {
-        if self.vault.is_some()
-            && design::icon_button(
-                ui,
-                egui::Id::new("vault-settings"),
-                Icon::Settings,
-                if matches!(
-                    self.state.view,
-                    FinanceView::Expenses | FinanceView::Savings
-                ) {
-                    "Categories And Vault Settings"
+        let Some(vault) = self.vault else {
+            return;
+        };
+        for (key, icon, label, action) in [
+            (
+                "lock",
+                if vault.encrypted {
+                    Icon::Lock
                 } else {
-                    "Vault Settings"
+                    Icon::Unlock
                 },
-                design::CONTROL_HEIGHT,
-            )
-            .clicked()
-        {
-            if matches!(
-                self.state.view,
-                FinanceView::Expenses | FinanceView::Savings
-            ) {
-                self.state.configure_categories(self.plan);
-            } else {
-                self.state.configure_vault(self.plan);
+                if vault.encrypted {
+                    "Lock Vault"
+                } else {
+                    "Set Vault Password"
+                },
+                if vault.encrypted {
+                    VaultAction::Lock
+                } else {
+                    VaultAction::Encrypt
+                },
+            ),
+            (
+                "rename",
+                Icon::Edit,
+                "Rename Vault",
+                VaultAction::RenameVaultRequested,
+            ),
+            (
+                "delete",
+                Icon::Trash,
+                "Delete Vault",
+                VaultAction::DeleteVault,
+            ),
+            (
+                "export",
+                Icon::Export,
+                "Export Vault",
+                VaultAction::ExportVault,
+            ),
+            (
+                "import",
+                Icon::Import,
+                "Import Vault",
+                VaultAction::ImportVault,
+            ),
+        ] {
+            if design::icon_button(ui, egui::Id::new(format!("vault-{key}")), icon, label, 30.)
+                .clicked()
+            {
+                self.state.toolbar_action = Some(action);
             }
         }
     }

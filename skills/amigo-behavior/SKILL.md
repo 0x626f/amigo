@@ -49,3 +49,11 @@ Read [Finance behavior](references/finance.md) when touching finance records, ca
 ## Verification
 
 Exercise the interaction through the existing headless egui harness, not just a direct call to a save function. Cover the affected key/popup/modal priority and the saved state after success or cancellation. Persistence changes also need a temporary-library round trip, including encryption where relevant. Keep live network checks optional and separate from deterministic tests.
+
+## Shared settings, Journal, and updates
+
+The shell owns one app settings window in `src/app/settings.rs`. Tasks, Calendar, Finance, boards, vaults, and categories embed their existing draft editors there. Keep refresh preferences in one source; navigating pages retains drafts, closing discards unconfirmed edits. Data transfer/rename/delete actions live in tab toolbars; the sidebar action row contains Settings and setup import/export, with appearance at the bottom.
+
+`amigo-journal` owns Markdown editor/preview state; `amigo-core::journal` owns safe relative file operations under `<library>/journal`; `src/app/journal.rs` serializes background I/O. Save before navigation, setup backup, restart, and close. Never overwrite external modifications on conflict; preserve draft text and offer recovery. Preview code must not mutate stored Markdown.
+
+`amigo-connect::updates` fetches stable GitHub release metadata and verifies streamed downloads. The shell owns update preferences, popups, and native installer helpers in `src/app/updates/`. Keep installers outside core/connect, verify digest/size/platform before execution, and preserve the library across application replacement. Develop CI checks all six native targets without publishing a release.
