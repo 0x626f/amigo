@@ -138,20 +138,18 @@ button stays on **Loading…**, close Discover and reopen the file after pending
 system package operations finish, or install with Fedora's package manager:
 
 ```sh
-sudo dnf install ./amigo-0.0.2-2-linux-x86_64.rpm
+sudo dnf install ./amigo-0.0.1-linux-x86_64.rpm
 ```
 
-For v0.0.2, use the **revision 2 RPM** (`amigo-0.0.2-2-linux-<arch>.rpm`).
-The original revision requires the obsolete `wayland-libs` package name and
-cannot install on Fedora 44. Revision 2 requires the Wayland libraries directly
-and contains the same application binary. CI also tests RPM installation in a
-Fedora 44 container for both supported architectures.
+RPMs require the Wayland libraries directly, including on Fedora releases
+that split them into separate packages. CI tests RPM installation in a Fedora
+44 container for both supported architectures.
 
 To inspect the package without installing it:
 
 ```sh
-rpm -qp --queryformat 'Name: %{NAME}\nLicense: %{LICENSE}\nPackager: %{PACKAGER}\nVendor: %{VENDOR}\n' ./amigo-0.0.2-2-linux-x86_64.rpm
-pkcon get-details-local ./amigo-0.0.2-2-linux-x86_64.rpm
+rpm -qp --queryformat 'Name: %{NAME}\nLicense: %{LICENSE}\nPackager: %{PACKAGER}\nVendor: %{VENDOR}\n' ./amigo-0.0.1-linux-x86_64.rpm
+pkcon get-details-local ./amigo-0.0.1-linux-x86_64.rpm
 ```
 
 The license expression defaults to `[workspace.package].license` in `Cargo.toml`
@@ -175,11 +173,11 @@ uninstalling the application preserves the user's Amigo library.
 Output goes to `dist/<version>/<platform>/<architecture>/`, for example:
 
 ```text
-dist/0.0.2/linux/x86_64/amigo-0.0.2-linux-x86_64.deb
-dist/0.0.2/macos/aarch64/amigo-0.0.2-macos-aarch64.app.zip
-dist/0.0.2/macos/aarch64/amigo-0.0.2-macos-aarch64.dmg
-dist/0.0.2/windows/x86_64/amigo-0.0.2-windows-x86_64.zip
-dist/0.0.2/windows/x86_64/amigo-0.0.2-windows-x86_64.setup.exe
+dist/0.0.1/linux/x86_64/amigo-0.0.1-linux-x86_64.deb
+dist/0.0.1/macos/aarch64/amigo-0.0.1-macos-aarch64.app.zip
+dist/0.0.1/macos/aarch64/amigo-0.0.1-macos-aarch64.dmg
+dist/0.0.1/windows/x86_64/amigo-0.0.1-windows-x86_64.zip
+dist/0.0.1/windows/x86_64/amigo-0.0.1-windows-x86_64.setup.exe
 ```
 
 All formats include the executable, platform icon, README, application license,
@@ -204,10 +202,10 @@ prepare each platform on its native build machine:
 
 ```sh
 just release-prepare
-# Review packages and edit dist/0.0.2/<platform>/<architecture>/RELEASE_NOTES.md.
-git tag -a v0.0.2 -m 'Amigo 0.0.2'
-git push origin v0.0.2
-just release-draft v0.0.2
+# Review packages and edit dist/0.0.1/<platform>/<architecture>/RELEASE_NOTES.md.
+git tag -a v0.0.1 -m 'Amigo 0.0.1'
+git push origin v0.0.1
+just release-draft v0.0.1
 ```
 
 Create and push the tag once, then fetch it on the other build machines.
