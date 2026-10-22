@@ -308,15 +308,17 @@ impl Amigo {
                         {
                             self.section = Section::Tasks;
                         }
-                        for (section, label, icon) in
-                            [(Section::Calendar, "Calendar", Icon::Calendar)]
+                        if design::nav_row(
+                            ui,
+                            "Calendar",
+                            Icon::Calendar,
+                            self.section == Section::Calendar,
+                            None,
+                        )
+                        .clicked()
                         {
-                            if design::nav_row(ui, label, icon, self.section == section, None)
-                                .clicked()
-                            {
-                                self.section = section;
-                                self.tasks.cancel_card_interaction();
-                            }
+                            self.section = Section::Calendar;
+                            self.tasks.cancel_card_interaction();
                         }
                         if design::nav_row(
                             ui,
