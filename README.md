@@ -121,8 +121,10 @@ for native packaging, and executable headers are checked before staging.
 Linux packaging also needs binutils (`readelf`, `strip`) and
 `desktop-file-utils`. Install the native X11, Wayland, xkbcommon, and D-Bus runtime
 libraries. These can be loaded dynamically, so the AppImage recipe includes them
-explicitly. The official linuxdeploy AppImage can be installed as `linuxdeploy`
-on PATH; `APPIMAGE_EXTRACT_AND_RUN=1` avoids requiring FUSE during packaging.
+explicitly, except for Wayland. The destination provides its own Wayland libraries
+to stay compatible with its graphics drivers. The official linuxdeploy AppImage
+can be installed as `linuxdeploy` on PATH; `APPIMAGE_EXTRACT_AND_RUN=1` avoids
+requiring FUSE during packaging.
 The destination still needs its own OpenGL/EGL drivers.
 
 The license expression defaults to `[workspace.package].license` in `Cargo.toml`

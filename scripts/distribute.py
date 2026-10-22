@@ -29,10 +29,11 @@ SUFFIXES = {"rpm": "rpm", "deb": "deb", "appimage": "AppImage", "macos": "app.zi
             "dmg": "dmg", "windows": "zip", "installer": "setup.exe"}
 MACOS_MINIMUM = "12.0"
 # winit loads these at runtime, so scanning ELF DT_NEEDED alone misses them.
+# Wayland libraries must come from the host: Mesa drivers can require newer
+# Wayland symbols than the build machine provides (for example wl_fixes_interface).
 GUI_LIBRARIES = (
     "libX11.so.6", "libXcursor.so.1", "libXi.so.6", "libXrandr.so.2",
-    "libxkbcommon.so.0", "libxkbcommon-x11.so.0", "libwayland-client.so.0",
-    "libwayland-cursor.so.0", "libwayland-egl.so.1",
+    "libxkbcommon.so.0", "libxkbcommon-x11.so.0",
     "libdbus-1.so.3",
 )
 
@@ -256,7 +257,8 @@ def gui_libraries(binary):
 def package_appimage(work, root):
     args = ["linuxdeploy", "--appdir", str(root), "--executable", str(root / "usr/bin/amigo"),
             "--desktop-file", str(ROOT / "packaging/amigo.desktop"),
-            "--icon-file", str(ROOT / "packaging/amigo.svg")]
+            "--icon-file", str(ROOT / "packaging/amigo.svg"),
+            "--exclude-library", "libwayland-*.so*"]
     for library in gui_libraries(root / "usr/bin/amigo"):
         args.extend(("--library", library))
     env = dict(os.environ, ARCH=arch(), LINUXDEPLOY_OUTPUT_VERSION=version(), LDAI_OUTPUT=str(artifact("AppImage")),
