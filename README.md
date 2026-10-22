@@ -14,7 +14,7 @@ Telegram reminders, and exchange-rate refreshes use network services when config
 Amigo was formerly named Clerk; the Finance area preserves the Finscreen v2 JSON
 model and calculation rules.
 
-**License:** [GPL-3.0-or-later](LICENSE). **Build targets:** Linux, macOS, and Windows (x86_64 and ARM64).
+**Author:** [0x626f](https://github.com/0x626f). **License:** [GPL-3.0-or-later](LICENSE). **Build targets:** Linux, macOS, and Windows (x86_64 and ARM64).
 
 [Run](#run) · [Build and package](#distribution-recipes) · [Tasks](#tasks) ·
 [Calendar](#calendar) · [Finance](#finance) · [Backups](#import-export-and-deletion) ·
@@ -126,6 +126,27 @@ to stay compatible with its graphics drivers. The official linuxdeploy AppImage
 can be installed as `linuxdeploy` on PATH; `APPIMAGE_EXTRACT_AND_RUN=1` avoids
 requiring FUSE during packaging.
 The destination still needs its own OpenGL/EGL drivers.
+
+Linux packages include AppStream metadata with the display name **Amigo**,
+developer **0x626f**, project license **GPL-3.0-or-later**, screenshots, and project
+links. RPM headers also identify **0x626f** as the vendor and packager. The
+AppStream metadata document uses the FSFAP license for software-catalogue reuse.
+
+Discover's direct RPM-file preview uses the filename as its title and can show
+**Unknown author** independently of the package's AppStream metadata. If its
+button stays on **Loading…**, close Discover and reopen the file after pending
+system package operations finish, or install with Fedora's package manager:
+
+```sh
+sudo dnf install ./amigo-0.0.1-linux-x86_64.rpm
+```
+
+To inspect the package without installing it:
+
+```sh
+rpm -qp --queryformat 'Name: %{NAME}\nLicense: %{LICENSE}\nPackager: %{PACKAGER}\nVendor: %{VENDOR}\n' ./amigo-0.0.1-linux-x86_64.rpm
+pkcon get-details-local ./amigo-0.0.1-linux-x86_64.rpm
+```
 
 The license expression defaults to `[workspace.package].license` in `Cargo.toml`
 and the full text defaults to the repository's [LICENSE](LICENSE). `AMIGO_LICENSE`

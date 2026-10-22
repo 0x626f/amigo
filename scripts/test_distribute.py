@@ -7,6 +7,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
+import xml.etree.ElementTree as ET
 
 import distribute as dist
 
@@ -23,6 +24,7 @@ class ReleaseTests(unittest.TestCase):
         self.enterContext(patch.object(dist, "existing_release", return_value=None))
         self.enterContext(patch.object(dist, "glibc_version", return_value="2.34"))
         self.enterContext(patch.object(dist, "source_state", return_value={"commit": "abc123", "clean": True}))
+        self.enterContext(patch.dict(os.environ, {"SOURCE_DATE_EPOCH": "1767225600"}))
         self.enterContext(contextlib.redirect_stdout(io.StringIO()))
         dist.dist_dir().mkdir(parents=True)
         for suffix in (dist.SUFFIXES[kind] for kind in dist.native_formats()):
@@ -134,6 +136,8 @@ class ReleaseTests(unittest.TestCase):
             path = self.root / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("synthetic packaging asset")
+        template = Path(__file__).resolve().parents[1] / "packaging/io.github.0x626f.amigo.metainfo.xml.in"
+        (self.root / "packaging" / template.name).write_text(template.read_text(encoding="utf-8"), encoding="utf-8")
         secret = self.root / ".amigo/vaults/private.md"
         secret.parent.mkdir(parents=True)
         secret.write_text("PRIVATE-RECORD")
@@ -142,6 +146,12 @@ class ReleaseTests(unittest.TestCase):
         staged = self.root / "AppDir"
         for name in ["usr/bin/amigo", "usr/share/applications/amigo.desktop", "usr/share/icons/hicolor/scalable/apps/amigo.svg", "usr/share/icons/hicolor/256x256/apps/amigo.png"]:
             self.assertTrue((staged / name).is_file())
+        metainfo = ET.parse(staged / "usr/share/metainfo/io.github.0x626f.amigo.metainfo.xml").getroot()
+        self.assertEqual(metainfo.findtext("name"), "Amigo")
+        self.assertEqual(metainfo.findtext("developer/name"), "0x626f")
+        self.assertEqual(metainfo.findtext("project_license"), "MIT")
+        self.assertEqual(metainfo.findtext("launchable"), "amigo.desktop")
+        self.assertEqual(metainfo.find("releases/release").attrib, {"version": "1.2.3", "date": "2026-01-01"})
         self.assertFalse(any(b"PRIVATE-RECORD" in path.read_bytes() for path in staged.rglob("*") if path.is_file()))
 
     def test_version_validation_prevents_unsafe_output_paths(self):

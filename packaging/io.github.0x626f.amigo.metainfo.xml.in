@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+Copyright 2026 0x626f
+SPDX-License-Identifier: FSFAP
+
+Copying and distribution of this file, with or without modification, are
+permitted in any medium without royalty provided the copyright notice and this
+notice are preserved. This file is offered as-is, without any warranty.
+-->
+<component type="desktop-application">
+  <id>io.github.0x626f.amigo</id>
+  <metadata_license>FSFAP</metadata_license>
+  <project_license>@LICENSE@</project_license>
+  <name>Amigo</name>
+  <summary>Personal tasks, calendars, and finances</summary>
+  <!-- Compatibility with software centers using AppStream 0.15. -->
+  <developer_name>0x626f</developer_name>
+  <developer id="io.github.0x626f">
+    <name>0x626f</name>
+  </developer>
+  <description>
+    <p>Amigo is a native desktop workspace for managing personal tasks, calendars,
+    and finances. Your library stays on your computer.</p>
+    <ul>
+      <li>Organize tasks with Kanban boards, priorities, due dates, and attachments.</li>
+      <li>Plan events in Day, Week, Month, and Agenda calendar views.</li>
+      <li>Track income, expenses, savings, and budgets with optional encrypted finance vaults.</li>
+      <li>Back up and restore your library with portable Amigo files.</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">amigo.desktop</launchable>
+  <provides>
+    <binary>amigo</binary>
+  </provides>
+  <url type="homepage">https://github.com/0x626f/amigo</url>
+  <url type="bugtracker">https://github.com/0x626f/amigo/issues</url>
+  <url type="vcs-browser">https://github.com/0x626f/amigo</url>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Tasks in a personal Kanban board</caption>
+      <image>https://raw.githubusercontent.com/0x626f/amigo/v0.0.1/docs/tasks.png</image>
+    </screenshot>
+  </screenshots>
+  <releases>
+    <release version="@VERSION@" date="@RELEASE_DATE@"/>
+  </releases>
+  <content_rating type="oars-1.1"/>
+</component>

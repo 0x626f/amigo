@@ -7,6 +7,7 @@ resolver = "3"
 version = "0.0.1"
 edition = "2024"
 license = "GPL-3.0-or-later"
+authors = ["0x626f"]
 
 [workspace.dependencies]
 # Native hyperlinks need `links` when eframe defaults are disabled.
@@ -35,6 +36,7 @@ name = "amigo"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+authors.workspace = true
 
 [dependencies]
 amigo-core.workspace = true

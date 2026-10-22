@@ -1,8 +1,11 @@
 Name: amigo
 Version: @VERSION@
-Release: 1
+Release: 2
 Summary: Personal tasks, calendars, and finances
 License: @LICENSE@
+URL: https://github.com/0x626f/amigo
+Vendor: 0x626f
+Packager: 0x626f
 Requires: libX11, libXcursor, libXi, libXrandr, libxkbcommon, libxkbcommon-x11
 Requires: wayland-libs, libglvnd-glx, libglvnd-egl
 Requires: dbus-libs, xdg-utils, xdg-desktop-portal
@@ -21,6 +24,7 @@ cp -a %{_sourcedir}/root/. %{buildroot}/
 %files
 %attr(0755,root,root) /usr/bin/amigo
 /usr/share/applications/amigo.desktop
+/usr/share/metainfo/io.github.0x626f.amigo.metainfo.xml
 /usr/share/icons/hicolor/scalable/apps/amigo.svg
 /usr/share/icons/hicolor/256x256/apps/amigo.png
 %doc /usr/share/doc/amigo/README.md

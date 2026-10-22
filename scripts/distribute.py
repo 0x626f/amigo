@@ -2,6 +2,7 @@
 """Native Linux, macOS, and Windows packages; deliberate draft-only uploads."""
 
 import hashlib
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -15,6 +16,7 @@ import sys
 import tempfile
 import tomllib
 import zipfile
+from xml.sax.saxutils import escape
 
 ROOT = Path(__file__).resolve().parents[1]
 PLATFORM_FORMATS = {
@@ -175,6 +177,26 @@ def copy_documentation(destination):
         shutil.copyfile(source, destination / name)
 
 
+def write_appstream(destination):
+    """Software-center metadata uses the same version and license as the package."""
+    epoch = os.environ.get("SOURCE_DATE_EPOCH")
+    if epoch is None:
+        try:
+            epoch = subprocess.check_output(
+                ("git", "-C", str(ROOT), "log", "-1", "--format=%ct"),
+                text=True, encoding="utf-8", stderr=subprocess.DEVNULL,
+            ).strip()
+        except (OSError, subprocess.CalledProcessError):
+            epoch = str(int(datetime.now(timezone.utc).timestamp()))
+    release_date = datetime.fromtimestamp(int(epoch), timezone.utc).date().isoformat()
+    text = (ROOT / "packaging/io.github.0x626f.amigo.metainfo.xml.in").read_text(encoding="utf-8")
+    text = text.replace("@VERSION@", version()).replace("@LICENSE@", escape(metadata()[0]))
+    text = text.replace("@RELEASE_DATE@", release_date)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(text, encoding="utf-8")
+    destination.chmod(0o644)
+
+
 def stage(destination):
     """Copy an explicit allowlist; never include user libraries or vaults."""
     files = (
@@ -188,6 +210,7 @@ def stage(destination):
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, dest)
         dest.chmod(0o755 if relative == "usr/bin/amigo" else 0o644)
+    write_appstream(destination / "usr/share/metainfo/io.github.0x626f.amigo.metainfo.xml")
     copy_documentation(destination / "usr/share/doc/amigo")
     for directory in (destination, *(p for p in destination.rglob("*") if p.is_dir())):
         directory.chmod(0o755)
@@ -209,6 +232,7 @@ def package_deb(work, root):
         f"Package: amigo\nVersion: {version()}\nSection: utils\nPriority: optional\n"
         f"Architecture: {'amd64' if arch() == 'x86_64' else 'arm64'}\n"
         f"Maintainer: {os.environ['AMIGO_MAINTAINER']}\n"
+        "Homepage: https://github.com/0x626f/amigo\n"
         f"Installed-Size: {sum(p.stat().st_size for p in root.rglob('*') if p.is_file()) // 1024 + 1}\n"
         f"Depends: libc6 (>= {minimum}), libgcc-s1, libx11-6, libxcursor1, libxi6, libxrandr2, "
         "libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libwayland-cursor0, "
@@ -228,7 +252,8 @@ def package_rpm(work, root):
     text = text.replace("@VERSION@", version()).replace("@LICENSE@", metadata()[0])
     spec = top / "SPECS/amigo.spec"
     spec.write_text(text)
-    run("rpmbuild", "-bb", "--define", f"_topdir {top}", "--target", arch(), str(spec))
+    run("rpmbuild", "-bb", "--define", f"_topdir {top}",
+        "--define", f"_tmppath {work}", "--target", arch(), str(spec))
     packages = list((top / "RPMS").rglob("amigo-*.rpm"))
     if len(packages) != 1:
         raise ValueError(f"Expected one RPM, found {len(packages)}.")

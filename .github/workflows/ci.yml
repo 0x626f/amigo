@@ -14,6 +14,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  metadata:
+    name: Linux software-center metadata
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - name: Install metadata validators
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y appstream desktop-file-utils
+      - name: Validate software-center metadata and packaging helpers
+        run: |
+          python -B - <<'PY'
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, 'scripts')
+          import distribute
+          distribute.write_appstream(Path('/tmp/io.github.0x626f.amigo.metainfo.xml'))
+          PY
+          appstreamcli validate --no-net /tmp/io.github.0x626f.amigo.metainfo.xml
+          desktop-file-validate packaging/amigo.desktop
+          python -B scripts/dev.py test-recipes
+
   native:
     name: ${{ matrix.platform }} / ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
