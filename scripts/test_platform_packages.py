@@ -57,7 +57,8 @@ class PlatformPackages(unittest.TestCase):
         for machine, expected in [("AMD64", "x86_64"), ("arm64", "aarch64"), ("aarch64", "aarch64")]:
             with patch.object(dist.platform, "machine", return_value=machine):
                 self.assertEqual(dist.arch(), expected)
-        with patch.dict(os.environ, {"CARGO_BUILD_TARGET": "other-target"}):
+        with (patch.dict(os.environ, {"CARGO_BUILD_TARGET": "other-target"}),
+              patch.object(dist.platform, "machine", return_value="AMD64")):
             with self.assertRaisesRegex(ValueError, "Unset CARGO_BUILD_TARGET"):
                 dist.arch()
 
