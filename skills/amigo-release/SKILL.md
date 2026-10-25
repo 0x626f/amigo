@@ -49,7 +49,7 @@ release assets**. `RELEASE_NOTES.md` from each job is not an upload asset.
 Run `python3 -B scripts/validate_packages.py ARTIFACT_DIRECTORY --commit SHA`.
 It verifies the workspace version, clean source commit, exact checksum sets,
 architecture, bundled documents/licenses, and available package contents.
-Linux package inspection needs `ar`, `rpm`, and `rpm2cpio`, including for downloaded ARM64
+Linux package inspection needs `ar`, `rpm`, `rpm2cpio`, and `zstd`, including for downloaded ARM64
 packages. CI also runs it with `--native` on each disposable native runner:
 AppImage extraction/payload comparison, macOS DMG mounting and bundle signature
 verification, or Windows temporary installation, payload comparison, and uninstall.

@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import xml.etree.ElementTree as ET
 import zipfile
 
@@ -48,7 +49,12 @@ def deb_part(path, prefix):
     parts = dist.output("ar", "t", str(path)).splitlines()
     matches = [name for name in parts if name.startswith(prefix)]
     require(len(matches) == 1, f"Invalid DEB {prefix}: {path}")
-    return subprocess.check_output(["ar", "p", str(path), matches[0]])
+    payload = subprocess.check_output(["ar", "p", str(path), matches[0]])
+    # Ubuntu's dpkg defaults to zstd; Python's tarfile gains it only in 3.14.
+    if matches[0].endswith(".zst"):
+        payload = subprocess.run(["zstd", "--decompress", "--stdout"], input=payload,
+                                 stdout=subprocess.PIPE, check=True).stdout
+    return payload
 
 
 def rpm_payload(path):
@@ -182,12 +188,23 @@ def windows_native(folder, stem, binary):
         app = Path(temp) / "Amigo"
         dist.run(str(folder / (stem + ".setup.exe")), "/VERYSILENT", "/SUPPRESSMSGBOXES",
                  "/NORESTART", "/NOICONS", f"/DIR={app}")
+        print("Windows setup completed; checking installed payload.", flush=True)
         try:
             require((app / "amigo.exe").read_bytes() == binary, "Installed executable differs from portable ZIP")
             documents(lambda name: (app / name).read_bytes(), "docs/")
         finally:
             dist.run(str(app / "unins000.exe"), "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART")
-        require(not (app / "amigo.exe").exists(), "Uninstaller left application executable")
+            # Inno's launcher can exit before its copied cleanup process removes
+            # the original uninstaller. Do not race TemporaryDirectory cleanup.
+            wait_removed(app)
+        print("Windows uninstall and asynchronous cleanup completed.", flush=True)
+
+
+def wait_removed(path, timeout=30):
+    deadline = time.monotonic() + timeout
+    while path.exists() and time.monotonic() < deadline:
+        time.sleep(0.2)
+    require(not path.exists(), f"Uninstaller left application files: {path}")
 
 
 def validate(folder, commit, native=False):
@@ -239,5 +256,5 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (ValueError, OSError, KeyError, struct.error, subprocess.CalledProcessError) as error:
+    except (ValueError, OSError, KeyError, struct.error, tarfile.TarError, subprocess.CalledProcessError) as error:
         sys.exit(f"Error: {error}")

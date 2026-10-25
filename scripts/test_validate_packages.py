@@ -1,9 +1,14 @@
 """Integrity failures must be caught before any native installer is executed."""
 
+import io
 import json
 from pathlib import Path
 import plistlib
+import shutil
 import struct
+import subprocess
+import sys
+import tarfile
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -14,6 +19,36 @@ import validate_packages as validate
 
 
 class PackageValidationTests(unittest.TestCase):
+    def test_waits_for_asynchronous_uninstaller_cleanup(self):
+        with tempfile.TemporaryDirectory(prefix="amigo-uninstall-test-") as temp:
+            app = Path(temp) / "Amigo"
+            app.mkdir()
+            (app / "unins000.exe").write_bytes(b"still being cleaned up")
+            child = subprocess.Popen([sys.executable, "-c",
+                                      "import shutil,sys,time;time.sleep(.15);shutil.rmtree(sys.argv[1])", str(app)])
+            try:
+                validate.wait_removed(app, timeout=10)
+            finally:
+                child.wait(timeout=10)
+            self.assertEqual(child.returncode, 0)
+            self.assertFalse(app.exists())
+
+    @unittest.skipUnless(shutil.which("ar") and shutil.which("zstd"), "requires Linux DEB inspection tools")
+    def test_zstd_deb_payload_is_readable_before_python_314(self):
+        with tempfile.TemporaryDirectory(prefix="amigo-zstd-deb-") as temp:
+            root = Path(temp)
+            raw = io.BytesIO()
+            with tarfile.open(fileobj=raw, mode="w") as archive:
+                member = tarfile.TarInfo("payload")
+                member.size = 4
+                archive.addfile(member, io.BytesIO(b"note"))
+            compressed = subprocess.run(["zstd", "--compress", "--stdout"], input=raw.getvalue(),
+                                        stdout=subprocess.PIPE, check=True).stdout
+            (root / "data.tar.zst").write_bytes(compressed)
+            subprocess.run(["ar", "rc", str(root / "test.deb"), str(root / "data.tar.zst")], check=True)
+            with tarfile.open(fileobj=io.BytesIO(validate.deb_part(root / "test.deb", "data.tar"))) as archive:
+                self.assertEqual(archive.extractfile("payload").read(), b"note")
+
     def test_elf_comparison_ignores_stripped_symbols_but_detects_changed_code(self):
         binary = bytearray(256)
         binary[:6] = b"\x7fELF\x02\x01"
