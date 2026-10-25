@@ -11,7 +11,7 @@ pub enum Format {
     Numbered,
     Task,
     Quote,
-    CodeBlock,
+    CodeBlock(&'static str),
     Link,
     Table,
     Rule,
@@ -21,138 +21,303 @@ fn byte(text: &str, character: usize) -> usize {
         .nth(character)
         .map_or(text.len(), |(i, _)| i)
 }
-pub fn apply(text: &mut String, selection: Range<usize>, format: Format) -> Range<usize> {
-    let start = byte(text, selection.start.min(selection.end));
-    let end = byte(text, selection.end.max(selection.start));
-    let selected = &text[start..end];
-    let (range, replacement, inset, selected_len) = match format {
-        Format::Bold | Format::Italic | Format::Strike | Format::Code => {
-            let marker = match format {
-                Format::Bold => "**",
-                Format::Italic => "_",
-                Format::Strike => "~~",
-                _ => "`",
-            };
-            if text[..start].ends_with(marker) && text[end..].starts_with(marker) {
-                (
-                    start - marker.len()..end + marker.len(),
-                    selected.to_owned(),
-                    0,
-                    selected.chars().count(),
-                )
-            } else {
-                let selected = if selected.is_empty() {
-                    "text"
-                } else {
-                    selected
-                };
-                (
-                    start..end,
-                    format!("{marker}{selected}{marker}"),
-                    marker.len(),
-                    selected.chars().count(),
-                )
+mod blocks;
+mod continuation;
+mod inline;
+mod syntax;
+pub use continuation::list_newline;
+
+/// The applied styles of the selection, derived from the same Markdown grammar as preview.
+#[derive(Clone, Debug, Default)]
+pub struct SelectionState {
+    active: Vec<Format>,
+    pub heading: Option<u8>,
+    pub literal: bool,
+    pub language: Option<String>,
+}
+impl SelectionState {
+    pub fn new(text: &str, selection: Range<usize>) -> Self {
+        let selection = byte(text, selection.start.min(selection.end))
+            ..byte(text, selection.start.max(selection.end));
+        let syntax = syntax::Syntax::new(text);
+        let mut state = Self {
+            literal: syntax
+                .literal
+                .iter()
+                .any(|r| syntax::encloses(r, &selection)),
+            language: enclosing_fence(text, selection.clone()).map(|f| f.language.to_owned()),
+            ..Self::default()
+        };
+        for kind in [
+            Format::Bold,
+            Format::Italic,
+            Format::Strike,
+            Format::Code,
+            Format::Link,
+        ] {
+            let spans = syntax
+                .inline
+                .iter()
+                .filter(|s| s.kind == kind)
+                .collect::<Vec<_>>();
+            if inline::active(text, &selection, &spans, &syntax) {
+                state.active.push(kind);
             }
+        }
+        let mut offset = blocks::lines(text, &selection).start;
+        let rows: Vec<_> = text[blocks::lines(text, &selection)]
+            .split_inclusive('\n')
+            .filter_map(|line| {
+                let start = offset;
+                offset += line.len();
+                (!line.trim().is_empty() && !syntax.literal_at(&(start..offset)))
+                    .then(|| blocks::prefix(line.trim_end_matches(['\r', '\n'])))
+            })
+            .collect();
+        if let Some(first) = rows.first() {
+            let heading = match first.kind {
+                Some(Format::Heading(n)) => n,
+                _ => 0,
+            };
+            if rows.iter().all(|p| match p.kind {
+                Some(Format::Heading(n)) => n == heading,
+                _ => heading == 0,
+            }) {
+                state.heading = Some(heading);
+                state.active.push(Format::Heading(heading));
+            }
+            for kind in [Format::Bullet, Format::Numbered, Format::Task] {
+                if rows.iter().all(|p| p.kind == Some(kind)) {
+                    state.active.push(kind);
+                }
+            }
+            if rows.iter().all(|p| p.quote_end > p.indent) {
+                state.active.push(Format::Quote);
+            }
+        }
+        state
+    }
+    pub fn is_active(&self, kind: Format) -> bool {
+        match kind {
+            Format::CodeBlock(language) => self.language.as_deref() == Some(language),
+            _ => self.active.contains(&kind),
+        }
+    }
+    pub fn can_apply(&self, kind: Format) -> bool {
+        !self.literal || matches!(kind, Format::CodeBlock(_))
+    }
+}
+
+pub fn apply(text: &mut String, selection: Range<usize>, format: Format) -> Range<usize> {
+    let selection = byte(text, selection.start.min(selection.end))
+        ..byte(text, selection.end.max(selection.start));
+    if let Format::CodeBlock(language) = format {
+        return apply_code_block(text, selection, language);
+    }
+    let range = match format {
+        Format::Bold | Format::Italic | Format::Strike | Format::Code | Format::Link => {
+            apply_inline(text, selection, format)
         }
         Format::Heading(_) | Format::Bullet | Format::Numbered | Format::Task | Format::Quote => {
-            let a = text[..start].rfind('\n').map_or(0, |i| i + 1);
-            let line_end = if end > a && text[..end].ends_with('\n') {
-                end - 1
+            blocks::apply(text, selection, format)
+        }
+        Format::Table | Format::Rule => {
+            if syntax::Syntax::new(text).literal_at(&selection) {
+                selection
             } else {
-                end
-            };
-            let b = text[line_end..]
-                .find('\n')
-                .map_or(text.len(), |i| line_end + i);
-            let mut lines = vec![];
-            for (index, line) in text[a..b].split('\n').enumerate() {
-                let prefix = match format {
-                    Format::Heading(0) => String::new(),
-                    Format::Heading(n) => format!("{} ", "#".repeat(n.clamp(1, 6) as usize)),
-                    Format::Bullet => "- ".into(),
-                    Format::Numbered => format!("{}. ", index + 1),
-                    Format::Task => "- [ ] ".into(),
-                    _ => "> ".into(),
-                };
-                let line = if matches!(format, Format::Heading(_)) {
-                    line.trim_start_matches('#').trim_start()
+                let (replacement, inset, count) = if format == Format::Table {
+                    (
+                        "\n| Column 1 | Column 2 |\n| --- | --- |\n| Text | Text |\n",
+                        3,
+                        8,
+                    )
                 } else {
-                    line
+                    ("\n\n---\n\n", 7, 0)
                 };
-                lines.push(format!("{prefix}{line}"));
+                let start = selection.start + inset;
+                text.replace_range(selection, replacement);
+                start..start + count
             }
-            let replacement = lines.join("\n");
-            let count = replacement.chars().count();
-            (a..b, replacement, 0, count)
         }
-        Format::CodeBlock => {
-            let fence = if selected.contains("```") {
-                "````"
-            } else {
-                "```"
-            };
-            let body = if selected.is_empty() {
-                "code"
-            } else {
-                selected
-            };
-            (
-                start..end,
-                format!("{fence}\n{body}\n{fence}"),
-                fence.len() + 1,
-                body.chars().count(),
-            )
-        }
-        Format::Link => {
-            let label = if selected.is_empty() {
-                "link text"
-            } else {
-                selected
-            };
-            (
-                start..end,
-                format!("[{label}](https://)"),
-                label.chars().count() + 3,
-                8,
-            )
-        }
-        Format::Table => (
-            start..end,
-            "\n| Column 1 | Column 2 |\n| --- | --- |\n| Text | Text |\n".into(),
-            3,
-            8,
-        ),
-        Format::Rule => (start..end, "\n\n---\n\n".into(), 7, 0),
+        Format::CodeBlock(_) => unreachable!(),
     };
-    let prefix = text[..range.start].chars().count();
-    text.replace_range(range, &replacement);
-    prefix + inset..prefix + inset + selected_len
+    text[..range.start].chars().count()..text[..range.end].chars().count()
+}
+
+fn apply_inline(text: &mut String, selection: Range<usize>, format: Format) -> Range<usize> {
+    let syntax = syntax::Syntax::new(text);
+    let spans = syntax
+        .inline
+        .iter()
+        .filter(|s| s.kind == format)
+        .collect::<Vec<_>>();
+    let remove = inline::active(text, &selection, &spans, &syntax);
+    let line_start = blocks::lines(text, &selection).start;
+    let line_end = text[line_start..]
+        .find('\n')
+        .map_or(text.len(), |n| line_start + n);
+    let multiline_span = syntax.inline.iter().any(|s| {
+        s.kind == format
+            && syntax::intersects(&s.range, &selection)
+            && text[s.range.clone()].contains('\n')
+    });
+    if !matches!(format, Format::Code | Format::Link)
+        && !multiline_span
+        && (text[selection.clone()].contains('\n')
+            || selection.start < line_start + blocks::prefix(&text[line_start..line_end]).end)
+    {
+        // Keep inline markers inside each block, after its heading/list/quote prefix.
+        let mut offset = blocks::lines(text, &selection).start;
+        let ranges: Vec<_> = text[blocks::lines(text, &selection)]
+            .split_inclusive('\n')
+            .filter_map(|line| {
+                let start = offset;
+                offset += line.len();
+                let line = line.trim_end_matches(['\r', '\n']);
+                let a = (start + blocks::prefix(line).end).max(selection.start);
+                let b = (start + line.len()).min(selection.end);
+                (a < b && !syntax.literal_at(&(start..offset))).then_some(a..b)
+            })
+            .collect();
+        let mut end = selection.end;
+        let mut start = selection.start;
+        for range in ranges.into_iter().rev() {
+            let before = text.len();
+            let result = inline::apply(text, range, format, &syntax, Some(remove));
+            end = end.saturating_add_signed(text.len() as isize - before as isize);
+            start = start.min(result.start);
+        }
+        start..end
+    } else {
+        inline::apply(text, selection, format, &syntax, None)
+    }
+}
+
+struct Fence<'a> {
+    opening: Range<usize>,
+    body: Range<usize>,
+    block: Range<usize>,
+    language: &'a str,
+}
+
+// Only fenced lines count: a closing fence must match the opener and be at least as long.
+fn enclosing_fence(text: &str, selection: Range<usize>) -> Option<Fence<'_>> {
+    let mut opening = None;
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        let content = line.trim_end_matches(['\r', '\n']);
+        let trimmed = content.trim_start_matches(' ');
+        let indent = content.len() - trimmed.len();
+        if indent <= 3 {
+            let marker = trimmed.as_bytes().first().copied().unwrap_or_default();
+            let length = trimmed.bytes().take_while(|b| *b == marker).count();
+            if let Some((start, body_start, kind, count, language)) = opening {
+                if marker == kind && length >= count && trimmed[length..].trim().is_empty() {
+                    let block_end = offset + line.len();
+                    if selection.start >= start
+                        && selection.end <= block_end
+                        && (selection.start < block_end || block_end == text.len())
+                    {
+                        return Some(Fence {
+                            opening: start..body_start,
+                            body: body_start..offset,
+                            block: start..block_end,
+                            language,
+                        });
+                    }
+                    opening = None;
+                }
+            } else if matches!(marker, b'`' | b'~') && length >= 3 {
+                let info = trimmed[length..].trim();
+                if marker != b'`' || !info.contains('`') {
+                    opening = Some((
+                        offset,
+                        offset + line.len(),
+                        marker,
+                        length,
+                        info.split_whitespace().next().unwrap_or(""),
+                    ));
+                }
+            }
+        }
+        offset += line.len();
+    }
+    if let Some((start, body_start, _, _, language)) = opening
+        && selection.start >= start
+        && selection.end <= text.len()
+    {
+        return Some(Fence {
+            opening: start..body_start,
+            body: body_start..text.len(),
+            block: start..text.len(),
+            language,
+        });
+    }
+    None
+}
+
+pub fn code_block_language(text: &str, selection: Range<usize>) -> Option<&str> {
+    enclosing_fence(
+        text,
+        byte(text, selection.start.min(selection.end))
+            ..byte(text, selection.start.max(selection.end)),
+    )
+    .map(|fence| fence.language)
+}
+
+fn longest_backticks(text: &str) -> usize {
+    text.split(|c| c != '`').map(str::len).max().unwrap_or(0)
+}
+
+fn apply_code_block(text: &mut String, selection: Range<usize>, language: &str) -> Range<usize> {
+    let newline = if text.contains("\r\n") { "\r\n" } else { "\n" };
+    if let Some(existing) = enclosing_fence(text, selection.clone()) {
+        let opening = &text[existing.opening.clone()];
+        let indent = opening.len() - opening.trim_start_matches(' ').len();
+        let marker = opening.as_bytes()[indent] as char;
+        let length = opening[indent..]
+            .chars()
+            .take_while(|c| *c == marker)
+            .count();
+        let heading = format!("{}{language}{newline}", marker.to_string().repeat(length));
+        let heading = format!("{}{heading}", " ".repeat(indent));
+        let body = &text[existing.body.clone()];
+        let body_len = body.trim_end_matches(['\r', '\n']).chars().count();
+        let prefix = text[..existing.block.start].chars().count();
+        // An unfinished fence is completed when its language is chosen.
+        if existing.body.end == existing.block.end {
+            let separator = if body.ends_with('\n') { "" } else { newline };
+            let replacement = format!(
+                "{heading}{body}{separator}{}",
+                marker.to_string().repeat(length)
+            );
+            text.replace_range(existing.block, &replacement);
+        } else {
+            text.replace_range(existing.opening, &heading);
+        }
+        let start = prefix + heading.chars().count();
+        return start..start + body_len;
+    }
+    let body = &text[selection.clone()];
+    let body = if body.is_empty() { "code" } else { body };
+    let fence = "`".repeat((longest_backticks(body) + 1).max(3));
+    let before = if selection.start > 0 && !text[..selection.start].ends_with('\n') {
+        newline
+    } else {
+        ""
+    };
+    let after = if selection.end < text.len() && !text[selection.end..].starts_with('\n') {
+        newline
+    } else {
+        ""
+    };
+    let separator = if body.ends_with('\n') { "" } else { newline };
+    let heading = format!("{before}{fence}{language}{newline}");
+    let replacement = format!("{heading}{body}{separator}{fence}{after}");
+    let start = text[..selection.start].chars().count() + heading.chars().count();
+    let length = body.chars().count();
+    text.replace_range(selection, &replacement);
+    start..start + length
 }
 #[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn selection_formatting_preserves_unicode_and_toggles_without_losing_text() {
-        let mut text = "Hi 🌍 Україна!".to_owned();
-        let selected = apply(&mut text, 3..12, Format::Bold);
-        assert_eq!(text, "Hi **🌍 Україна**!");
-        apply(&mut text, selected, Format::Bold);
-        assert_eq!(text, "Hi 🌍 Україна!");
-    }
-    #[test]
-    fn block_formatting_keeps_unselected_lines_and_links_select_the_url() {
-        let mut text = "First\nSecond\nThird".to_owned();
-        apply(&mut text, 6..13, Format::Task);
-        assert_eq!(text, "First\n- [ ] Second\nThird");
-        let mut text = "Journal".into();
-        let range = apply(&mut text, 0..7, Format::Link);
-        assert_eq!(text, "[Journal](https://)");
-        assert_eq!(
-            text.chars()
-                .skip(range.start)
-                .take(range.len())
-                .collect::<String>(),
-            "https://"
-        );
-    }
-}
+mod tests;

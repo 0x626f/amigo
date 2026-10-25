@@ -44,20 +44,23 @@ impl Amigo {
                 .show(ui, |ui| {
                     ui.add_enabled_ui(available, |ui| {
                         if settings.page == SettingsPage::Calendar {
-                            ui.horizontal(|ui| {
-                                field_label(ui, "Refresh Every:");
-                                ui.add(
-                                    egui::DragValue::new(
-                                        &mut settings.calendar_settings.refresh_interval_seconds,
-                                    )
-                                    .range(1..=86_400)
-                                    .suffix(" s"),
-                                );
-                                refresh = design::button(ui, "Refresh Now")
-                                    .on_hover_text("Refresh saved calendars")
-                                    .clicked();
+                            design::settings_group(ui, "Refresh", |ui| {
+                                ui.horizontal(|ui| {
+                                    field_label(ui, "Refresh Every:");
+                                    ui.add(
+                                        egui::DragValue::new(
+                                            &mut settings
+                                                .calendar_settings
+                                                .refresh_interval_seconds,
+                                        )
+                                        .range(1..=86_400)
+                                        .suffix(" s"),
+                                    );
+                                    refresh = design::button(ui, "Refresh Now")
+                                        .on_hover_text("Refresh saved calendars")
+                                        .clicked();
+                                });
                             });
-                            ui.add_space(20.);
                             remove_subscription = calendar_form(settings, ui);
                         }
                         if settings.page == SettingsPage::Notifications {
@@ -212,7 +215,7 @@ fn calendar_form(settings: &mut SettingsDraft, ui: &mut egui::Ui) -> Option<Stri
     ui.add_space(12.);
     for row in &mut settings.subscriptions {
         ui.push_id(&row.id, |ui| {
-            design::panel(ui).show(ui, |ui| {
+            design::settings_group(ui, "", |ui| {
                 ui.horizontal(|ui| {
                     let width =
                         (ui.available_width() - 32. - ui.spacing().item_spacing.x).max(100.);
@@ -233,6 +236,7 @@ fn calendar_form(settings: &mut SettingsDraft, ui: &mut egui::Ui) -> Option<Stri
                         remove = Some(row.id.clone());
                     }
                 });
+                design::settings_separator(ui);
                 field_label(ui, "Calendar URL");
                 ui.add(
                     design::input(&mut row.url)
@@ -258,19 +262,21 @@ fn calendar_form(settings: &mut SettingsDraft, ui: &mut egui::Ui) -> Option<Stri
     remove
 }
 fn telegram_form(settings: &mut SettingsDraft, ui: &mut egui::Ui) {
-    design::dialog_section(ui, "Telegram Notification");
-    design::small_checkbox(
-        ui,
-        &mut settings.credentials.telegram_enabled,
-        "Enable Telegram Notifications",
-    );
-    field_label(ui, "Bot Token");
-    ui.add(
-        design::input(&mut settings.credentials.telegram_token)
-            .password(true)
-            .desired_width(f32::INFINITY),
-    );
-    text_field(ui, "Chat ID", &mut settings.credentials.telegram_chat);
+    design::settings_group(ui, "Telegram Notification", |ui| {
+        design::small_checkbox(
+            ui,
+            &mut settings.credentials.telegram_enabled,
+            "Enable Telegram Notifications",
+        );
+        design::settings_separator(ui);
+        field_label(ui, "Bot Token");
+        ui.add(
+            design::input(&mut settings.credentials.telegram_token)
+                .password(true)
+                .desired_width(f32::INFINITY),
+        );
+        text_field(ui, "Chat ID", &mut settings.credentials.telegram_chat);
+    });
     ui.hyperlink_to("Create a bot with BotFather", "https://t.me/BotFather");
     design::hint(
         ui,

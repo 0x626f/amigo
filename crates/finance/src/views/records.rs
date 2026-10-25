@@ -112,14 +112,7 @@ pub(super) fn expenses(app: &mut FinanceUi<'_>, ui: &mut egui::Ui) {
                 && (!regular || !app.state.month.is_empty() || r.regular_until.is_empty())
                 && matches(
                     &app.state.search,
-                    &format!(
-                        "{} {} {} {} {}",
-                        r.title,
-                        r.category,
-                        r.labels.join(" "),
-                        r.priority,
-                        r.currency
-                    ),
+                    &format!("{} {} {} {}", r.title, r.category, r.priority, r.currency),
                 )
         })
         .cloned()

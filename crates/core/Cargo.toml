@@ -17,3 +17,4 @@ base64.workspace = true
 rand.workspace = true
 zeroize.workspace = true
 percent-encoding.workspace = true
+pulldown-cmark.workspace = true

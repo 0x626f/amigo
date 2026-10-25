@@ -47,16 +47,9 @@ pub(crate) fn seed(plan: &mut FinancePlan) {
         plan,
         "ethereum-mainnet",
         "Ethereum Mainnet",
-        "https://ethereum-rpc.publicnode.com",
         &["Ethereum", "Ethereum Mainnet", "ETH Mainnet"],
     );
-    let tron = chain(
-        plan,
-        "tron-mainnet",
-        "Tron",
-        "https://api.trongrid.io",
-        &["Tron", "Tron Mainnet"],
-    );
+    let tron = chain(plan, "tron-mainnet", "Tron", &["Tron", "Tron Mainnet"]);
     for (symbol, network, address, native_asset) in [
         ("EUR", "", "", false),
         ("USD", "", "", false),
@@ -128,7 +121,7 @@ pub(crate) fn seed(plan: &mut FinancePlan) {
     }
     plan.meta.reference_defaults_version = 1;
 }
-fn chain(plan: &mut FinancePlan, id: &str, name: &str, rpc_url: &str, aliases: &[&str]) -> String {
+fn chain(plan: &mut FinancePlan, id: &str, name: &str, aliases: &[&str]) -> String {
     if let Some(chain) = plan.chains.iter().find(|c| {
         aliases
             .iter()
@@ -140,7 +133,6 @@ fn chain(plan: &mut FinancePlan, id: &str, name: &str, rpc_url: &str, aliases: &
     plan.chains.push(Chain {
         id: id.clone(),
         name: name.into(),
-        rpc_url: rpc_url.into(),
     });
     id
 }

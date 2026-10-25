@@ -138,7 +138,10 @@ impl Amigo {
             && !vault.encrypted
         {
             match library.load_plain_vault(vault) {
-                Ok(plan) => {
+                Ok(mut plan) => {
+                    if let Err(e) = library.share_finance_references(&vault.entry.id, &mut plan) {
+                        error = e;
+                    }
                     workspace.finance = plan;
                     vault_unlocked = true;
                 }
@@ -146,7 +149,7 @@ impl Amigo {
             }
         }
         let last_saved = workspace.clone();
-        // Persist record migrations and account-property cleanup once, even offline.
+        // Persist record migrations and obsolete-property cleanup once, even offline.
         if vault_unlocked {
             workspace.finance.meta.record_metadata_version = RECORD_METADATA_VERSION;
         }
@@ -263,49 +266,21 @@ impl Amigo {
                             egui::Id::new("app-brand-title"),
                             egui::Sense::hover(),
                         );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if design::icon_button(
+                                ui,
+                                egui::Id::new("app-settings-open"),
+                                Icon::Settings,
+                                "App Settings",
+                                32.,
+                            )
+                            .clicked()
+                            {
+                                self.open_settings(SettingsPage::Tasks);
+                            }
+                        });
                     },
                 );
-                ui.add_space(10.);
-                ui.horizontal(|ui| {
-                    ui.add_space(24.);
-                    if design::icon_button(
-                        ui,
-                        egui::Id::new("app-settings-open"),
-                        Icon::Settings,
-                        "App Settings",
-                        32.,
-                    )
-                    .clicked()
-                    {
-                        self.open_settings(SettingsPage::Tasks);
-                    }
-                    for (name, icon, label, action) in [
-                        (
-                            "import",
-                            Icon::Import,
-                            "Import Amigo Setup",
-                            design::DataAction::Import,
-                        ),
-                        (
-                            "export",
-                            Icon::Export,
-                            "Export Amigo Setup",
-                            design::DataAction::Export,
-                        ),
-                    ] {
-                        if design::icon_button(
-                            ui,
-                            egui::Id::new(format!("app-settings-{name}")),
-                            icon,
-                            label,
-                            32.,
-                        )
-                        .clicked()
-                        {
-                            self.start_setup_transfer(action, ui.ctx());
-                        }
-                    }
-                });
                 ui.add_space(12.);
                 ui.separator();
                 ui.add_space(12.);
@@ -409,7 +384,13 @@ impl Amigo {
         }
         self.sidebar(ui);
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(colors(ui).canvas).inner_margin(28))
+            .frame(egui::Frame::new().fill(colors(ui).canvas).inner_margin(
+                if self.section == Section::Journal {
+                    0
+                } else {
+                    28
+                },
+            ))
             .show(ui, |ui| {
                 design::page_transition(
                     ui,

@@ -394,12 +394,10 @@ fn currency_dropdown_uses_available_currency_ids_even_when_codes_match() {
         Chain {
             id: "eth".into(),
             name: "Ethereum".into(),
-            ..Default::default()
         },
         Chain {
             id: "sol".into(),
             name: "Solana".into(),
-            ..Default::default()
         },
     ];
     app.plan.currencies.clear();
@@ -934,35 +932,6 @@ fn new_rows_remain_visible_under_filters_and_keep_independent_drafts() {
 }
 
 #[test]
-fn inline_label_rename_updates_references_and_delete_stays_guarded() {
-    let (mut app, ctx) = harness();
-    let size = egui::vec2(1440.0, 900.0);
-    let mut expense = Expense::new("EUR");
-    expense.title = "Rent".into();
-    expense.labels = vec!["Essential".into()];
-    app.plan.expenses.push(expense);
-    app.plan.normalize();
-    let key = app.plan.expense_labels[0].id.clone();
-    app.tab.view = FinanceView::Storage;
-    app.tab.storage_unit = 6;
-    for _ in 0..3 {
-        let _ = frame(&mut app, &ctx, size, vec![]);
-    }
-    replace_cell(&mut app, &ctx, size, &key, "name", "Necessities");
-    row_action(&mut app, &ctx, size, &key, "finance-row-save");
-    assert_eq!(app.plan.expense_labels[0].name, "Necessities");
-    assert_eq!(app.plan.expenses[0].labels, ["Necessities"]);
-    assert_eq!(
-        app.plan.expenses[0].label_ids.as_slice(),
-        std::slice::from_ref(&key)
-    );
-    row_action(&mut app, &ctx, size, &key, "finance-row-delete");
-    row_action(&mut app, &ctx, size, &key, "finance-row-confirm-delete");
-    assert_eq!(app.plan.expense_labels.len(), 1);
-    assert!(app.tab.drafts[&key].error.contains("in use"));
-}
-
-#[test]
 fn expense_columns_and_month_groups_show_each_regular_expense_once() {
     for size in [egui::vec2(980.0, 900.0), egui::vec2(1440.0, 900.0)] {
         let (mut app, ctx) = harness();
@@ -971,7 +940,6 @@ fn expense_columns_and_month_groups_show_each_regular_expense_once() {
         regular.due_date = "2026-02-20".into();
         regular.regular = true;
         regular.amount = Amount::Number(10.0);
-        regular.labels = vec!["Legacy label".into()];
         let regular_id = regular.id.clone();
         app.plan.expenses.push(regular);
         for (date, amount) in [
@@ -1016,7 +984,7 @@ fn expense_columns_and_month_groups_show_each_regular_expense_once() {
                 .is_none()
         );
         assert_eq!(app.plan.totals("2026-02", false).1, 80.0);
-        assert_eq!(app.plan.totals("2026-02", true).1, 10.0);
+        assert_eq!(app.plan.totals("2026-02", true).1, 80.0);
         let count = |shape: &egui::Shape| -> usize {
             fn count(shape: &egui::Shape) -> usize {
                 match shape {
@@ -1169,7 +1137,6 @@ fn expense_cancellation_button_precedes_remove_and_stays_disabled_with_its_date(
                 today()
             };
             expense.regular = regular;
-            expense.applicable = true;
             expense.amount = Amount::Number(100.0);
             let key = expense.id.clone();
             app.plan.expenses.push(expense);
@@ -1260,7 +1227,6 @@ fn regular_expense_deletion_uses_the_current_month_and_preserves_recorded_amount
     expense.due_date = "2020-01-31".into();
     expense.amount = Amount::Number(100.0);
     expense.regular = true;
-    expense.applicable = true;
     let key = expense.id.clone();
     app.plan.expenses.push(expense);
     app.plan.normalize();
@@ -1301,7 +1267,7 @@ fn every_table_keeps_columns_aligned_and_actions_visible_during_window_resizing(
         (Record::Expense(Expense::new("EUR")), 8),
         (Record::Saving(Saving::default()), 9),
         (Record::Budget(Budget::default()), 6),
-        (Record::Chain(Chain::default()), 3),
+        (Record::Chain(Chain::default()), 2),
         (Record::Stored(2, StoredValue::default()), 2),
     ] {
         let (mut app, ctx) = harness();
@@ -1903,7 +1869,6 @@ fn currency_symbol_list_opens_details_validates_tokens_and_preserves_links() {
         app.plan.chains.push(Chain {
             id: "ethereum".into(),
             name: "Ethereum".into(),
-            rpc_url: "https://example.test".into(),
         });
         app.tab.view = FinanceView::Storage;
         click_text(&mut app, &ctx, size, "+ Currency");
@@ -1946,7 +1911,16 @@ fn currency_symbol_list_opens_details_validates_tokens_and_preserves_links() {
             let _ = frame(&mut app, &ctx, size, vec![]);
         }
         let output = frame(&mut app, &ctx, size, vec![]);
-        assert!(text_rect(&output, "Symbol").is_some());
+        assert!(text_rect(&output, "Symbol").is_none());
+        let entry = ctx
+            .read_response(egui::Id::new(("stored-value-currency", &token.id)))
+            .unwrap()
+            .rect;
+        let text = text_rect(&output, "TOK (Ethereum)").unwrap();
+        assert!(
+            text.left() < entry.left() + entry.width() / 3.,
+            "currency list text is left aligned"
+        );
         assert!(text_rect(&output, "Token Address").is_none());
         assert!(text_rect(&output, "Chain").is_none());
         click_text(&mut app, &ctx, size, "TOK (Ethereum)");
@@ -2112,7 +2086,6 @@ fn wallet_month_changes_transaction_totals_but_not_savings() {
         let mut row = Expense::new("EUR");
         row.due_date = date;
         row.amount = Amount::Number(amount);
-        row.applicable = true;
         app.plan.expenses.push(row);
     }
     app.plan.savings = vec![
@@ -2281,7 +2254,9 @@ fn computed_values_and_dates_are_centered_beneath_their_headers() {
                 .unwrap_or_else(|| panic!("Missing {text} inside {cell:?}"));
             assert!(
                 (value.center().x - cell.center().x).abs() < 2.0,
-                "Misaligned {text}: {value:?}, {cell:?}"
+                "Misaligned {text}: {value:?}, {cell:?}, input={:?}",
+                ctx.read_response(egui::Id::new((format!("finance-{key}-date"), "input")))
+                    .map(|r| r.rect)
             );
         }
     }
@@ -2584,7 +2559,6 @@ fn budgets_edit_nested_expenses_and_recalculate_with_saved_currency_rates() {
             assert!((app.plan.totals(&month(), true).1 - expected).abs() < 1e-9);
         }
         assert!((app.plan.budget_spent(&app.plan.budgets[0]).unwrap() - 200.0).abs() < 1e-9);
-        assert!(app.plan.expense_labels.is_empty());
         app.plan.fx_rates[0].rate = Amount::Number(9.9);
         app.plan.normalize();
         assert!((app.plan.budget_spent(&app.plan.budgets[0]).unwrap() - 200.0).abs() < 1e-9);
@@ -2795,5 +2769,123 @@ fn wallet_history_range_extends_through_real_dropdown_and_preserves_filters() {
         let output = frame(&mut app, &ctx, size, vec![]);
         assert_eq!(app.plan.meta.reporting_currency, "EUR");
         assert!(text_rect(&output, "Income & Expenses Chart").is_some());
+    }
+}
+
+#[test]
+fn expenses_settings_keep_category_renames_delete_guards_and_cancel_without_labels() {
+    let (mut app, ctx) = harness();
+    let size = egui::vec2(980., 640.);
+    app.plan.categories = vec![StoredValue {
+        id: "category-food".into(),
+        name: "Food".into(),
+    }];
+    let mut expense = Expense::new("EUR");
+    expense.title = "Groceries".into();
+    expense.category = "Food".into();
+    expense.category_id = "category-food".into();
+    app.plan.expenses.push(expense.clone());
+    app.plan.normalize();
+    expense.id = "pending-expense".into();
+    app.tab.edit_record(Record::Expense(expense), true);
+    app.tab.configure_categories(&app.plan);
+    for _ in 0..4 {
+        frame(&mut app, &ctx, size, vec![]);
+    }
+    let output = frame(&mut app, &ctx, size, vec![]);
+    assert!(text_rect(&output, "Categories").is_some());
+    assert!(text_rect(&output, "Labels").is_none());
+    let draft = app.tab.category_settings.as_mut().unwrap();
+    draft.categories[0].name = "Meals".into();
+    click_text(&mut app, &ctx, size, "Save Settings");
+    assert!(app.tab.category_settings.is_none());
+    assert_eq!(app.plan.expenses[0].category, "Meals");
+    let Record::Expense(pending) = &app.tab.drafts["pending-expense"].record else {
+        panic!()
+    };
+    assert_eq!(pending.category, "Meals");
+    app.tab.configure_categories(&app.plan);
+    app.tab
+        .category_settings
+        .as_mut()
+        .unwrap()
+        .categories
+        .clear();
+    click_text(&mut app, &ctx, size, "Save Settings");
+    let output = frame(&mut app, &ctx, size, vec![]);
+    assert!(
+        text_rect(
+            &output,
+            "A removed category is in use. Reassign its records before removing it."
+        )
+        .is_some()
+    );
+    assert_eq!(app.plan.categories[0].name, "Meals");
+    click_text(&mut app, &ctx, size, "Cancel");
+    app.tab.configure_categories(&app.plan);
+    app.tab.category_settings.as_mut().unwrap().categories[0].name = "Discarded".into();
+    keyboard(&mut app, &ctx, size, egui::Key::Escape);
+    assert!(app.tab.category_settings.is_none());
+    assert_eq!(app.plan.categories[0].name, "Meals");
+    app.tab.view = FinanceView::Savings;
+    app.tab.configure_categories(&app.plan);
+    let output = frame(&mut app, &ctx, size, vec![]);
+    assert!(text_rect(&output, "Labels").is_none());
+}
+
+#[test]
+fn chain_editor_saves_a_name_without_an_rpc_url_and_keeps_token_links() {
+    for size in [egui::vec2(980., 640.), egui::vec2(1440., 900.)] {
+        let (mut app, ctx) = harness();
+        app.tab.view = FinanceView::Storage;
+        app.tab.storage_unit = 1;
+        let chain = app.plan.chains[0].clone();
+        let linked_currency = app
+            .plan
+            .currencies
+            .iter()
+            .find(|c| c.chain_id == chain.id)
+            .unwrap()
+            .clone();
+        for _ in 0..3 {
+            frame(&mut app, &ctx, size, vec![]);
+        }
+        let output = frame(&mut app, &ctx, size, vec![]);
+        assert!(text_rect(&output, "RPC URL").is_none());
+        replace_cell(&mut app, &ctx, size, &chain.id, "name", "Renamed network");
+        keyboard(&mut app, &ctx, size, egui::Key::Enter);
+        assert_eq!(
+            app.plan
+                .chains
+                .iter()
+                .find(|c| c.id == chain.id)
+                .unwrap()
+                .name,
+            "Renamed network"
+        );
+        assert_eq!(
+            app.plan
+                .currencies
+                .iter()
+                .find(|c| c.id == linked_currency.id)
+                .unwrap(),
+            &linked_currency
+        );
+        click_text(&mut app, &ctx, size, "+ Add Value");
+        let new_id = app.tab.drafts.keys().next().unwrap().clone();
+        keyboard(&mut app, &ctx, size, egui::Key::Enter);
+        assert!(app.tab.drafts[&new_id].error.contains("Enter a chain name"));
+        replace_cell(&mut app, &ctx, size, &new_id, "name", "Local network");
+        keyboard(&mut app, &ctx, size, egui::Key::Enter);
+        assert!(!app.tab.drafts.contains_key(&new_id));
+        assert_eq!(
+            app.plan
+                .chains
+                .iter()
+                .find(|c| c.id == new_id)
+                .unwrap()
+                .name,
+            "Local network"
+        );
     }
 }

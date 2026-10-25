@@ -151,52 +151,135 @@ impl Widget for Button<'_> {
 pub fn button<'a>(ui: &mut Ui, text: impl IntoAtoms<'a>) -> Response {
     ui.add(Button::new(text))
 }
+/// A centered caption with a reserved arrow gutter, including when the caption truncates.
+pub fn dropdown_button(ui: &mut Ui, id: egui::Id, label: &str, size: Vec2) -> Response {
+    let response = ui
+        .push_id(id, |ui| ui.add_sized(size, Button::new("")))
+        .inner;
+    let text_rect = Rect::from_min_max(
+        response.rect.min + Vec2::new(6., 0.),
+        response.rect.max - Vec2::new(26., 0.),
+    );
+    let galley = egui::WidgetText::from(label).into_galley(
+        ui,
+        Some(egui::TextWrapMode::Truncate),
+        text_rect.width().max(0.),
+        egui::TextStyle::Button,
+    );
+    let text_left = (response.rect.center().x - galley.size().x * 0.5)
+        .min(text_rect.right() - galley.size().x)
+        .max(text_rect.left());
+    ui.painter()
+        .with_clip_rect(text_rect.intersect(ui.clip_rect()))
+        .galley(
+            egui::pos2(text_left, text_rect.center().y - galley.size().y * 0.5),
+            galley,
+            colors(ui).ink,
+        );
+    paint_icon(
+        ui.painter(),
+        Rect::from_center_size(
+            response.rect.right_center() - Vec2::new(12., 0.),
+            Vec2::splat(12.),
+        ),
+        Icon::ChevronDown,
+        colors(ui).muted,
+    );
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, ui.is_enabled(), label)
+    });
+    response.on_hover_text(label)
+}
 pub fn small_button<'a>(ui: &mut Ui, text: impl IntoAtoms<'a>) -> Response {
     ui.add(Button::new(text).small())
 }
-/// Rounded checkboxes use a solid selected fill and retain native input behavior.
+/// Desktop checkboxes share native atom layout, input, and accessibility semantics.
 pub fn checkbox<'a>(ui: &mut Ui, checked: &'a mut bool, label: impl IntoAtoms<'a>) -> Response {
-    let original = ui.style().clone();
-    let p = colors(ui);
-    let visuals = &mut ui.style_mut().visuals;
-    // The foreground stroke paints the check mark; keep label color independent.
-    visuals.override_text_color = Some(visuals.override_text_color.unwrap_or(p.ink));
-    let widgets = &mut visuals.widgets;
-    for visual in [
-        &mut widgets.noninteractive,
-        &mut widgets.inactive,
-        &mut widgets.hovered,
-        &mut widgets.active,
-        &mut widgets.open,
-    ] {
-        visual.corner_radius = egui::CornerRadius::same(255);
-        visual.fg_stroke = Stroke::NONE;
-        visual.bg_stroke = if *checked {
-            visual.bg_fill = p.accent;
-            Stroke::NONE
-        } else {
-            Stroke::new(1., p.hover_line)
-        };
-    }
-    let response = ui.checkbox(checked, label);
-    ui.set_style(original);
-    if response.changed() {
-        ui.ctx().request_repaint();
-    }
-    response
+    checkbox_sized(ui, checked, label, 16.)
 }
-/// Smaller indicator with the same row height and native label hit target.
+/// Smaller indicator with the same row height and label hit target.
 pub fn small_checkbox<'a>(
     ui: &mut Ui,
     checked: &'a mut bool,
     label: impl IntoAtoms<'a>,
 ) -> Response {
-    let original = ui.spacing().clone();
-    ui.spacing_mut().icon_width = 10.;
-    ui.spacing_mut().icon_width_inner = 6.;
-    let response = checkbox(ui, checked, label);
-    *ui.spacing_mut() = original;
-    response
+    checkbox_sized(ui, checked, label, 14.)
+}
+fn checkbox_sized<'a>(
+    ui: &mut Ui,
+    checked: &'a mut bool,
+    label: impl IntoAtoms<'a>,
+    size: f32,
+) -> Response {
+    let mut atoms = label.into_atoms();
+    let text = atoms.text().map(String::from);
+    let icon_id = egui::Id::new("amigo-checkbox-indicator");
+    let height = ui.spacing().interact_size.y.max(size);
+    atoms.push_left(egui::Atom::custom(icon_id, egui::vec2(size, height)));
+    // Like egui's checkbox, the whole label is clickable and keyboard focusable.
+    let mut allocated = egui::AtomLayout::new(atoms)
+        .gap(8.)
+        .sense(egui::Sense::click())
+        .min_size(Vec2::splat(height))
+        .allocate(ui);
+    if allocated.response.clicked() {
+        *checked = !*checked;
+        allocated.response.mark_changed();
+    }
+    allocated.response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::Checkbox,
+            ui.is_enabled(),
+            *checked,
+            text.as_deref().unwrap_or(""),
+        )
+    });
+    let painted = allocated.paint(ui);
+    if let Some(icon) = painted.rect(icon_id) {
+        let rect = Rect::from_center_size(icon.center(), Vec2::splat(size));
+        let p = colors(ui);
+        let response = &painted.response;
+        let pressed = response.is_pointer_button_down_on();
+        let hovered = response.hovered();
+        let fill = if *checked {
+            p.primary.lerp_to_gamma(
+                Color32::BLACK,
+                if pressed {
+                    0.18
+                } else if hovered {
+                    0.08
+                } else {
+                    0.
+                },
+            )
+        } else if pressed || hovered {
+            p.hover
+        } else {
+            p.card
+        };
+        let stroke = if *checked {
+            Stroke::NONE
+        } else {
+            Stroke::new(1., if hovered { p.muted } else { p.hover_line })
+        };
+        ui.painter().rect(rect, 3, fill, stroke, StrokeKind::Inside);
+        if *checked {
+            let point = |x, y| rect.min + egui::vec2(x * size, y * size);
+            ui.painter().add(egui::Shape::line(
+                vec![point(0.23, 0.51), point(0.43, 0.71), point(0.78, 0.29)],
+                Stroke::new(1.8, Color32::WHITE),
+            ));
+        }
+        if response.has_focus() {
+            ui.painter().rect_stroke(
+                rect.expand(3.),
+                5,
+                Stroke::new(1.5, p.accent),
+                StrokeKind::Outside,
+            );
+        }
+    }
+    painted.response
 }
 pub fn menu_button<'a, R>(
     ui: &mut Ui,
@@ -274,6 +357,158 @@ pub fn chip(ui: &mut Ui, text: &str, selected: bool, tint: Color32) -> Response 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn dropdowns_preserve_short_labels_and_leave_a_gap_before_the_arrow() {
+        for dark in [false, true] {
+            for (width, label) in [
+                (65., "EUR"),
+                (112., "Heading 2"),
+                (84., "A long category name"),
+            ] {
+                let ctx = egui::Context::default();
+                install(&ctx);
+                apply_theme(&ctx, dark);
+                let mut rect = Rect::NOTHING;
+                let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                    egui::CentralPanel::default().show(ui, |ui| {
+                        rect = dropdown_button(
+                            ui,
+                            egui::Id::new("dropdown"),
+                            label,
+                            Vec2::new(width, 38.),
+                        )
+                        .rect;
+                    });
+                });
+                output.textures_delta.clear();
+                let text = output
+                    .shapes
+                    .iter()
+                    .find_map(|s| match &s.shape {
+                        egui::Shape::Text(t) if !t.galley.text().is_empty() => Some(t),
+                        _ => None,
+                    })
+                    .unwrap();
+                let painted = Rect::from_min_size(text.pos, text.galley.size());
+                assert!(painted.left() >= rect.left() + 5.);
+                assert!(
+                    painted.right() <= rect.right() - 25.,
+                    "{label}: {painted:?} {rect:?}"
+                );
+                if label == "EUR" {
+                    assert!(
+                        !text.galley.elided,
+                        "three-letter currencies remain readable"
+                    );
+                }
+            }
+        }
+    }
+    #[test]
+    fn checkboxes_show_the_current_state_and_keep_label_keyboard_and_disabled_input() {
+        for dark in [false, true] {
+            for small in [false, true] {
+                let ctx = egui::Context::default();
+                install(&ctx);
+                apply_theme(&ctx, dark);
+                let mut checked = false;
+                let mut frame = |events, enabled, focus| {
+                    let mut response = None;
+                    let mut output = ctx.run_ui(
+                        egui::RawInput {
+                            events,
+                            ..Default::default()
+                        },
+                        |ui| {
+                            egui::CentralPanel::default().show(ui, |ui| {
+                                ui.add_enabled_ui(enabled, |ui| {
+                                    let r = if small {
+                                        small_checkbox(ui, &mut checked, "Enable preference")
+                                    } else {
+                                        checkbox(ui, &mut checked, "Enable preference")
+                                    };
+                                    if focus {
+                                        r.request_focus();
+                                    }
+                                    response = Some(r);
+                                });
+                            });
+                        },
+                    );
+                    output.textures_delta.clear();
+                    let response = response.unwrap();
+                    let size = if small { 14. } else { 16. };
+                    let indicator = output
+                        .shapes
+                        .iter()
+                        .find_map(|s| match &s.shape {
+                            egui::Shape::Rect(r) if r.rect.size() == Vec2::splat(size) => Some(r),
+                            _ => None,
+                        })
+                        .expect("square checkbox indicator");
+                    assert_eq!(indicator.corner_radius, egui::CornerRadius::same(3));
+                    assert!(response.rect.height() >= CONTROL_HEIGHT);
+                    if enabled {
+                        if checked {
+                            assert!(indicator.fill.b() > indicator.fill.r());
+                        }
+                        assert_eq!(output.shapes.iter().any(|s| matches!(
+                            &s.shape,
+                            egui::Shape::Path(path) if path.points.len() == 3
+                                && path.stroke.color == egui::epaint::ColorMode::Solid(Color32::WHITE)
+                                && path.stroke.width > 0.
+                        )), checked, "a checked box must contain a visible tick in the same frame");
+                    }
+                    (response, checked)
+                };
+                let (response, value) = frame(vec![], true, false);
+                assert!(!value);
+                let label = egui::pos2(response.rect.right() - 3., response.rect.center().y);
+                let click = || {
+                    vec![
+                        egui::Event::PointerMoved(label),
+                        egui::Event::PointerButton {
+                            pos: label,
+                            button: egui::PointerButton::Primary,
+                            pressed: true,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                        egui::Event::PointerButton {
+                            pos: label,
+                            button: egui::PointerButton::Primary,
+                            pressed: false,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ]
+                };
+                let (response, value) = frame(click(), true, true);
+                assert!(
+                    value && response.changed(),
+                    "clicking the label toggles the checkbox"
+                );
+                let (response, value) = frame(
+                    vec![egui::Event::Key {
+                        key: egui::Key::Space,
+                        physical_key: None,
+                        pressed: true,
+                        repeat: false,
+                        modifiers: egui::Modifiers::NONE,
+                    }],
+                    true,
+                    false,
+                );
+                assert!(
+                    !value && response.changed(),
+                    "Space toggles the focused checkbox"
+                );
+                let (response, value) = frame(click(), false, false);
+                assert!(
+                    !value && !response.changed(),
+                    "disabled checkboxes cannot toggle"
+                );
+            }
+        }
+    }
     #[test]
     fn hover_fades_in_out_for_text_primary_frameless_and_icon_buttons() {
         for kind in 0..4 {

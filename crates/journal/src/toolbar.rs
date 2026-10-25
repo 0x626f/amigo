@@ -37,9 +37,10 @@ pub(super) fn selection_toolbar(
     let pos = egui::pos2(
         selection_pos
             .x
-            .clamp(bounds.left(), (bounds.right() - 345.).max(bounds.left())),
+            .clamp(bounds.left(), (bounds.right() - 380.).max(bounds.left())),
         (selection_pos.y - 46.).max(bounds.top()),
     );
+    let state = editor.formatting_state();
     let mut action = None;
     egui::Area::new(area_id)
         .order(egui::Order::Foreground)
@@ -53,106 +54,258 @@ pub(super) fn selection_toolbar(
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing = egui::vec2(2., 0.);
                     ui.horizontal(|ui| {
-                        let caret = editor
-                            .document
-                            .text
-                            .char_indices()
-                            .nth(editor.selection.start)
-                            .map_or(editor.document.text.len(), |(i, _)| i);
-                        let line = editor.document.text[..caret]
-                            .rfind('\n')
-                            .map_or(0, |i| i + 1);
-                        let level = editor.document.text[line..]
-                            .chars()
-                            .take_while(|c| *c == '#')
-                            .count()
-                            .min(6);
-                        let label = if level == 0 {
-                            "Normal".into()
-                        } else {
-                            format!("H{level}")
-                        };
-                        let headings = ui.add_sized([84., 30.], design::Button::new(label));
-                        ui.interact(
-                            headings.rect,
-                            egui::Id::new("journal-floating-headings"),
-                            egui::Sense::hover(),
-                        );
-                        design::paint_icon(
-                            ui.painter(),
-                            egui::Rect::from_center_size(
-                                headings.rect.right_center() - egui::vec2(9., 0.),
-                                egui::vec2(12., 12.),
-                            ),
-                            Icon::ChevronDown,
-                            colors(ui).muted,
-                        );
-                        egui::Popup::menu(&headings).show(|ui| {
-                            for (value, label) in [
-                                (0, "Normal"),
-                                (1, "Heading 1"),
-                                (2, "Heading 2"),
-                                (3, "Heading 3"),
-                                (4, "Heading 4"),
-                                (5, "Heading 5"),
-                                (6, "Heading 6"),
-                            ] {
-                                if design::button(ui, label).clicked() {
-                                    action = Some(Format::Heading(value));
-                                    ui.close();
-                                }
-                            }
-                        });
-                        editor.toolbar_menus = vec![egui::Popup::default_response_id(&headings)];
-                        ui.separator();
-                        for (label, icon, kind) in [
-                            ("Bold", Icon::Bold, Format::Bold),
-                            ("Italic", Icon::Italic, Format::Italic),
-                            ("Strikethrough", Icon::Strikethrough, Format::Strike),
-                            ("Inline Code", Icon::Code, Format::Code),
-                            ("Link", Icon::Link, Format::Link),
-                        ] {
-                            if design::icon_button(
-                                ui,
-                                egui::Id::new(("journal-floating-format", label)),
-                                icon,
-                                label,
-                                30.,
-                            )
-                            .clicked()
-                            {
-                                action = Some(kind);
-                            }
-                        }
-                        ui.separator();
-                        let lists = design::icon_button(
-                            ui,
-                            egui::Id::new("journal-floating-lists"),
-                            Icon::List,
-                            "Lists and Blocks",
-                            30.,
-                        );
-                        egui::Popup::menu(&lists).show(|ui| {
-                            for (label, kind) in [
-                                ("Bulleted List", Format::Bullet),
-                                ("Numbered List", Format::Numbered),
-                                ("Task List", Format::Task),
-                                ("Quote", Format::Quote),
-                                ("Code Block", Format::CodeBlock),
-                                ("Table", Format::Table),
-                                ("Horizontal Rule", Format::Rule),
-                            ] {
-                                if design::button(ui, label).clicked() {
-                                    action = Some(kind);
-                                    ui.close();
-                                }
-                            }
-                        });
-                        editor
-                            .toolbar_menus
-                            .push(egui::Popup::default_response_id(&lists));
+                        action = controls(ui, &state, &mut editor.toolbar_menus, false, false);
                     });
                 });
         });
+    action
+}
+
+fn menu_action(
+    ui: &mut egui::Ui,
+    label: &str,
+    kind: Format,
+    state: &formatting::SelectionState,
+    action: &mut Option<Format>,
+) {
+    if ui
+        .add_enabled_ui(state.can_apply(kind), |ui| {
+            ui.selectable_label(state.is_active(kind), label)
+        })
+        .inner
+        .clicked()
+    {
+        *action = Some(kind);
+        ui.close();
+    }
+}
+
+fn heading_items(
+    ui: &mut egui::Ui,
+    state: &formatting::SelectionState,
+    action: &mut Option<Format>,
+) {
+    ui.set_min_width(180.);
+    menu_action(ui, "Normal", Format::Heading(0), state, action);
+    ui.separator();
+    for level in 1..=6 {
+        menu_action(
+            ui,
+            &format!("Heading {level}"),
+            Format::Heading(level),
+            state,
+            action,
+        );
+    }
+}
+
+fn list_items(ui: &mut egui::Ui, state: &formatting::SelectionState, action: &mut Option<Format>) {
+    for (label, kind) in [
+        ("Bulleted List", Format::Bullet),
+        ("Numbered List", Format::Numbered),
+        ("Task List", Format::Task),
+    ] {
+        menu_action(ui, label, kind, state, action);
+    }
+}
+
+fn language_items(ui: &mut egui::Ui, current: Option<&str>, action: &mut Option<Format>) {
+    ui.set_min_width(180.);
+    egui::ScrollArea::vertical()
+        .max_height(280.)
+        .show(ui, |ui| {
+            for (label, language) in [
+                ("Plain Text", ""),
+                ("Bash", "bash"),
+                ("C", "c"),
+                ("C++", "cpp"),
+                ("CSS", "css"),
+                ("Go", "go"),
+                ("HTML", "html"),
+                ("Java", "java"),
+                ("JavaScript", "javascript"),
+                ("JSON", "json"),
+                ("Markdown", "markdown"),
+                ("Python", "python"),
+                ("Rust", "rust"),
+                ("SQL", "sql"),
+                ("TypeScript", "typescript"),
+                ("YAML", "yaml"),
+            ] {
+                if ui
+                    .selectable_label(current == Some(language), label)
+                    .clicked()
+                {
+                    *action = Some(Format::CodeBlock(language));
+                    ui.close();
+                }
+            }
+        });
+}
+
+fn block_items(
+    ui: &mut egui::Ui,
+    language: Option<&str>,
+    state: &formatting::SelectionState,
+    action: &mut Option<Format>,
+) {
+    menu_action(ui, "Quote", Format::Quote, state, action);
+    ui.menu_button("Code Block", |ui| language_items(ui, language, action));
+    menu_action(ui, "Table", Format::Table, state, action);
+    menu_action(ui, "Horizontal Rule", Format::Rule, state, action);
+}
+
+pub(super) fn context_menu(editor: &mut Editor, ui: &mut egui::Ui) -> Option<Format> {
+    let state = editor.formatting_state();
+    let mut action = None;
+    action = format_menu(ui, &state, false).or(action);
+    ui.separator();
+    if ui
+        .add_enabled(!editor.selection.is_empty(), egui::Button::new("Copy"))
+        .clicked()
+    {
+        ui.ctx().copy_text(
+            editor
+                .document
+                .text
+                .chars()
+                .skip(editor.selection.start)
+                .take(editor.selection.len())
+                .collect(),
+        );
+        ui.close();
+    }
+    action
+}
+
+/// Shared source and preview formatting controls.
+pub(super) fn controls(
+    ui: &mut egui::Ui,
+    state: &formatting::SelectionState,
+    menus: &mut Vec<egui::Id>,
+    inline_only: bool,
+    preview: bool,
+) -> Option<Format> {
+    let mut action = None;
+    let control_id = |name: &str| {
+        if preview {
+            egui::Id::new(("preview", name))
+        } else {
+            egui::Id::new(name)
+        }
+    };
+    let label = match state.heading {
+        Some(0) => "Normal".into(),
+        Some(level) => format!("H{level}"),
+        None => "Style".into(),
+    };
+    let headings = design::dropdown_button(
+        ui,
+        control_id("journal-floating-headings-button"),
+        &label,
+        egui::vec2(112., 30.),
+    );
+    ui.interact(
+        headings.rect,
+        control_id("journal-floating-headings"),
+        egui::Sense::hover(),
+    );
+    egui::Popup::menu(&headings).show(|ui| {
+        if inline_only {
+            ui.disable();
+        }
+        heading_items(ui, state, &mut action);
+    });
+    *menus = vec![egui::Popup::default_response_id(&headings)];
+    ui.separator();
+    for (label, icon, kind) in [
+        ("Bold", Icon::Bold, Format::Bold),
+        ("Italic", Icon::Italic, Format::Italic),
+        ("Strikethrough", Icon::Strikethrough, Format::Strike),
+        ("Link", Icon::Link, Format::Link),
+    ] {
+        if ui
+            .add_enabled_ui(state.can_apply(kind), |ui| {
+                design::selected_icon_button(
+                    ui,
+                    if preview {
+                        egui::Id::new(("journal-preview-format", label))
+                    } else {
+                        egui::Id::new(("journal-floating-format", label))
+                    },
+                    icon,
+                    label,
+                    30.,
+                    state.is_active(kind),
+                )
+            })
+            .inner
+            .clicked()
+        {
+            action = Some(kind);
+        }
+    }
+    let code = design::icon_button(
+        ui,
+        control_id("journal-floating-code"),
+        Icon::Code,
+        "Code Formatting",
+        30.,
+    );
+    let language = state.language.as_deref();
+    egui::Popup::menu(&code).show(|ui| {
+        menu_action(ui, "Inline Code", Format::Code, state, &mut action);
+        ui.separator();
+        design::eyebrow(ui, "CODE BLOCK LANGUAGE");
+        ui.add_enabled_ui(!inline_only, |ui| language_items(ui, language, &mut action));
+    });
+    menus.push(egui::Popup::default_response_id(&code));
+    ui.separator();
+    let lists = design::icon_button(
+        ui,
+        control_id("journal-floating-lists"),
+        Icon::List,
+        "Lists and Blocks",
+        30.,
+    );
+    egui::Popup::menu(&lists).show(|ui| {
+        if inline_only {
+            ui.disable();
+        }
+        design::eyebrow(ui, "LISTS");
+        list_items(ui, state, &mut action);
+        ui.separator();
+        design::eyebrow(ui, "BLOCKS");
+        block_items(ui, language, state, &mut action);
+    });
+    menus.push(egui::Popup::default_response_id(&lists));
+    action
+}
+
+pub(super) fn format_menu(
+    ui: &mut egui::Ui,
+    state: &formatting::SelectionState,
+    inline_only: bool,
+) -> Option<Format> {
+    let mut action = None;
+    let language = state.language.as_deref();
+    ui.set_min_width(200.);
+    design::eyebrow(ui, "TEXT STYLE");
+    for (label, kind) in [
+        ("Bold", Format::Bold),
+        ("Italic", Format::Italic),
+        ("Strikethrough", Format::Strike),
+        ("Inline Code", Format::Code),
+        ("Link", Format::Link),
+    ] {
+        menu_action(ui, label, kind, state, &mut action);
+    }
+    ui.separator();
+    ui.add_enabled_ui(!inline_only, |ui| {
+        ui.menu_button("Headings", |ui| heading_items(ui, state, &mut action));
+        ui.menu_button("Lists", |ui| list_items(ui, state, &mut action));
+        ui.menu_button("Blocks", |ui| block_items(ui, language, state, &mut action));
+    });
+
     action
 }

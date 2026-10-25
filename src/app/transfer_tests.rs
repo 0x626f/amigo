@@ -227,6 +227,9 @@ fn toolbar_actions_route_to_the_correct_transfer_dialog_and_theme_stays_at_botto
                 "Calendar" => Section::Calendar,
                 _ => Section::Tasks,
             };
+            if target == "Amigo Setup" {
+                app.open_settings(SettingsPage::Tasks);
+            }
             settle(&mut app, &ctx, size);
             let prefix = match target {
                 "Board" => "board",
@@ -235,7 +238,7 @@ fn toolbar_actions_route_to_the_correct_transfer_dialog_and_theme_stays_at_botto
                 _ => "app-settings",
             };
             let names = if target == "Amigo Setup" {
-                vec!["open", "import", "export"]
+                vec!["import", "export", "close"]
             } else {
                 vec!["import", "export", "delete", "rename"]
             };
@@ -247,6 +250,10 @@ fn toolbar_actions_route_to_the_correct_transfer_dialog_and_theme_stays_at_botto
                         .rect
                 })
                 .collect();
+            if target == "Amigo Setup" {
+                assert!(rects[0].right() < rects[1].left());
+                assert!(rects[1].right() < rects[2].left());
+            }
             rects.sort_by(|a, b| a.left().total_cmp(&b.left()));
             for rect in &rects {
                 assert!(

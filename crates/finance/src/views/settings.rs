@@ -64,55 +64,50 @@ fn show_mode(
             .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
             .max_height(design::dialog_body_height(ctx))
             .show(ui, |ui| {
-                egui::Frame::new()
-                    .fill(colors(ui).column)
-                    .inner_margin(16)
-                    .corner_radius(6)
-                    .show(ui, |ui| {
-                        design::dialog_section(ui, "Security");
-                        design::badge(
-                            ui,
-                            if vault.encrypted {
-                                "Encrypted"
-                            } else {
-                                "Not encrypted"
-                            },
-                            if vault.encrypted {
-                                colors(ui).green
-                            } else {
-                                colors(ui).muted
-                            },
-                        );
-                        hint(
-                            ui,
-                            if vault.encrypted {
-                                "A password is required whenever you open this vault."
-                            } else {
-                                "Encrypt this vault to require a password when opening it."
-                            },
-                        );
-                        ui.add_space(8.0);
+                design::settings_group(ui, "Security", |ui| {
+                    design::badge(
+                        ui,
                         if vault.encrypted {
-                            if design::button(ui, "Change Password").clicked() {
-                                action = Some(VaultAction::ChangePassword);
-                            }
-                            if design::button(ui, "Lock Vault").clicked() {
-                                action = Some(VaultAction::Lock);
-                            }
-                        } else if design::button(ui, "Encrypt Vault…").clicked() {
-                            action = Some(VaultAction::Encrypt);
+                            "Encrypted"
+                        } else {
+                            "Not encrypted"
+                        },
+                        if vault.encrypted {
+                            colors(ui).green
+                        } else {
+                            colors(ui).muted
+                        },
+                    );
+                    hint(
+                        ui,
+                        if vault.encrypted {
+                            "A password is required whenever you open this vault."
+                        } else {
+                            "Encrypt this vault to require a password when opening it."
+                        },
+                    );
+                    design::settings_separator(ui);
+                    if vault.encrypted {
+                        if design::button(ui, "Change Password").clicked() {
+                            action = Some(VaultAction::ChangePassword);
                         }
-                    });
+                        if design::button(ui, "Lock Vault").clicked() {
+                            action = Some(VaultAction::Lock);
+                        }
+                    } else if design::button(ui, "Encrypt Vault…").clicked() {
+                        action = Some(VaultAction::Encrypt);
+                    }
+                });
                 if !inline {
-                    ui.add_space(20.);
-                    design::dialog_section(ui, "Exchange");
-                    ui.horizontal(|ui| {
-                        field_label(ui, "Refresh Every:");
-                        ui.add(
-                            egui::DragValue::new(&mut draft.exchange_interval_seconds)
-                                .range(1..=86_400)
-                                .suffix(" s"),
-                        );
+                    design::settings_group(ui, "Exchange", |ui| {
+                        ui.horizontal(|ui| {
+                            field_label(ui, "Refresh Every:");
+                            ui.add(
+                                egui::DragValue::new(&mut draft.exchange_interval_seconds)
+                                    .range(1..=86_400)
+                                    .suffix(" s"),
+                            );
+                        });
                     });
                 }
             });

@@ -420,7 +420,6 @@ mod tests {
                 currency: "EUR".into(),
                 amount: Amount::Number(10.0),
                 regular: true,
-                applicable: true,
                 ..Default::default()
             },
             Expense {
@@ -455,7 +454,7 @@ mod tests {
         );
         let actual = series(&plan, Some(12), end, true);
         assert_eq!(actual[10].income, 0.0);
-        assert_eq!(actual[11].missing, 0);
+        assert_eq!(actual[11].missing, 1);
         assert_eq!(series(&plan, None, end, false).len(), 3);
         assert_eq!(series(&plan, Some(24), end, false).len(), 24);
     }

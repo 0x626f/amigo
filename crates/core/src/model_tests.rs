@@ -125,22 +125,21 @@ fn wallet_actual_planned_and_recurring_start_month() {
         currency: "EUR".into(),
         ..Income::default()
     });
-    for (date, regular, applicable, amount) in [
-        ("2026-01-10", true, true, 100.0),
-        ("2026-02-10", false, false, 50.0),
-        ("2026-03-10", true, true, 20.0),
+    for (date, regular, amount) in [
+        ("2026-01-10", true, 100.0),
+        ("2026-02-10", false, 50.0),
+        ("2026-03-10", true, 20.0),
     ] {
         p.expenses.push(Expense {
             due_date: date.into(),
             regular,
-            applicable,
             amount: Amount::Number(amount),
             currency: "EUR".into(),
             ..Expense::default()
         });
     }
     assert_eq!(p.totals("2026-02", false), (1200.0, 150.0, 0));
-    assert_eq!(p.totals("2026-02", true), (1000.0, 100.0, 0));
+    assert_eq!(p.totals("2026-02", true), (1000.0, 150.0, 0));
     assert_eq!(p.totals("2025-12", false), (0.0, 0.0, 0));
     p.expenses.push(Expense {
         due_date: "2026-02-10".into(),
@@ -221,17 +220,16 @@ fn inclusive_date_totals_cover_boundaries_recurrence_cancellation_budgets_and_ac
     }];
     p.expenses.extend(
         [
-            ("2026-01-10", "EUR", 20.0, true),
-            ("2026-02-05", "EUR", 30.0, false),
-            ("2026-02-05", "XYZ", 5.0, false),
-            ("2026-02-06", "XYZ", 999.0, true),
+            ("2026-01-10", "EUR", 20.0),
+            ("2026-02-05", "EUR", 30.0),
+            ("2026-02-05", "XYZ", 5.0),
+            ("2026-02-06", "XYZ", 999.0),
         ]
         .into_iter()
-        .map(|(date, currency, amount, applicable)| Expense {
+        .map(|(date, currency, amount)| Expense {
             due_date: date.into(),
             currency: currency.into(),
             amount: Amount::Number(amount),
-            applicable,
             ..Default::default()
         }),
     );
@@ -262,7 +260,7 @@ fn inclusive_date_totals_cover_boundaries_recurrence_cancellation_budgets_and_ac
     );
     assert_eq!(
         p.totals_between(date("2026-01-10"), date("2026-02-05"), true),
-        (100.0, 45.0, 0)
+        (100.0, 75.0, 1)
     );
     assert_eq!(
         p.totals_between(date("2026-01-10"), date("2026-01-10"), false),
@@ -274,7 +272,7 @@ fn inclusive_date_totals_cover_boundaries_recurrence_cancellation_budgets_and_ac
     );
     assert_eq!(
         p.totals_between(date("2026-02-05"), date("2026-02-05"), true),
-        (0.0, 8.0, 0)
+        (0.0, 38.0, 1)
     );
     assert_eq!(
         p.totals_between(date("2026-02-05"), date("2026-01-10"), false),
@@ -293,7 +291,6 @@ fn regular_expenses_apply_automatically_from_their_from_month() {
     let mut p = plan();
     let mut regular = Expense::new("EUR");
     regular.regular = true;
-    regular.applicable = false;
     regular.due_date = "2026-10-31".into();
     regular.amount = Amount::Number(100.0);
     let key = regular.id.clone();
@@ -339,12 +336,10 @@ fn regular_expense_removal_preserves_history_and_monthly_expenses_do_not_repeat(
     regular.due_date = "2026-09-30".into();
     regular.amount = Amount::Number(100.0);
     regular.regular = true;
-    regular.applicable = true;
     let mut monthly = Expense::new("EUR");
     monthly.title = "October purchase".into();
     monthly.due_date = "2026-10-15".into();
     monthly.amount = Amount::Number(50.0);
-    monthly.applicable = true;
     p.expenses = vec![regular.clone(), monthly.clone()];
     for actual in [false, true] {
         assert_eq!(p.totals("2026-08", actual).1, 0.0);
@@ -382,7 +377,6 @@ fn cancelling_expenses_excludes_current_and_future_months_but_preserves_history(
     regular.amount = Amount::Number(100.0);
     let mut monthly = Expense::new("EUR");
     monthly.due_date = "2027-01-05".into();
-    monthly.applicable = true;
     monthly.amount = Amount::Number(50.0);
     let mut past = monthly.clone();
     past.id = id();
@@ -473,7 +467,7 @@ fn regular_expense_cutoff_handles_year_rollover_and_legacy_records() {
 }
 
 #[test]
-fn legacy_import_keeps_all_finance_fields_and_resolves_ids() {
+fn legacy_import_keeps_active_finance_fields_and_resolves_ids() {
     let p = plan_from_value(json!({
         "version":1, "meta":{"name":"Legacy", "reportingCurrency":"eur"},
         "currencies":["EUR", "USD"], "chains":[{"id":"eth", "name":"Ethereum", "rpcUrl":"https://rpc.example"}],
@@ -498,12 +492,7 @@ fn legacy_import_keeps_all_finance_fields_and_resolves_ids() {
         "eth"
     );
     assert_eq!(p.expenses[0].category_id, p.categories[0].id);
-    assert_eq!(
-        p.expenses[0].label_ids,
-        vec![p.expense_labels[0].id.clone()]
-    );
     assert_eq!(p.budgets[0].label, "Essential");
-    assert!(p.budgets[0].label_id.is_empty());
     assert_eq!(p.budgets[0].currency, "EUR");
     assert_eq!(p.savings[0].category, "Reserve");
     assert_eq!(p.savings[0].category_id, p.savings_categories[0].id);
@@ -701,7 +690,12 @@ fn legacy_task_statuses_migrate_without_losing_metadata() {
         assert!(task.category_id.is_empty());
     }
     assert_eq!(w.tasks[0].description, "Notes");
-    assert_eq!(w.tasks[0].labels, vec!["home"]);
+    assert!(
+        serde_json::to_value(&w.tasks[0])
+            .unwrap()
+            .get("labels")
+            .is_none()
+    );
     assert_eq!(w.tasks[1].priority, "High");
     assert_eq!(w.tasks[2].due_date, "2026-10-15");
     assert_eq!(w.finance.meta.name, "Preserved finance");
@@ -849,8 +843,8 @@ fn default_reference_catalogue_is_complete_stable_and_preserves_custom_entries()
             .iter()
             .find(|c| c.id == "custom-eth")
             .unwrap()
-            .rpc_url,
-        "https://custom.test"
+            .name,
+        "Ethereum"
     );
     assert_eq!(legacy.income[0].tax_country, "United Kingdom");
     assert_eq!(legacy.income[0].tax_country_id, "legacy-country");
@@ -906,21 +900,90 @@ fn all_date_totals_include_every_record_once_and_keep_actual_selection_explicit(
             ..Default::default()
         },
     ];
-    plan.expenses = [
-        ("2026-01-01", 20.0, true),
-        ("2026-02-01", 40.0, false),
-        ("", 10.0, false),
-    ]
-    .map(|(date, amount, applicable)| Expense {
-        due_date: date.into(),
-        amount: Amount::Number(amount),
-        currency: "EUR".into(),
-        applicable,
-        regular: true,
-        ..Default::default()
-    })
-    .into();
+    plan.expenses = [("2026-01-01", 20.0), ("2026-02-01", 40.0), ("", 10.0)]
+        .map(|(date, amount)| Expense {
+            due_date: date.into(),
+            amount: Amount::Number(amount),
+            currency: "EUR".into(),
+            regular: true,
+            ..Default::default()
+        })
+        .into();
     assert_eq!(plan.totals("", false), (300.0, 70.0, 0));
     assert_eq!(plan.totals("", true), (100.0, 70.0, 0));
     assert_eq!(plan.totals("2026-02", false), (200.0, 60.0, 0));
+}
+
+#[test]
+fn obsolete_finance_fields_are_discarded_after_savings_category_migration() {
+    let legacy = json!({
+        "meta":{"reportingCurrency":"EUR"},
+        "chains":[{"id":"custom-chain","name":"Custom","rpcUrl":"https://unused.test"}],
+        "labels":["Obsolete"], "expenseLabels":[{"id":"old-expense-label","name":"Obsolete"}],
+        "savingsLabels":[{"id":"reserve","name":"Reserve"}, "Emergency"],
+        "savingsCategories":[{"id":"existing-category","name":"Existing"}],
+        "expenses":[{"id":"expense","title":"Manual purchase","dueDate":"2026-10-01",
+            "amount":25,"currency":"EUR","applicable":false,
+            "labels":["Obsolete"],"labelIds":["old-expense-label"]}],
+        "budgets":[{"id":"budget","label":"Trip","labelId":"old-expense-label","amount":100,"currency":"EUR"}],
+        "savings":[
+            {"id":"by-name","labels":["Reserve"],"amount":10,"currency":"EUR"},
+            {"id":"by-id","labelIds":["reserve"],"amount":20,"currency":"EUR"},
+            {"id":"string-label","labels":["Emergency"],"amount":30,"currency":"EUR"},
+            {"id":"existing","categoryId":"existing-category","labels":["Reserve"],"amount":40,"currency":"EUR"}
+        ]
+    });
+    // Both plain and password-protected legacy imports go through the same migration.
+    for password in ["", "legacy-cleanup-test"] {
+        let encoded = crate::storage::encode(&legacy, password).unwrap();
+        let plan =
+            crate::storage::import_plan(std::str::from_utf8(&encoded).unwrap(), password).unwrap();
+        assert_eq!(plan.expenses[0].id, "expense");
+        assert_eq!(plan.totals("2026-10", true), (0., 25., 0));
+        assert_eq!(
+            plan.chains
+                .iter()
+                .find(|c| c.id == "custom-chain")
+                .unwrap()
+                .name,
+            "Custom"
+        );
+        assert_eq!(plan.budgets[0].label, "Trip");
+        assert_eq!(plan.savings[0].category_id, "reserve");
+        assert_eq!(plan.savings[1].category_id, "reserve");
+        assert_eq!(plan.savings[2].category, "Emergency");
+        assert_eq!(plan.savings[3].category_id, "existing-category");
+        assert_eq!(plan.savings[3].category, "Existing");
+        let saved = serde_json::to_value(&plan).unwrap();
+        for field in ["labels", "expenseLabels", "savingsLabels"] {
+            assert!(saved.get(field).is_none(), "{field}");
+        }
+        for row in saved["expenses"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .chain(saved["savings"].as_array().unwrap())
+        {
+            for field in ["labels", "labelIds", "applicable"] {
+                assert!(row.get(field).is_none(), "{field}");
+            }
+        }
+        assert!(saved["budgets"][0].get("labelId").is_none());
+        assert!(
+            saved["chains"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|r| r.get("rpcUrl").is_none())
+        );
+        assert_eq!(plan_from_value(saved).unwrap(), plan);
+    }
+    // Once categories have migrated, old labels must never repopulate a removed category.
+    let mut migrated = legacy;
+    migrated["meta"]["savingsCategoriesVersion"] = json!(1);
+    migrated["savingsCategories"] = json!([]);
+    migrated["savings"] = json!([{"id":"cleared","category":"","labels":["Reserve"]}]);
+    let plan = plan_from_value(migrated).unwrap();
+    assert!(plan.savings_categories.is_empty());
+    assert!(plan.savings[0].category.is_empty());
 }

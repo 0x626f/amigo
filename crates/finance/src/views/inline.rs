@@ -1,8 +1,7 @@
 use super::*;
-use egui::AtomExt;
 
-const COLUMN_GAP: f32 = 4.0;
-const ROW_PITCH: f32 = design::CONTROL_HEIGHT + 8.0;
+const COLUMN_GAP: f32 = 6.0;
+const ROW_PITCH: f32 = design::CONTROL_HEIGHT + 10.0;
 
 enum TableItem {
     Month(String),
@@ -124,7 +123,7 @@ impl<'a> Cells<'a> {
         }
         child.set_clip_rect(clip);
         child.spacing_mut().item_spacing.x = 2.0;
-        child.spacing_mut().button_padding.x = 4.0;
+        child.spacing_mut().button_padding.x = 6.0;
         // A table has one continuous row surface. Controls reveal their chrome
         // on interaction instead of giving every data type a different box.
         let visuals = &mut child.style_mut().visuals;
@@ -203,14 +202,12 @@ fn column_minimums(columns: &[&str]) -> Vec<f32> {
             "Month" => 100.0,
             "Currency" => 76.0,
             "Tax Country" | "Country" => 64.0,
-            "Source" | "Title" | "Account" | "Label" | "Principal" | "Expense Label" | "Name" => {
-                96.0
-            }
-            "Comment" | "RPC URL" | "Token Address" => 140.0,
+            "Source" | "Title" | "Account" | "Label" | "Principal" | "Name" => 96.0,
+            "Comment" | "Token Address" => 140.0,
             "Net" | "Spent" | "Remaining" => 96.0,
             "Reported" | "Reported Net" | "Reported Gross" => 100.0,
             "Tax %" | "Fee %" => 36.0,
-            "Applicable" | "Received" | "Deduct" | "Paid" => 36.0,
+            "Received" | "Deduct" | "Paid" => 36.0,
             "" if columns.contains(&"Spent") && columns.contains(&"Remaining") => 110.0,
             "" if columns.contains(&"Title") => 86.0,
             "" => 60.0,
@@ -229,13 +226,11 @@ fn column_widths(available: f32, columns: &[&str]) -> Vec<f32> {
         .map(|name| match *name {
             "" => 1.2,
             "Date" | "From" | "Month" => 1.9,
-            "Source" | "Title" | "Account" | "Label" | "Principal" | "Expense Label" | "Name" => {
-                1.5
-            }
-            "Comment" | "RPC URL" | "Token Address" => 2.3,
-            "Labels" | "Category" | "Tax Country" | "Country" => 1.2,
+            "Source" | "Title" | "Account" | "Label" | "Principal" | "Name" => 1.5,
+            "Comment" | "Token Address" => 2.3,
+            "Category" | "Tax Country" | "Country" => 1.2,
             "Tax %" | "Fee %" => 0.65,
-            "Applicable" | "Received" | "Deduct" | "Paid" => 0.55,
+            "Received" | "Deduct" | "Paid" => 0.55,
             "Currency" => 1.2,
             "Order" => 0.9,
             _ => 1.1,
@@ -308,25 +303,12 @@ fn centered_dropdown<R>(
     add: impl FnOnce(&mut egui::Ui) -> R,
 ) -> egui::InnerResponse<Option<R>> {
     let width = ui.available_width();
-    let response = ui
-        .push_id(salt, |ui| {
-            let text = RichText::new(label)
-                .atom_max_width((width - 36.0).max(0.0))
-                .atom_shrink(true);
-            ui.add_sized(
-                [width, design::CONTROL_HEIGHT],
-                design::Button::new(text).truncate(),
-            )
-        })
-        .inner;
-    let arrow = egui::Rect::from_center_size(
-        egui::pos2(response.rect.right() - 10.0, response.rect.center().y),
-        egui::vec2(12.0, 12.0),
+    let response = design::dropdown_button(
+        ui,
+        ui.make_persistent_id(salt),
+        label,
+        egui::vec2(width, design::CONTROL_HEIGHT),
     );
-    design::paint_icon(ui.painter(), arrow, Icon::ChevronDown, colors(ui).muted);
-    response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, ui.is_enabled(), label)
-    });
     let inner = egui::Popup::menu(&response)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .width(width.max(260.0))
@@ -368,7 +350,7 @@ fn menu_input(
         .desired_width(ui.available_width())
         .horizontal_align(egui::Align::Center)
         .margin(egui::Margin::symmetric(4, 9))
-        .suffix(egui::Atom::custom(menu_id, egui::vec2(14.0, 20.0)))
+        .suffix(egui::Atom::custom(menu_id, egui::vec2(28.0, 20.0)))
         .hint_text(title_case(field))
         .show(ui);
     if let Some(rect) = output.response.rect(menu_id) {
@@ -378,7 +360,7 @@ fn menu_input(
             menu_id,
             Icon::ChevronDown,
             "Choose Value",
-            14.0,
+            20.0,
         );
         egui::Popup::menu(&menu)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
@@ -455,7 +437,7 @@ fn currency(ui: &mut Cells<'_>, name: &mut String, reference: &mut String, plan:
                 }
             }
             if plan.currencies.is_empty() {
-                hint(ui, "Add currencies in Stored Values first.");
+                hint(ui, "Add currencies in Finance Settings → Currencies first.");
             }
         });
     });
@@ -836,11 +818,7 @@ fn record_cells(
             first
         }
         Record::Currency(_) => unreachable!("Currencies use their details dialog"),
-        Record::Chain(r) => {
-            let first = text(ui, &key, "name", &mut r.name);
-            text(ui, &key, "rpc url", &mut r.rpc_url);
-            first
-        }
+        Record::Chain(r) => text(ui, &key, "name", &mut r.name),
         Record::Stored(_, r) => text(ui, &key, "name", &mut r.name),
     }
 }
@@ -935,7 +913,15 @@ fn table_contents(
     ui.painter().rect_filled(header_rect, 4, colors(ui).column);
     let original_fill = ui.visuals().panel_fill;
     ui.visuals_mut().panel_fill = colors(ui).column;
-    let mut header = Cells::new(ui, &widths, "headers");
+    let mut header = Cells::new(
+        ui,
+        &widths,
+        if app.reference_settings {
+            "stored-values-headers"
+        } else {
+            "headers"
+        },
+    );
     header.height = header_rect.height();
     for name in &columns {
         header.cell(name, |ui| {
@@ -950,7 +936,6 @@ fn table_contents(
                     "Gross" if ui.available_width() < 44.0 => "Gr.",
                     "Tax Country" if ui.available_width() < 68.0 => "Ctry.",
                     "Tax Country" => "Tax\nCountry",
-                    "Expense Label" => "Label",
                     "Currency" => "Curr.",
                     "Priority" => "Prio.",
                     "Reported" if ui.available_width() < 54.0 => "Rpt.",
@@ -1387,7 +1372,9 @@ fn row(app: &mut FinanceUi<'_>, ui: &mut egui::Ui, record: Record, widths: &[f32
         let result = if cancel_expense {
             app.plan.cancel_expense(&key, &today())
         } else if delete {
-            commit(app.plan, &draft.record, true)
+            app.state
+                .check_reference_deletion(&draft.record)
+                .and_then(|_| commit(app.plan, &draft.record, true))
         } else {
             validate(&draft.record, app.plan).and_then(|_| commit(app.plan, &draft.record, false))
         };
@@ -1650,10 +1637,8 @@ pub(super) fn validate(record: &Record, plan: &FinancePlan) -> Result<(), String
             }
         }
         Record::Chain(r) => {
-            if r.name.trim().is_empty()
-                || !(r.rpc_url.starts_with("https://") || r.rpc_url.starts_with("http://"))
-            {
-                return Err("Enter a chain name and an HTTP(S) RPC URL.".into());
+            if r.name.trim().is_empty() {
+                return Err("Enter a chain name.".into());
             }
         }
         Record::Stored(unit, r) => {
@@ -1689,20 +1674,10 @@ fn replace<T: Clone>(
     }
 }
 pub(super) fn commit(plan: &mut FinancePlan, record: &Record, delete: bool) -> Result<(), String> {
-    if !delete && let Record::Stored(unit, value) = record {
-        if *unit == 6 {
-            for r in &mut plan.expenses {
-                for (name, reference) in r.labels.iter_mut().zip(&r.label_ids) {
-                    if *reference == value.id {
-                        *name = value.name.clone();
-                    }
-                }
-            }
-        } else if *unit == 7 {
-            for r in &mut plan.savings {
-                if r.category_id == value.id {
-                    r.category = value.name.clone();
-                }
+    if !delete && let Record::Stored(7, value) = record {
+        for r in &mut plan.savings {
+            if r.category_id == value.id {
+                r.category = value.name.clone();
             }
         }
     }
@@ -1728,11 +1703,10 @@ pub(super) fn commit(plan: &mut FinancePlan, record: &Record, delete: bool) -> R
                     ]
                     .contains(&reference)
                 })
-                || plan.expenses.iter().any(|r| {
-                    r.currency_id == *reference
-                        || r.category_id == *reference
-                        || r.label_ids.contains(reference)
-                })
+                || plan
+                    .expenses
+                    .iter()
+                    .any(|r| r.currency_id == *reference || r.category_id == *reference)
                 || plan.savings.iter().any(|r| {
                     r.currency_id == *reference
                         || r.source_id == *reference

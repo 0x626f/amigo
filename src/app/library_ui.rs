@@ -98,6 +98,12 @@ impl Amigo {
     }
     fn opened_vault(&mut self, mut plan: FinancePlan, key: Option<VaultKey>) {
         self.clear_finance();
+        if let Err(error) = self
+            .library
+            .share_finance_references(&self.library.settings.vault, &mut plan)
+        {
+            self.error = error;
+        }
         self.last_saved.finance = plan.clone();
         plan.meta.record_metadata_version = RECORD_METADATA_VERSION;
         self.workspace.finance = plan;
@@ -498,6 +504,7 @@ impl Amigo {
                     return Err(self.error.clone());
                 }
                 let mut plan = FinancePlan::empty();
+                self.library.finance_settings()?.apply(&mut plan);
                 plan.meta.name = dialog.name.clone();
                 let vault = self.library.create_vault(&dialog.name, &plan, None)?;
                 self.switch_vault(vault)?;
@@ -540,6 +547,7 @@ impl Amigo {
                         return Err(self.error.clone());
                     }
                     let mut plan = FinancePlan::empty();
+                    self.library.finance_settings()?.apply(&mut plan);
                     plan.meta.name = job.name;
                     let vault = self
                         .library

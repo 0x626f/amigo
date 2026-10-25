@@ -22,14 +22,9 @@ impl CurrencyEditor {
     }
 }
 
-pub(super) fn table(app: &mut FinanceUi<'_>, ui: &mut egui::Ui) {
+pub(super) fn list(app: &mut FinanceUi<'_>, ui: &mut egui::Ui) {
     let width = ui.available_width();
-    ui.spacing_mut().item_spacing.y = 6.0;
-    ui.add_sized(
-        [width, 42.0],
-        egui::Label::new(RichText::new("Symbol").size(16.0).strong()).halign(egui::Align::Center),
-    );
-    ui.separator();
+    ui.spacing_mut().item_spacing.y = 4.0;
     let mut rows: Vec<_> = app
         .plan
         .currencies
@@ -63,23 +58,29 @@ pub(super) fn table(app: &mut FinanceUi<'_>, ui: &mut egui::Ui) {
         hint(ui, "No currencies found.");
     }
     for (index, row) in rows.into_iter().enumerate() {
+        if index > 0 {
+            design::settings_separator(ui);
+        }
         let response = ui
             .push_id(("currency-symbol", &row.id), |ui| {
                 ui.add_sized(
                     [width, 44.0],
-                    design::Button::new(
+                    design::Button::new((
                         RichText::new(inline::currency_symbol(&row, app.plan))
                             .size(15.0)
                             .strong(),
-                    )
-                    .fill(if index % 2 == 0 {
-                        colors(ui).canvas
-                    } else {
-                        colors(ui).card
-                    }),
+                        egui::Atom::grow(),
+                    ))
+                    .frame(false)
+                    .truncate(),
                 )
             })
             .inner;
+        ui.interact(
+            response.rect,
+            egui::Id::new(("stored-value-currency", &row.id)),
+            egui::Sense::hover(),
+        );
         let details = app
             .plan
             .chains
@@ -162,7 +163,7 @@ pub(crate) fn dialog(state: &mut FinanceTab, plan: &mut FinancePlan, ctx: &egui:
                             }
                         });
                     if plan.chains.is_empty() {
-                        hint(ui, "Add a chain in Stored Values → Chains.");
+                        hint(ui, "Add a chain in Finance Settings → Chains.");
                     }
                     ui.add_space(16.0);
                     field_label(ui, "Token Address *");
@@ -234,7 +235,9 @@ pub(crate) fn dialog(state: &mut FinanceTab, plan: &mut FinancePlan, ctx: &egui:
         }
         let record = Record::Currency(currency);
         let result = if delete {
-            inline::commit(plan, &record, true)
+            state
+                .check_reference_deletion(&record)
+                .and_then(|_| inline::commit(plan, &record, true))
         } else {
             let valid_chain =
                 !editor.crypto_token || plan.chains.iter().any(|c| c.id == editor.draft.chain_id);

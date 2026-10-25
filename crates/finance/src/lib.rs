@@ -8,6 +8,56 @@ pub mod rates;
 mod views;
 pub use views::{Editor, ExpenseOccurrence, FinanceView, Record};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum FinanceReference {
+    Currencies,
+    Chains,
+    Clients,
+    Accounts,
+    Countries,
+}
+impl FinanceReference {
+    pub const ALL: [Self; 5] = [
+        Self::Currencies,
+        Self::Chains,
+        Self::Clients,
+        Self::Accounts,
+        Self::Countries,
+    ];
+    pub const GLOBAL: [Self; 3] = [Self::Currencies, Self::Chains, Self::Countries];
+    pub const VAULT: [Self; 2] = [Self::Clients, Self::Accounts];
+    pub fn is_global(self) -> bool {
+        Self::GLOBAL.contains(&self)
+    }
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Currencies => "Currencies",
+            Self::Chains => "Chains",
+            Self::Clients => "Clients",
+            Self::Accounts => "Accounts",
+            Self::Countries => "Countries",
+        }
+    }
+    pub fn icon(self) -> amigo_ui::design::Icon {
+        use amigo_ui::design::Icon;
+        match self {
+            Self::Currencies => Icon::Rates,
+            Self::Chains => Icon::Link,
+            Self::Clients | Self::Accounts => Icon::Account,
+            Self::Countries => Icon::List,
+        }
+    }
+    pub(crate) fn unit(self) -> usize {
+        match self {
+            Self::Currencies => 0,
+            Self::Chains => 1,
+            Self::Clients => 3,
+            Self::Accounts => 4,
+            Self::Countries => 5,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum ExpenseGroup {
     Regular,
@@ -36,6 +86,7 @@ pub struct FinanceTab {
     pub actual: bool,
     pub exchange_interval_seconds: u64,
     pub drafts: BTreeMap<String, Editor>,
+    reference_usage: BTreeSet<String>,
     expanded_budgets: BTreeSet<String>,
     focus_row: Option<String>,
     active_row: Option<String>,
@@ -106,6 +157,7 @@ impl Default for FinanceTab {
             actual: false,
             exchange_interval_seconds: 60,
             drafts: BTreeMap::new(),
+            reference_usage: BTreeSet::new(),
             expanded_budgets: BTreeSet::new(),
             focus_row: None,
             active_row: None,
@@ -197,6 +249,58 @@ impl FinanceTab {
     pub fn categories_in(&mut self, plan: &mut FinancePlan, ui: &mut egui::Ui) {
         views::categories::show_in(self, plan, ui);
     }
+    pub fn pending_reference_ids(&self) -> BTreeSet<String> {
+        let mut ids = BTreeSet::new();
+        for draft in self.drafts.values() {
+            match &draft.record {
+                Record::Income(r) => {
+                    ids.insert(r.currency_id.clone());
+                    ids.insert(r.tax_country_id.clone());
+                }
+                Record::Expense(r) => {
+                    ids.insert(r.currency_id.clone());
+                }
+                Record::Saving(r) => {
+                    ids.insert(r.currency_id.clone());
+                }
+                Record::Budget(r) => {
+                    ids.insert(r.currency_id.clone());
+                    ids.extend(r.expenses.iter().map(|r| r.currency_id.clone()));
+                }
+                Record::Rate(r) => {
+                    ids.insert(r.currency_id.clone());
+                }
+                Record::Currency(r) => {
+                    ids.insert(r.chain_id.clone());
+                }
+                _ => (),
+            }
+        }
+        ids.remove("");
+        ids
+    }
+    pub fn protect_references(&mut self, used: BTreeSet<String>) {
+        self.reference_usage = used;
+    }
+    fn check_reference_deletion(&self, record: &Record) -> Result<(), String> {
+        if self.reference_usage.contains(record.id()) {
+            Err("This value is in use by a vault. Reassign its records before removing it.".into())
+        } else {
+            Ok(())
+        }
+    }
+    pub fn reference_in(
+        &mut self,
+        page: FinanceReference,
+        plan: &mut FinancePlan,
+        ui: &mut egui::Ui,
+    ) {
+        self.storage_unit = page.unit();
+        views::stored_values_in(self, plan, ui);
+    }
+    pub fn reference_dialogs(&mut self, plan: &mut FinancePlan, ctx: &egui::Context) {
+        views::currencies::dialog(self, plan, ctx);
+    }
     pub fn configure_categories(&mut self, plan: &FinancePlan) {
         if matches!(self.view, FinanceView::Expenses | FinanceView::Savings) {
             self.category_settings =
@@ -265,7 +369,7 @@ impl FinanceTab {
     pub fn sidebar(&mut self, ui: &mut egui::Ui) {
         amigo_ui::design::eyebrow(ui, "FINANCE");
         ui.add_space(3.0);
-        for view in FinanceView::ALL {
+        for view in FinanceView::NAVIGATION {
             if amigo_ui::design::nav_row(ui, view.name(), view.icon(), self.view == view, None)
                 .clicked()
             {
@@ -288,7 +392,7 @@ impl FinanceTab {
         currencies.sort();
         currencies.dedup();
         if currencies.is_empty() {
-            self.error = "Add currencies in Stored values first.".into();
+            self.error = "Add currencies in Finance Settings → Currencies first.".into();
             return;
         }
         let (sender, receiver) = mpsc::channel();

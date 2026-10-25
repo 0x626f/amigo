@@ -313,6 +313,7 @@ impl Library {
         };
         lib.refresh()?;
         lib.finish_migration()?;
+        lib.initialize_finance_settings()?;
         Ok(lib)
     }
     // Used only for a failed-load error screen; never creates or overwrites files.
@@ -596,7 +597,8 @@ impl Library {
         plan: &FinancePlan,
         key: Option<&VaultKey>,
     ) -> Result<()> {
-        self.write_vault_data(&self.vault_path(&vault.entry.id)?, vault, plan, key)
+        self.write_vault_data(&self.vault_path(&vault.entry.id)?, vault, plan, key)?;
+        self.share_finance_references(&vault.entry.id, &mut plan.clone())
     }
     fn write_vault_data(
         &self,

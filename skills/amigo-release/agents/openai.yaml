@@ -1,0 +1,3 @@
+interface:
+  display_name: "Amigo Release"
+  short_description: "Build, verify, and publish native Amigo releases"

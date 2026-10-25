@@ -10,6 +10,9 @@ use std::ops::Range;
 #[derive(Clone, Default, Debug)]
 struct Atom {
     text: String,
+    original: String,
+    span: Range<usize>,
+    wrappers: Vec<Range<usize>>,
     bold: bool,
     italic: bool,
     strike: bool,
@@ -19,6 +22,17 @@ struct Atom {
 #[derive(Clone, Default, Debug)]
 struct Inline {
     atoms: Vec<Atom>,
+    value: String,
+    anchor: Range<usize>,
+    restore: Option<Range<usize>>,
+    needs_space: bool,
+}
+struct InlineStyle {
+    size: f32,
+    bold: bool,
+    quote: bool,
+    multiline: bool,
+    list: bool,
 }
 #[derive(Debug)]
 enum Kind {
@@ -29,6 +43,13 @@ enum Kind {
 }
 #[derive(Debug)]
 struct Block {
+    extra_inset: f32,
+    span: Range<usize>,
+    code_original: String,
+    task: Option<(Range<usize>, bool, bool)>,
+    removed: bool,
+    edit_ids: Vec<egui::Id>,
+    restore: Option<Range<usize>>,
     kind: Kind,
     lines: Range<usize>,
     indent: usize,
@@ -38,10 +59,16 @@ struct Block {
 }
 #[derive(Default)]
 pub(super) struct Preview {
+    prepared: super::editing::Prepared,
+    changed: bool,
+    append: String,
+    focused: Vec<egui::Id>,
     blocks: Vec<Block>,
     pub locations: Vec<(Range<usize>, f32, f32)>,
     heights: Vec<f32>,
     geometry: Option<(u32, u32, bool)>,
+    pub inputs: Vec<super::preview_format::Input>,
+    append_restore: Option<Range<usize>>,
 }
 #[derive(Default)]
 struct Builder {
@@ -54,6 +81,8 @@ struct Builder {
     lists: Vec<Option<u64>>,
     marker: Option<String>,
     anchor: Option<String>,
+    task: Option<(Range<usize>, bool, bool)>,
+    empty_task: bool,
 }
 impl Builder {
     fn append(&mut self, value: &str, start: usize, end: usize) {
@@ -63,19 +92,31 @@ impl Builder {
         self.end = end;
         self.inline.atoms.push(Atom {
             text: value.into(),
+            span: start..end,
             ..self.style.clone()
         });
     }
     fn flush(&mut self, blocks: &mut Vec<Block>, starts: &[usize], base: usize) {
-        if self.inline.atoms.is_empty() {
+        if self.inline.atoms.is_empty() && self.marker.is_none() {
             return;
+        }
+        if self.inline.atoms.is_empty() {
+            self.inline.anchor = self.end..self.end;
         }
         let start = base
             + starts
                 .partition_point(|n| *n <= self.start)
                 .saturating_sub(1);
         let end = base + starts.partition_point(|n| *n <= self.end).saturating_sub(1) + 1;
+        self.inline.value = self.inline.atoms.iter().map(|a| a.text.as_str()).collect();
         blocks.push(Block {
+            extra_inset: 0.,
+            span: self.start..self.end,
+            code_original: String::new(),
+            task: self.task.take(),
+            removed: false,
+            edit_ids: vec![],
+            restore: None,
             kind: Kind::Text(self.heading, std::mem::take(&mut self.inline)),
             lines: start..end,
             indent: self.lists.len().saturating_sub(1),
@@ -83,6 +124,7 @@ impl Builder {
             quote: self.quote,
             anchor: self.anchor.take(),
         });
+        self.empty_task = false;
     }
 }
 impl Preview {
@@ -105,7 +147,9 @@ impl Preview {
         while let Some((event, span)) = events.next() {
             match event {
                 Event::Start(Tag::Heading { level, id, .. }) => {
-                    b.flush(&mut result.blocks, &starts, base_line);
+                    if !b.inline.atoms.is_empty() {
+                        b.flush(&mut result.blocks, &starts, base_line);
+                    }
                     b.heading = level as u8;
                     b.anchor = id.map(|s| s.into_string());
                 }
@@ -113,24 +157,55 @@ impl Preview {
                     b.flush(&mut result.blocks, &starts, base_line);
                     b.heading = 0;
                 }
-                Event::Start(Tag::Paragraph) => b.flush(&mut result.blocks, &starts, base_line),
+                Event::Start(Tag::Paragraph) => {
+                    if !b.inline.atoms.is_empty() {
+                        b.flush(&mut result.blocks, &starts, base_line);
+                    }
+                }
                 Event::End(TagEnd::Paragraph) | Event::End(TagEnd::Item) => {
                     b.flush(&mut result.blocks, &starts, base_line)
                 }
-                Event::Start(Tag::Strong) => b.style.bold = true,
-                Event::End(TagEnd::Strong) => b.style.bold = false,
-                Event::Start(Tag::Emphasis) => b.style.italic = true,
-                Event::End(TagEnd::Emphasis) => b.style.italic = false,
-                Event::Start(Tag::Strikethrough) => b.style.strike = true,
-                Event::End(TagEnd::Strikethrough) => b.style.strike = false,
+                Event::Start(Tag::Strong) => {
+                    b.style.bold = true;
+                    b.style.wrappers.push(span.clone());
+                }
+                Event::End(TagEnd::Strong) => {
+                    b.style.bold = false;
+                    b.style.wrappers.pop();
+                }
+                Event::Start(Tag::Emphasis) => {
+                    b.style.italic = true;
+                    b.style.wrappers.push(span.clone());
+                }
+                Event::End(TagEnd::Emphasis) => {
+                    b.style.italic = false;
+                    b.style.wrappers.pop();
+                }
+                Event::Start(Tag::Strikethrough) => {
+                    b.style.strike = true;
+                    b.style.wrappers.push(span.clone());
+                }
+                Event::End(TagEnd::Strikethrough) => {
+                    b.style.strike = false;
+                    b.style.wrappers.pop();
+                }
                 Event::Start(Tag::Link { dest_url, .. }) => {
-                    b.style.link = Some(dest_url.into_string())
+                    b.style.link = Some(dest_url.into_string());
+                    b.style.wrappers.push(span.clone());
                 }
-                Event::End(TagEnd::Link) => b.style.link = None,
+                Event::End(TagEnd::Link) => {
+                    b.style.link = None;
+                    b.style.wrappers.pop();
+                }
                 Event::Start(Tag::Image { dest_url, .. }) => {
-                    b.append(&format!("[Image: {dest_url}] "), span.start, span.end)
+                    b.style.link = Some(dest_url.into_string());
+                    b.style.wrappers.push(span.clone());
                 }
-                Event::Text(text) => b.append(&text, span.start, span.end),
+                Event::End(TagEnd::Image) => {
+                    b.style.link = None;
+                    b.style.wrappers.pop();
+                }
+                Event::Text(text) if !b.empty_task => b.append(&text, span.start, span.end),
                 Event::Code(text) => {
                     b.style.code = true;
                     b.append(&text, span.start, span.end);
@@ -148,6 +223,13 @@ impl Preview {
                 }
                 Event::Start(Tag::Item) => {
                     b.flush(&mut result.blocks, &starts, base_line);
+                    b.start = span.start;
+                    b.end = source[span.start..span.end]
+                        .find('\n')
+                        .map_or(span.end, |i| span.start + i);
+                    if source[..b.end].ends_with('\r') {
+                        b.end -= 1;
+                    }
                     b.marker = Some(match b.lists.last_mut() {
                         Some(Some(n)) => {
                             let s = format!("{n}.");
@@ -156,8 +238,20 @@ impl Preview {
                         }
                         _ => "•".into(),
                     });
+                    let line = &source[b.start..b.end];
+                    b.inline.needs_space = !line.ends_with([' ', '\t']);
+                    if let Some(start) = line.find('[') {
+                        let task = line[start..].trim();
+                        if matches!(task, "[ ]" | "[x]" | "[X]") {
+                            let checked = task != "[ ]";
+                            b.task = Some((b.start + start..b.start + start + 3, checked, checked));
+                            b.marker = Some(if checked { "☑" } else { "☐" }.into());
+                            b.empty_task = true;
+                        }
+                    }
                 }
                 Event::TaskListMarker(checked) => {
+                    b.task = Some((span.clone(), checked, checked));
                     b.marker = Some(if checked { "☑" } else { "☐" }.into())
                 }
                 Event::Start(Tag::BlockQuote(_)) => {
@@ -169,7 +263,9 @@ impl Preview {
                     b.quote = b.quote.saturating_sub(1);
                 }
                 Event::Start(Tag::CodeBlock(kind)) => {
-                    b.flush(&mut result.blocks, &starts, base_line);
+                    if !b.inline.atoms.is_empty() {
+                        b.flush(&mut result.blocks, &starts, base_line);
+                    }
                     let language = match kind {
                         CodeBlockKind::Fenced(lang) => lang.into_string(),
                         _ => String::new(),
@@ -184,10 +280,19 @@ impl Preview {
                             _ => (),
                         }
                     }
+                    let byte_end = end;
                     let start = base_line + line_at(span.start);
                     let end = base_line + line_at(end) + 1;
+                    let original = text.trim_end_matches(['\r', '\n']).to_owned();
                     result.blocks.push(Block {
-                        kind: Kind::Code(language, text),
+                        extra_inset: 0.,
+                        span: span.start..byte_end,
+                        code_original: original.clone(),
+                        task: b.task.take(),
+                        removed: false,
+                        edit_ids: vec![],
+                        restore: None,
+                        kind: Kind::Code(language, original),
                         lines: start..end,
                         indent: b.lists.len().saturating_sub(1),
                         marker: b.marker.take(),
@@ -196,7 +301,9 @@ impl Preview {
                     });
                 }
                 Event::Start(Tag::Table(align)) => {
-                    b.flush(&mut result.blocks, &starts, base_line);
+                    if !b.inline.atoms.is_empty() {
+                        b.flush(&mut result.blocks, &starts, base_line);
+                    }
                     let mut rows = vec![];
                     let mut row = vec![];
                     let mut cell = Inline::default();
@@ -209,26 +316,49 @@ impl Preview {
                             Event::End(TagEnd::TableHead) | Event::End(TagEnd::TableRow) => {
                                 rows.push(std::mem::take(&mut row))
                             }
-                            Event::End(TagEnd::TableCell) => row.push(std::mem::take(&mut cell)),
+                            Event::Start(Tag::TableCell) => cell.anchor = range.start..range.start,
+                            Event::End(TagEnd::TableCell) => {
+                                cell.value = cell.atoms.iter().map(|a| a.text.as_str()).collect();
+                                row.push(std::mem::take(&mut cell));
+                            }
                             Event::Text(s) => cell.atoms.push(Atom {
                                 text: s.into_string(),
+                                span: range.clone(),
                                 ..style.clone()
                             }),
                             Event::Code(s) => cell.atoms.push(Atom {
                                 text: s.into_string(),
+                                span: range.clone(),
                                 code: true,
                                 ..style.clone()
                             }),
-                            Event::Start(Tag::Strong) => style.bold = true,
-                            Event::End(TagEnd::Strong) => style.bold = false,
-                            Event::Start(Tag::Emphasis) => style.italic = true,
-                            Event::End(TagEnd::Emphasis) => style.italic = false,
-                            Event::Start(Tag::Link { dest_url, .. }) => {
-                                style.link = Some(dest_url.into_string())
+                            Event::Start(Tag::Strong) => {
+                                style.bold = true;
+                                style.wrappers.push(range.clone());
                             }
-                            Event::End(TagEnd::Link) => style.link = None,
+                            Event::End(TagEnd::Strong) => {
+                                style.bold = false;
+                                style.wrappers.pop();
+                            }
+                            Event::Start(Tag::Emphasis) => {
+                                style.italic = true;
+                                style.wrappers.push(range.clone());
+                            }
+                            Event::End(TagEnd::Emphasis) => {
+                                style.italic = false;
+                                style.wrappers.pop();
+                            }
+                            Event::Start(Tag::Link { dest_url, .. }) => {
+                                style.link = Some(dest_url.into_string());
+                                style.wrappers.push(range.clone());
+                            }
+                            Event::End(TagEnd::Link) => {
+                                style.link = None;
+                                style.wrappers.pop();
+                            }
                             Event::SoftBreak | Event::HardBreak => cell.atoms.push(Atom {
                                 text: " ".into(),
+                                span: range.clone(),
                                 ..style.clone()
                             }),
                             _ => (),
@@ -237,6 +367,13 @@ impl Preview {
                     let start = base_line + line_at(span.start);
                     let end = base_line + line_at(end) + 1;
                     result.blocks.push(Block {
+                        extra_inset: 0.,
+                        span: span.clone(),
+                        code_original: String::new(),
+                        task: b.task.take(),
+                        removed: false,
+                        edit_ids: vec![],
+                        restore: None,
                         kind: Kind::Table(align, rows),
                         lines: start..end,
                         indent: b.lists.len().saturating_sub(1),
@@ -249,6 +386,13 @@ impl Preview {
                     b.flush(&mut result.blocks, &starts, base_line);
                     let line = base_line + line_at(span.start);
                     result.blocks.push(Block {
+                        extra_inset: 0.,
+                        span: span.clone(),
+                        code_original: String::new(),
+                        task: None,
+                        removed: false,
+                        edit_ids: vec![],
+                        restore: None,
                         kind: Kind::Rule,
                         lines: line..line + 1,
                         indent: 0,
@@ -267,8 +411,219 @@ impl Preview {
             }
         }
         b.flush(&mut result.blocks, &starts, base_line);
+        for block in &mut result.blocks {
+            match &mut block.kind {
+                Kind::Text(_, inline) => {
+                    for atom in &mut inline.atoms {
+                        atom.original = atom.text.clone();
+                    }
+                }
+                Kind::Table(_, rows) => {
+                    for row in rows {
+                        for inline in row {
+                            for atom in &mut inline.atoms {
+                                atom.original = atom.text.clone();
+                            }
+                        }
+                    }
+                }
+                _ => (),
+            }
+        }
         result.heights = vec![0.; result.blocks.len()];
         result
+    }
+    pub fn document(source: &str) -> Self {
+        let prepared = super::editing::Prepared::new(source);
+        let mut preview = Self::parse(&prepared.text, prepared.base_line);
+        preview.prepared = prepared;
+        preview
+    }
+    pub fn has_focus(&self, ctx: &egui::Context) -> bool {
+        self.focused
+            .iter()
+            .any(|id| ctx.memory(|m| m.has_focus(*id)))
+    }
+    pub fn edited_document(&self) -> Option<String> {
+        if !self.changed {
+            return None;
+        }
+        Some(self.prepared.apply(self.patches()))
+    }
+    fn patches(&self) -> Vec<super::editing::Patch> {
+        let mut patches = vec![];
+        for block in &self.blocks {
+            if block.removed {
+                patches.push(super::editing::Patch {
+                    range: self.prepared.range(block.span.clone()),
+                    text: String::new(),
+                });
+                continue;
+            }
+            if let Some((span, original, checked)) = &block.task
+                && original != checked
+            {
+                patches.push(super::editing::Patch {
+                    range: self.prepared.range(span.clone()),
+                    text: if *checked { "[x]" } else { "[ ]" }.into(),
+                });
+            }
+            match &block.kind {
+                Kind::Text(_, inline) => patches.extend(self.inline_patches(inline)),
+                Kind::Table(_, rows) => {
+                    for row in rows {
+                        for inline in row {
+                            patches.extend(self.inline_patches(inline));
+                        }
+                    }
+                }
+                Kind::Code(_, text) if text != &block.code_original => patches.push(
+                    super::editing::code_patch(&self.prepared, block.span.clone(), text),
+                ),
+                _ => (),
+            }
+        }
+        if !self.append.is_empty() {
+            patches.push(self.prepared.append_patch(&self.append));
+        }
+        patches
+    }
+    pub fn project_input(&self, input: &super::preview_format::Input) -> (String, Range<usize>) {
+        self.prepared
+            .project(self.patches(), input.span.clone(), input.whole_lines)
+    }
+    pub fn focus_source(&mut self, source: Range<usize>) {
+        let body = self.prepared.range(0..0).start;
+        let source = source.start.max(body)..source.end.max(body);
+        for block in &mut self.blocks {
+            match &mut block.kind {
+                Kind::Text(_, inline) => {
+                    if let Some(range) = restore_inline(&self.prepared, inline, &source) {
+                        inline.restore = Some(range);
+                        return;
+                    }
+                }
+                Kind::Table(_, rows) => {
+                    for inline in rows.iter_mut().flatten() {
+                        if let Some(range) = restore_inline(&self.prepared, inline, &source) {
+                            inline.restore = Some(range);
+                            return;
+                        }
+                    }
+                }
+                Kind::Code(_, _) => {
+                    let range = self.prepared.range(block.span.clone());
+                    if range.start <= source.start && source.start <= range.end {
+                        block.restore = Some(super::preview_format::local_range(
+                            &self.prepared,
+                            block.span.clone(),
+                            &source,
+                        ));
+                        return;
+                    }
+                }
+                _ => (),
+            }
+        }
+        let point = self.prepared.generated_point(source.start);
+        let line = self.prepared.source()[..source.start]
+            .bytes()
+            .filter(|b| *b == b'\n')
+            .count();
+        let index = self.blocks.partition_point(|b| b.lines.start < line);
+        let mut extra_inset = 0.;
+        let mut indent = 0;
+        let mut quote = 0;
+        if let Some(previous) = index.checked_sub(1).and_then(|i| self.blocks.get(i)) {
+            let end = self.prepared.range(previous.span.clone()).end;
+            let gap = &self.prepared.source()[end.min(source.start)..source.start];
+            if previous.marker.is_some()
+                && gap.bytes().filter(|b| *b == b'\n').count() == 1
+                && gap.trim().is_empty()
+            {
+                extra_inset = if previous.task.is_some() { 36. } else { 28. };
+                indent = previous.indent;
+                quote = previous.quote;
+            }
+        }
+        self.blocks.insert(
+            index,
+            Block {
+                extra_inset,
+                span: point..point,
+                code_original: String::new(),
+                task: None,
+                removed: false,
+                edit_ids: vec![],
+                restore: None,
+                kind: Kind::Text(
+                    0,
+                    Inline {
+                        anchor: point..point,
+                        restore: Some(0..0),
+                        ..Default::default()
+                    },
+                ),
+                lines: line..line + 1,
+                indent,
+                marker: None,
+                quote,
+                anchor: None,
+            },
+        );
+        self.heights.insert(index, 0.);
+    }
+    pub fn insert_break(&mut self, id: egui::Id, range: Range<usize>) {
+        let Some(index) = self
+            .inputs
+            .iter()
+            .position(|input| input.output.response.id == id)
+        else {
+            return;
+        };
+        if index + 1 == self.inputs.len() {
+            replace_chars(&mut self.append, range);
+        } else {
+            let span = self.inputs[index].span.clone();
+            for block in &mut self.blocks {
+                if let Kind::Text(_, inline) = &mut block.kind
+                    && inline_span(inline) == span
+                {
+                    replace_chars(&mut inline.value, range);
+                    update_atoms(inline);
+                    break;
+                }
+            }
+        }
+        self.changed = true;
+    }
+    fn inline_patches(&self, inline: &Inline) -> Vec<super::editing::Patch> {
+        let units: Vec<_> = inline
+            .atoms
+            .iter()
+            .map(|a| super::editing::Unit {
+                text: a.original.clone(),
+                span: a.span.clone(),
+                code: a.code,
+                wrappers: a.wrappers.clone(),
+            })
+            .collect();
+        if units.is_empty() && !inline.value.is_empty() {
+            let value = if inline.needs_space {
+                format!(" {}", inline.value)
+            } else {
+                inline.value.clone()
+            };
+            return vec![self.prepared.insert_patch(inline.anchor.clone(), &value)];
+        }
+        self.prepared.inline(
+            &units,
+            &inline
+                .atoms
+                .iter()
+                .map(|a| a.text.clone())
+                .collect::<Vec<_>>(),
+        )
     }
     pub fn heading_y(&self, target: &str) -> Option<f32> {
         self.blocks.iter().enumerate().find_map(|(i, block)| {
@@ -310,7 +665,13 @@ impl Preview {
             .last()
             .map_or(0., |(range, _, _)| range.end as f32)
     }
-    pub fn show(&mut self, ui: &mut egui::Ui, viewport: egui::Rect, size: f32) -> Option<String> {
+    pub fn show(
+        &mut self,
+        ui: &mut egui::Ui,
+        viewport: egui::Rect,
+        size: f32,
+        editable: bool,
+    ) -> Option<String> {
         let width = ui.available_width();
         let geometry = (width.to_bits(), size.to_bits(), ui.visuals().dark_mode);
         if self.geometry != Some(geometry) {
@@ -320,27 +681,98 @@ impl Preview {
         let origin = ui.cursor().top();
         self.locations.clear();
         let mut link = None;
-        for (i, block) in self.blocks.iter().enumerate() {
+        self.focused.clear();
+        self.changed = false;
+        self.inputs.clear();
+        for (i, block) in self.blocks.iter_mut().enumerate() {
             let top = ui.cursor().top() - origin;
             if self.heights[i] == 0. {
                 self.heights[i] = estimated_height(block, width, size);
             }
             let known = self.heights[i];
-            if known > 0. && (top + known < viewport.top() - 120. || top > viewport.bottom() + 120.)
+            if known > 0.
+                && !block
+                    .edit_ids
+                    .iter()
+                    .any(|id| ui.memory(|m| m.has_focus(*id)))
+                && (top + known < viewport.top() - 120. || top > viewport.bottom() + 120.)
             {
                 ui.allocate_space(egui::vec2(width, known));
             } else {
                 let start = ui.cursor().top();
                 ui.push_id(i, |ui| {
-                    link = render_block(block, ui, width, size).or(link.take());
+                    let (target, changed, focused) =
+                        render_block(block, ui, width, size, editable, &mut self.inputs);
+                    link = target.or(link.take());
+                    self.changed |= changed;
+                    block.edit_ids = focused.clone();
+                    self.focused.extend(focused);
                 });
                 self.heights[i] = ui.cursor().top() - start;
             }
             self.locations
                 .push((block.lines.clone(), top, self.heights[i]));
         }
+        let id = ui.make_persistent_id("preview-append");
+        if editable {
+            super::preview_format::restore(ui, id, self.append_restore.take());
+            let output = egui::TextEdit::multiline(&mut self.append)
+                .id(id)
+                .frame(egui::Frame::NONE)
+                .desired_width(width)
+                .desired_rows(1)
+                .hint_text(if self.blocks.is_empty() {
+                    "Write a note…"
+                } else {
+                    ""
+                })
+                .interactive(ui.is_enabled())
+                .return_key(None)
+                .show(ui);
+            self.changed |= output.response.changed();
+            self.focused.push(id);
+            self.inputs.push(super::preview_format::Input {
+                output,
+                span: self.prepared.text.len()..self.prepared.text.len(),
+                text: self.append.clone(),
+                whole_lines: false,
+                inline_only: false,
+                accepts_enter: true,
+                list: false,
+            });
+        }
         link
     }
+}
+fn inline_span(inline: &Inline) -> Range<usize> {
+    inline
+        .atoms
+        .iter()
+        .flat_map(|a| std::iter::once(a.span.clone()).chain(a.wrappers.iter().cloned()))
+        .fold(inline.anchor.clone(), |r, a| {
+            if r.is_empty() {
+                a
+            } else {
+                r.start.min(a.start)..r.end.max(a.end)
+            }
+        })
+}
+fn restore_inline(
+    prepared: &super::editing::Prepared,
+    inline: &Inline,
+    source: &Range<usize>,
+) -> Option<Range<usize>> {
+    let span = inline_span(inline);
+    let range = prepared.range(span.clone());
+    let line_start = prepared.source()[..range.start]
+        .rfind('\n')
+        .map_or(0, |i| i + 1);
+    (if source.is_empty() {
+        line_start <= source.start && source.start <= range.end
+    } else {
+        source.start <= range.end && range.start <= source.end
+    })
+    .then(|| super::preview_format::local_range(prepared, span, source))
 }
 fn estimated_height(block: &Block, width: f32, size: f32) -> f32 {
     let available = (width
@@ -366,16 +798,45 @@ fn estimated_height(block: &Block, width: f32, size: f32) -> f32 {
         Kind::Rule => 32.,
     }
 }
-fn render_block(block: &Block, ui: &mut egui::Ui, width: f32, size: f32) -> Option<String> {
+fn render_block(
+    block: &mut Block,
+    ui: &mut egui::Ui,
+    width: f32,
+    size: f32,
+    editable: bool,
+    inputs: &mut Vec<super::preview_format::Input>,
+) -> (Option<String>, bool, Vec<egui::Id>) {
     let p = colors(ui);
-    let inset = block.indent as f32 * 20. + block.quote as f32 * 16.;
+    let inset = block.indent as f32 * 20. + block.quote as f32 * 16. + block.extra_inset;
     let start = ui.cursor().top();
     let mut link = None;
+    let mut changed = false;
+    let mut focused = vec![];
     ui.horizontal_top(|ui| {
         ui.spacing_mut().item_spacing.x = 0.;
         ui.add_space(inset);
-        let marker_width = if block.marker.is_some() { 28. } else { 0. };
-        if let Some(marker) = &block.marker {
+        let marker_width = if block.task.is_some() {
+            36.
+        } else if block.marker.is_some() {
+            28.
+        } else {
+            0.
+        };
+        if let Some((_, _, checked)) = &mut block.task {
+            let response = ui
+                .scope(|ui| {
+                    ui.spacing_mut().interact_size.y = 24.;
+                    ui.add_enabled_ui(editable, |ui| design::checkbox(ui, checked, ""))
+                        .inner
+                })
+                .inner;
+            changed |= response.changed();
+            if response.clicked() {
+                response.request_focus();
+            }
+            focused.push(response.id);
+            ui.add_space(12.);
+        } else if let Some(marker) = &block.marker {
             ui.add_sized(
                 [marker_width, size * 1.65],
                 egui::Label::new(RichText::new(marker).size(size)).halign(egui::Align::Min),
@@ -387,7 +848,7 @@ fn render_block(block: &Block, ui: &mut egui::Ui, width: f32, size: f32) -> Opti
             egui::Layout::top_down(egui::Align::Min),
             |ui| {
                 ui.set_width(width);
-                match &block.kind {
+                match &mut block.kind {
                     Kind::Text(level, inline) => {
                         if *level > 0 {
                             ui.add_space(if start > ui.max_rect().top() + 8. {
@@ -403,8 +864,23 @@ fn render_block(block: &Block, ui: &mut egui::Ui, width: f32, size: f32) -> Opti
                             4 => size * 1.15,
                             _ => size,
                         };
-                        link =
-                            inline_label(ui, inline, width, font_size, *level > 0, block.quote > 0);
+                        let result = inline_label(
+                            ui,
+                            inline,
+                            width,
+                            InlineStyle {
+                                size: font_size,
+                                bold: *level > 0,
+                                quote: block.quote > 0,
+                                multiline: true,
+                                list: block.marker.is_some(),
+                            },
+                            editable,
+                            inputs,
+                        );
+                        link = result.0;
+                        changed |= result.1;
+                        focused.push(result.2);
                         ui.add_space(if *level > 0 { 10. } else { 12. });
                     }
                     Kind::Code(language, text) => {
@@ -420,7 +896,7 @@ fn render_block(block: &Block, ui: &mut egui::Ui, width: f32, size: f32) -> Opti
                                         RichText::new(if language.is_empty() {
                                             "text"
                                         } else {
-                                            language
+                                            language.as_str()
                                         })
                                         .size(11.)
                                         .color(p.muted),
@@ -434,7 +910,7 @@ fn render_block(block: &Block, ui: &mut egui::Ui, width: f32, size: f32) -> Opti
                                         },
                                     );
                                 });
-                                let mut text = text.trim_end_matches('\n');
+
                                 egui::ScrollArea::horizontal()
                                     .id_salt("code-scroll")
                                     .max_width((width - 26.).max(24.))
@@ -448,17 +924,39 @@ fn render_block(block: &Block, ui: &mut egui::Ui, width: f32, size: f32) -> Opti
                                                     ui,
                                                     text.as_str(),
                                                     size * 0.9,
+                                                    language,
                                                 );
                                                 ui.fonts_mut(|f| f.layout_job(job))
                                             };
-                                        ui.add(
-                                            egui::TextEdit::multiline(&mut text)
-                                                .font(FontId::monospace(size * 0.9))
-                                                .frame(egui::Frame::NONE)
-                                                .desired_width(f32::INFINITY)
-                                                .desired_rows(1)
-                                                .layouter(&mut layout),
+                                        let id = ui.make_persistent_id("preview-code");
+                                        focused.push(id);
+                                        super::preview_format::restore(
+                                            ui,
+                                            id,
+                                            block.restore.take(),
                                         );
+                                        let mut readonly = text.as_str();
+                                        let buffer: &mut dyn egui::TextBuffer =
+                                            if editable { text } else { &mut readonly };
+                                        let output = egui::TextEdit::multiline(buffer)
+                                            .id(id)
+                                            .interactive(ui.is_enabled())
+                                            .font(FontId::monospace(size * 0.9))
+                                            .frame(egui::Frame::NONE)
+                                            .desired_width(f32::INFINITY)
+                                            .desired_rows(1)
+                                            .layouter(&mut layout)
+                                            .show(ui);
+                                        changed |= output.response.changed();
+                                        inputs.push(super::preview_format::Input {
+                                            output,
+                                            span: block.span.clone(),
+                                            text: text.clone(),
+                                            whole_lines: true,
+                                            inline_only: false,
+                                            accepts_enter: false,
+                                            list: false,
+                                        });
                                     });
                             });
                         ui.add_space(14.);
@@ -474,39 +972,64 @@ fn render_block(block: &Block, ui: &mut egui::Ui, width: f32, size: f32) -> Opti
                                 egui::scroll_area::ScrollBarVisibility::AlwaysHidden,
                             )
                             .show(ui, |ui| {
-                                egui::Grid::new("preview-table")
-                                    .spacing([16., 10.])
-                                    .min_col_width(cell_width)
-                                    .max_col_width(cell_width)
-                                    .striped(true)
-                                    .show(ui, |ui| {
-                                        for (index, row) in rows.iter().enumerate() {
-                                            for cell in row {
-                                                ui.allocate_ui_with_layout(
-                                                    egui::vec2(cell_width, 0.),
-                                                    egui::Layout::top_down(egui::Align::Min),
-                                                    |ui| {
-                                                        link = inline_label(
-                                                            ui,
-                                                            cell,
-                                                            cell_width,
-                                                            size,
-                                                            index == 0,
-                                                            false,
-                                                        )
-                                                        .or(link.take());
-                                                    },
-                                                );
-                                            }
-                                            ui.end_row();
-                                        }
-                                    });
+                                ui.spacing_mut().item_spacing = egui::vec2(16., 10.);
+                                for (index, row) in rows.iter_mut().enumerate() {
+                                    egui::Frame::new()
+                                        .fill(if index % 2 == 1 {
+                                            p.column
+                                        } else {
+                                            egui::Color32::TRANSPARENT
+                                        })
+                                        .show(ui, |ui| {
+                                            ui.horizontal_top(|ui| {
+                                                for (column, cell) in row.iter_mut().enumerate() {
+                                                    ui.push_id((index, column), |ui| {
+                                                        ui.allocate_ui_with_layout(
+                                                            egui::vec2(cell_width, 0.),
+                                                            egui::Layout::top_down(
+                                                                egui::Align::Min,
+                                                            ),
+                                                            |ui| {
+                                                                let result = inline_label(
+                                                                    ui,
+                                                                    cell,
+                                                                    cell_width,
+                                                                    InlineStyle {
+                                                                        size,
+                                                                        bold: index == 0,
+                                                                        quote: false,
+                                                                        multiline: false,
+                                                                        list: false,
+                                                                    },
+                                                                    editable,
+                                                                    inputs,
+                                                                );
+                                                                link = result.0.or(link.take());
+                                                                changed |= result.1;
+                                                                focused.push(result.2);
+                                                            },
+                                                        );
+                                                    });
+                                                }
+                                            });
+                                        });
+                                }
                             });
                         ui.add_space(16.);
                     }
                     Kind::Rule => {
                         ui.add_space(8.);
-                        ui.separator();
+                        let rule = ui.separator();
+                        rule.context_menu(|ui| {
+                            if ui
+                                .add_enabled(editable, design::Button::new("Remove Divider"))
+                                .clicked()
+                            {
+                                block.removed = true;
+                                changed = true;
+                                ui.close();
+                            }
+                        });
                         ui.add_space(16.);
                     }
                 }
@@ -522,20 +1045,142 @@ fn render_block(block: &Block, ui: &mut egui::Ui, width: f32, size: f32) -> Opti
             Stroke::new(3., p.line),
         );
     }
-    link
+    (link, changed, focused)
 }
 fn inline_label(
     ui: &mut egui::Ui,
-    inline: &Inline,
+    inline: &mut Inline,
+    width: f32,
+    style: InlineStyle,
+    editable: bool,
+    inputs: &mut Vec<super::preview_format::Input>,
+) -> (Option<String>, bool, egui::Id) {
+    let InlineStyle {
+        size,
+        bold,
+        quote,
+        multiline,
+        list,
+    } = style;
+    let id = ui.make_persistent_id("preview-text");
+    super::preview_format::restore(ui, id, inline.restore.take());
+    let atoms = &inline.atoms;
+    let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap: f32| {
+        let job = inline_job(ui, atoms, text.as_str(), wrap, size, bold, quote);
+        ui.fonts_mut(|f| f.layout_job(job))
+    };
+    let enabled = ui.is_enabled();
+    let mut readonly = inline.value.as_str();
+    let buffer: &mut dyn egui::TextBuffer = if editable {
+        &mut inline.value
+    } else {
+        &mut readonly
+    };
+    let edit = if multiline {
+        egui::TextEdit::multiline(buffer)
+    } else {
+        egui::TextEdit::singleline(buffer)
+    };
+    let output = edit
+        .id(id)
+        .frame(egui::Frame::NONE)
+        .margin(egui::Margin::ZERO)
+        .desired_width(width)
+        .desired_rows(1)
+        .font(FontId::proportional(size))
+        .interactive(enabled)
+        .return_key(if multiline {
+            None
+        } else {
+            Some(egui::KeyboardShortcut::new(
+                egui::Modifiers::NONE,
+                egui::Key::Enter,
+            ))
+        })
+        .layouter(&mut layouter)
+        .show(ui);
+    let mut link = None;
+    if let Some(pos) = output.response.hover_pos() {
+        let index = output
+            .galley
+            .cursor_from_pos(pos - output.galley_pos)
+            .index
+            .0;
+        let mut offset = 0;
+        for atom in atoms {
+            let end = offset + atom.text.chars().count();
+            if offset <= index
+                && index < end
+                && let Some(target) = &atom.link
+            {
+                let follow =
+                    (!editable || ui.input(|i| i.modifiers.command)) && output.response.clicked();
+                output.response.response.clone().on_hover_text(format!(
+                    "{} to open {target}",
+                    if editable {
+                        "Ctrl/Command-click"
+                    } else {
+                        "Click"
+                    }
+                ));
+                if follow {
+                    link = Some(target.clone());
+                }
+                break;
+            }
+            offset = end;
+        }
+    }
+    let changed = output.response.changed();
+    if changed {
+        update_atoms(inline);
+    }
+    let span = inline_span(inline);
+    inputs.push(super::preview_format::Input {
+        output,
+        span,
+        text: inline.value.clone(),
+        whole_lines: multiline,
+        inline_only: !multiline,
+        accepts_enter: multiline,
+        list,
+    });
+    (link, changed, id)
+}
+fn inline_job(
+    ui: &egui::Ui,
+    atoms: &[Atom],
+    value: &str,
     width: f32,
     size: f32,
     bold: bool,
     quote: bool,
-) -> Option<String> {
+) -> LayoutJob {
     let p = colors(ui);
     let mut job = LayoutJob::default();
-    let mut links = vec![];
-    for atom in &inline.atoms {
+    let units: Vec<_> = atoms
+        .iter()
+        .map(|a| super::editing::Unit {
+            text: a.text.clone(),
+            span: a.span.clone(),
+            code: a.code,
+            wrappers: a.wrappers.clone(),
+        })
+        .collect();
+    let values = super::editing::values(&units, value);
+    if atoms.is_empty() {
+        job.append(
+            value,
+            0.,
+            TextFormat {
+                font_id: FontId::proportional(size),
+                color: p.ink,
+                line_height: Some(size * 1.65),
+                ..Default::default()
+            },
+        );
+    }
+    for (atom, text) in atoms.iter().zip(values) {
         let mut format = TextFormat {
             font_id: if atom.code {
                 FontId::monospace(size * 0.9)
@@ -565,37 +1210,10 @@ fn inline_label(
         if atom.link.is_some() {
             format.underline = Stroke::new(0.7, p.accent);
         }
-        let start = job.text.len();
-        job.append(&atom.text, 0., format);
-        if let Some(link) = &atom.link {
-            links.push((start..job.text.len(), link));
-        }
+        job.append(&text, 0., format);
     }
     job.wrap.max_width = width;
-    let galley = ui.fonts_mut(|f| f.layout_job(job));
-    let response = ui.add(
-        egui::Label::new(galley.clone())
-            .selectable(true)
-            .sense(egui::Sense::click()),
-    );
-    if let Some(pos) = response.hover_pos() {
-        let char_index = galley.cursor_from_pos(pos - response.rect.min).index.0;
-        let byte = galley
-            .text()
-            .char_indices()
-            .nth(char_index)
-            .map_or(galley.text().len(), |(i, _)| i);
-        if let Some((_, link)) = links.iter().find(|(range, _)| range.contains(&byte)) {
-            let clicked = response.clicked();
-            response
-                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                .on_hover_text(*link);
-            if clicked {
-                return Some((*link).clone());
-            }
-        }
-    }
-    None
+    job
 }
 #[cfg(test)]
 mod tests {
@@ -638,4 +1256,33 @@ mod tests {
             panic!("Missing paragraph");
         }
     }
+}
+
+#[cfg(test)]
+#[path = "render_editing_tests.rs"]
+mod editing_tests;
+
+fn update_atoms(inline: &mut Inline) {
+    let units: Vec<_> = inline
+        .atoms
+        .iter()
+        .map(|a| super::editing::Unit {
+            text: a.text.clone(),
+            span: a.span.clone(),
+            code: a.code,
+            wrappers: a.wrappers.clone(),
+        })
+        .collect();
+    for (atom, text) in inline
+        .atoms
+        .iter_mut()
+        .zip(super::editing::values(&units, &inline.value))
+    {
+        atom.text = text;
+    }
+}
+
+fn replace_chars(text: &mut String, range: Range<usize>) {
+    let point = |n| text.char_indices().nth(n).map_or(text.len(), |(i, _)| i);
+    text.replace_range(point(range.start)..point(range.end), "\n");
 }

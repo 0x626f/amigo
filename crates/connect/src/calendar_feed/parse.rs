@@ -281,7 +281,6 @@ fn event(
                 .filter(|v| !v.is_empty())
                 .unwrap_or("Untitled Event"),
         ),
-        original_description: description.clone(),
         description,
         location: text(value(p, "LOCATION").unwrap_or_default()),
         start: start.with_timezone(&Utc),

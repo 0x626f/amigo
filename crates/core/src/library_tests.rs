@@ -25,7 +25,6 @@ fn fixture() -> Workspace {
     task.title = "A task with \"quotes\" and 日本語".into();
     task.description = "First paragraph.\n\n- A Markdown list\n- Another item\n".into();
     task.category_id = "work".into();
-    task.labels = vec!["One".into(), "Two".into()];
     task.due_date = "2026-12-01".into();
     w.tasks.push(task);
     w.tasks.push(Task::new(9, "done"));
@@ -196,7 +195,6 @@ fn stopped_regular_expenses_keep_their_cutoff_after_vault_reload() {
     expense.due_date = "2026-09-30".into();
     expense.amount = Amount::Number(100.0);
     expense.regular = true;
-    expense.applicable = true;
     let key = expense.id.clone();
     plan.expenses.push(expense);
     plan.normalize();
@@ -236,7 +234,6 @@ fn cancelled_expenses_keep_their_date_and_history_after_vault_reload() {
     expense.due_date = "2026-09-30".into();
     expense.amount = Amount::Number(100.0);
     expense.regular = true;
-    expense.applicable = true;
     let key = expense.id.clone();
     plan.expenses.push(expense);
     plan.normalize();
@@ -641,4 +638,91 @@ fn moving_previous_default_library_preserves_data_and_never_replaces_an_existing
             .iter()
             .any(|b| b.id == board.id)
     );
+}
+
+#[test]
+fn obsolete_fields_are_removed_from_plain_records_and_stay_removed_after_encryption() {
+    let temp = Temp::new();
+    let mut library = Library::open(temp.0.clone(), None).unwrap();
+    let workspace = fixture();
+    let vault = library
+        .create_vault("Cleanup", &workspace.finance, None)
+        .unwrap();
+    let path = library.vault_path(&vault.entry.id).unwrap();
+    let references = path.join("records/references.json");
+    let mut value: Value = read(&references).unwrap();
+    value["meta"]["savingsCategoriesVersion"] = json!(0);
+    value["savingsLabels"] = json!([{"id":"reserve-category","name":"Reserve category"}]);
+    value["expenseLabels"] = json!(["Unused"]);
+    value["labels"] = json!(["Unused"]);
+    value["chains"][0]["rpcUrl"] = json!("https://unused.test");
+    write(&references, &value).unwrap();
+    for (kind, record_id, fields) in [
+        (
+            "expenses",
+            "expense-1",
+            json!({"applicable":false,"labels":["Unused"],"labelIds":["unused"]}),
+        ),
+        (
+            "savings",
+            "saving-z",
+            json!({"labels":["Reserve category"],"labelIds":["reserve-category"]}),
+        ),
+        ("budgets", "budget", json!({"labelId":"unused"})),
+    ] {
+        let file = path.join("records").join(kind).join(filename(record_id));
+        let mut value = record_value(&file).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .extend(fields.as_object().unwrap().clone());
+        fs::write(file, markdown(&value, "# Legacy record\n").unwrap()).unwrap();
+    }
+    let board = library.create_board("Old labels", &workspace).unwrap();
+    let task_path = library
+        .board_path(&board.id)
+        .unwrap()
+        .join(filename(&workspace.tasks[0].id));
+    let text = fs::read_to_string(&task_path).unwrap();
+    fs::write(
+        &task_path,
+        text.replacen('{', "{\n  \"labels\": [\"Old task label\"],", 1),
+    )
+    .unwrap();
+    let loaded_board = library.load_board(&board.id).unwrap();
+    assert_eq!(loaded_board.tasks, workspace.tasks);
+    library.save_board(&board.id, &loaded_board).unwrap();
+    assert!(
+        !fs::read_to_string(task_path)
+            .unwrap()
+            .contains("\"labels\"")
+    );
+    let plan = library.load_plain_vault(&vault).unwrap();
+    assert_eq!(plan.savings[0].category_id, "reserve-category");
+    assert_eq!(plan.budgets[0].label, "Living");
+    assert_eq!(plan.expenses[0].id, "expense-1");
+    library.save_vault(&vault, &plan, None).unwrap();
+    for file in all_files(&path.join("records")) {
+        let text = fs::read_to_string(file).unwrap();
+        for field in [
+            "labels",
+            "labelIds",
+            "labelId",
+            "applicable",
+            "rpcUrl",
+            "expenseLabels",
+            "savingsLabels",
+        ] {
+            assert!(!text.contains(&format!("\"{field}\"")), "{field}");
+        }
+    }
+    assert_eq!(library.load_plain_vault(&vault).unwrap(), plan);
+    let key = VaultKey::new("cleanup-password").unwrap();
+    let encrypted = library.encrypt_vault(&vault.entry.id, &plan, &key).unwrap();
+    let (unlocked, _) = VaultKey::unlock(&path, &encrypted.entry.id, "cleanup-password").unwrap();
+    assert_eq!(unlocked, plan);
+    library
+        .save_vault(&encrypted, &unlocked, Some(&key))
+        .unwrap();
+    assert_eq!(key.load(&path, &encrypted.entry.id).unwrap(), plan);
 }

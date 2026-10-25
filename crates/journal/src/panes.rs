@@ -71,6 +71,7 @@ fn source(editor: &mut Editor, prefs: &Preferences, ui: &mut egui::Ui, width: f3
                     .interactive(enabled)
                     .id(id)
                     .code_editor()
+                    .return_key(None)
                     .font(egui::FontId::monospace(prefs.font_size))
                     .frame(egui::Frame::NONE)
                     .desired_width(width)
@@ -106,13 +107,6 @@ fn source(editor: &mut Editor, prefs: &Preferences, ui: &mut egui::Ui, width: f3
                         ),
                         0,
                         colors(ui).sidebar,
-                    );
-                    painter.line_segment(
-                        [
-                            egui::pos2(pane.left() + gutter - 5., pane.top()),
-                            egui::pos2(pane.left() + gutter - 5., pane.bottom()),
-                        ],
-                        egui::Stroke::new(1., colors(ui).line),
                     );
                     let mut line = 1;
                     let mut first = true;
@@ -151,47 +145,9 @@ fn source(editor: &mut Editor, prefs: &Preferences, ui: &mut egui::Ui, width: f3
                     let range = range.as_sorted_char_range();
                     editor.selection = range.start.0..range.end.0;
                 }
+                source_enter(editor, ui, id);
                 output.response.context_menu(|ui| {
-                    ui.label(RichText::new("Format Selection").strong());
-                    for (label, kind) in [
-                        ("Bold", Format::Bold),
-                        ("Italic", Format::Italic),
-                        ("Strikethrough", Format::Strike),
-                        ("Inline Code", Format::Code),
-                        ("Heading 1", Format::Heading(1)),
-                        ("Heading 2", Format::Heading(2)),
-                        ("Heading 3", Format::Heading(3)),
-                        ("Bulleted List", Format::Bullet),
-                        ("Numbered List", Format::Numbered),
-                        ("Task List", Format::Task),
-                        ("Quote", Format::Quote),
-                        ("Code Block", Format::CodeBlock),
-                        ("Link", Format::Link),
-                        ("Table", Format::Table),
-                        ("Horizontal Rule", Format::Rule),
-                    ] {
-                        if ui
-                            .push_id(("journal-format", label), |ui| design::button(ui, label))
-                            .inner
-                            .clicked()
-                        {
-                            format = Some(kind);
-                            ui.close();
-                        }
-                    }
-                    ui.separator();
-                    if design::button(ui, "Copy").clicked() {
-                        ui.ctx().copy_text(
-                            editor
-                                .document
-                                .text
-                                .chars()
-                                .skip(editor.selection.start)
-                                .take(editor.selection.len())
-                                .collect(),
-                        );
-                        ui.close();
-                    }
+                    format = toolbar::context_menu(editor, ui).or(format);
                 });
                 if !output.response.context_menu_opened()
                     && !ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary))
@@ -206,12 +162,17 @@ fn source(editor: &mut Editor, prefs: &Preferences, ui: &mut egui::Ui, width: f3
                         egui::text::CCursor::new(editor.selection.end),
                     );
                     let mut undoer = state.undoer();
-                    undoer.add_undo(&(old_range, editor.document.text.clone()));
+                    let previous = editor.document.text.clone();
                     editor.selection = formatting::apply(
                         &mut editor.document.text,
                         editor.selection.clone(),
                         kind,
                     );
+                    if editor.document.text != previous {
+                        undoer.add_undo(&(old_range, previous));
+                        editor.revision = editor.revision.wrapping_add(1);
+                        editor.changed_at = Instant::now();
+                    }
                     state.set_undoer(undoer);
                     state
                         .cursor
@@ -220,8 +181,6 @@ fn source(editor: &mut Editor, prefs: &Preferences, ui: &mut egui::Ui, width: f3
                             egui::text::CCursor::new(editor.selection.end),
                         )));
                     state.store(ui.ctx(), id);
-                    editor.revision = editor.revision.wrapping_add(1);
-                    editor.changed_at = Instant::now();
                     ui.memory_mut(|m| m.request_focus(id));
                 }
             });
@@ -244,19 +203,110 @@ fn source(editor: &mut Editor, prefs: &Preferences, ui: &mut egui::Ui, width: f3
     }
     editor.scroll.source_offset = y;
 }
-fn preview(editor: &mut Editor, prefs: &Preferences, ui: &mut egui::Ui, width: f32, height: f32) {
-    if editor.preview_revision != editor.revision {
-        editor.preview_revision = editor.revision;
-        let source = markdown_source(&editor.document.text);
-        let base = editor
+fn source_enter(editor: &mut Editor, ui: &egui::Ui, id: egui::Id) {
+    if !ui.memory(|m| m.has_focus(id)) {
+        return;
+    }
+    let Some(soft) = preview_format::enter_key(ui) else {
+        return;
+    };
+    let old = editor.document.text.clone();
+    let before = editor.selection.clone();
+    editor.selection = if let Some(selection) =
+        formatting::list_newline(&mut editor.document.text, before.clone(), soft)
+    {
+        selection
+    } else {
+        let point = |n| old.char_indices().nth(n).map_or(old.len(), |(i, _)| i);
+        let eol = if old.contains("\r\n") { "\r\n" } else { "\n" };
+        editor
             .document
             .text
-            .lines()
-            .count()
-            .saturating_sub(source.lines().count());
-        editor.preview = render::Preview::parse(&source, base);
-        editor.preview_source = source;
+            .replace_range(point(before.start)..point(before.end), eol);
+        let caret = before.start + eol.chars().count();
+        caret..caret
+    };
+    let mut state = egui::TextEdit::load_state(ui.ctx(), id).unwrap_or_default();
+    let mut history = state.undoer();
+    history.add_undo(&(
+        egui::text::CCursorRange::two(
+            egui::text::CCursor::new(before.start),
+            egui::text::CCursor::new(before.end),
+        ),
+        old,
+    ));
+    state.set_undoer(history);
+    state.store(ui.ctx(), id);
+    preview_format::restore(ui, id, Some(editor.selection.clone()));
+    editor.revision = editor.revision.wrapping_add(1);
+    editor.changed_at = Instant::now();
+    ui.ctx().request_repaint();
+}
+fn preview(editor: &mut Editor, prefs: &Preferences, ui: &mut egui::Ui, width: f32, height: f32) {
+    let source_id = egui::Id::new(("journal-editor", &editor.document.path));
+    let editable = editor.preview_editing.unwrap_or(prefs.preview_editable);
+    let focused = editable && editor.preview.has_focus(ui.ctx());
+    let mut format = None;
+    if editable {
+        editor.preview_tools.begin(ui.ctx());
+        if focused && ui.is_enabled() {
+            format = editor.preview_tools.shortcut(ui.ctx());
+        }
     }
+    let mut undone = false;
+    let mut undo_selection = None;
+    if focused && ui.is_enabled() && !egui::Popup::is_any_open(ui.ctx()) {
+        let shifted = egui::Modifiers {
+            shift: true,
+            ..egui::Modifiers::COMMAND
+        };
+        let redo = ui.input_mut(|i| i.consume_key(shifted, egui::Key::Z));
+        let undo = !redo && ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Z));
+        if undo || redo {
+            let mut state = egui::TextEdit::load_state(ui.ctx(), source_id).unwrap_or_default();
+            let mut history = state.undoer();
+            let range =
+                egui::text::CCursorRange::one(egui::text::CCursor::new(editor.selection.start));
+            let current = (range, editor.document.text.clone());
+            let next = if redo {
+                history.redo(&current).cloned()
+            } else {
+                history.undo(&current).cloned()
+            };
+            if let Some((range, text)) = next {
+                editor.document.text = text;
+                let range = range.as_sorted_char_range();
+                editor.selection = range.start.0..range.end.0;
+                let point = |n| {
+                    editor
+                        .document
+                        .text
+                        .char_indices()
+                        .nth(n)
+                        .map_or(editor.document.text.len(), |(i, _)| i)
+                };
+                undo_selection = Some(point(editor.selection.start)..point(editor.selection.end));
+                editor.revision = editor.revision.wrapping_add(1);
+                editor.changed_at = Instant::now();
+                undone = true;
+            }
+            state.set_undoer(history);
+            state.store(ui.ctx(), source_id);
+        }
+    }
+    if (editor.preview_revision != editor.revision && !focused) || undone {
+        editor.preview_revision = editor.revision;
+        editor.preview_source = markdown_source(&editor.document.text);
+        editor.preview = render::Preview::document(&editor.document.text);
+        if let Some(selection) = undo_selection {
+            editor.preview.focus_source(selection);
+        }
+    }
+    let top = ui.cursor().top();
+    if editable {
+        format = editor.preview_tools.bar(ui, width).or(format);
+    }
+    let height = (height - (ui.cursor().top() - top)).max(24.);
     let mut scrolling = egui::ScrollArea::vertical()
         .id_salt(("journal-preview", &editor.document.path))
         .auto_shrink([false, false])
@@ -279,13 +329,32 @@ fn preview(editor: &mut Editor, prefs: &Preferences, ui: &mut egui::Ui, width: f
                     ui.add_space(20.);
                     editor.preview_link = editor
                         .preview
-                        .show(ui, viewport, prefs.preview_font_size.clamp(11., 28.))
+                        .show(
+                            ui,
+                            viewport,
+                            prefs.preview_font_size.clamp(11., 28.),
+                            editable,
+                        )
                         .or(editor.preview_link.take());
                     ui.add_space(24.);
                 },
             );
         });
     });
+    sync_preview(editor, ui);
+    if editable && ui.is_enabled() {
+        format = editor
+            .preview_tools
+            .update(&mut editor.preview, editor.revision, ui)
+            .or(format);
+        preview_format::enter(editor, ui);
+        preview_format::auto_list(editor, ui);
+        sync_preview(editor, ui);
+        if let Some(kind) = format {
+            preview_format::apply(editor, kind, ui);
+        }
+        preview_format::link_dialog(editor, ui);
+    }
     let y = output.state.offset.y;
     if prefs.sync_scroll
         && !synced
@@ -301,6 +370,23 @@ fn preview(editor: &mut Editor, prefs: &Preferences, ui: &mut egui::Ui, width: f
         ui.ctx().request_repaint();
     }
     editor.scroll.preview_offset = y;
+}
+fn sync_preview(editor: &mut Editor, ui: &egui::Ui) {
+    let source_id = egui::Id::new(("journal-editor", &editor.document.path));
+    if let Some(text) = editor.preview.edited_document()
+        && text != editor.document.text
+    {
+        let mut state = egui::TextEdit::load_state(ui.ctx(), source_id).unwrap_or_default();
+        let mut history = state.undoer();
+        let range = egui::text::CCursorRange::one(egui::text::CCursor::new(editor.selection.start));
+        history.add_undo(&(range, editor.document.text.clone()));
+        state.set_undoer(history);
+        state.store(ui.ctx(), source_id);
+        editor.document.text = text;
+        editor.revision = editor.revision.wrapping_add(1);
+        editor.changed_at = Instant::now();
+        ui.ctx().request_repaint();
+    }
 }
 pub(super) fn show(
     editor: &mut Editor,

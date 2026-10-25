@@ -81,6 +81,74 @@ pub fn dialog_section(ui: &mut egui::Ui, title: &str) {
     ui.add_space(10.0);
 }
 
+/// Related preferences share one quiet surface, with inset rules between rows.
+pub fn settings_group<R>(
+    ui: &mut egui::Ui,
+    title: &str,
+    contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    ui.push_id(("settings-group", title), |ui| {
+        if !title.is_empty() {
+            ui.label(
+                RichText::new(title)
+                    .size(14.)
+                    .strong()
+                    .color(colors(ui).muted),
+            );
+            ui.add_space(2.);
+        }
+        let width = ui.available_width().min(ui.clip_rect().width());
+        let result = egui::Frame::new()
+            .fill(colors(ui).column)
+            .stroke(egui::Stroke::new(1., colors(ui).line))
+            .corner_radius(10)
+            .inner_margin(egui::Margin::symmetric(16, 12))
+            .show(ui, |ui| {
+                ui.set_min_width((width - 34.).max(0.));
+                ui.spacing_mut().item_spacing.y = 8.;
+                contents(ui)
+            })
+            .inner;
+        ui.add_space(12.);
+        result
+    })
+    .inner
+}
+
+pub fn settings_separator(ui: &mut egui::Ui) {
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.), egui::Sense::hover());
+    ui.painter().hline(
+        rect.x_range(),
+        rect.center().y,
+        egui::Stroke::new(1., colors(ui).line),
+    );
+}
+
+/// Keep preference labels and their controls aligned across a grouped list.
+pub fn settings_row<R>(
+    ui: &mut egui::Ui,
+    label: &str,
+    control: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    ui.push_id(("settings-row", label), |ui| {
+        ui.horizontal(|ui| {
+            let label_width = (ui.available_width() * 0.45).clamp(100., 240.);
+            ui.allocate_ui_with_layout(
+                egui::vec2(label_width, design::CONTROL_HEIGHT),
+                egui::Layout::left_to_right(egui::Align::Center),
+                |ui| {
+                    ui.label(label);
+                },
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), control)
+                .inner
+        })
+        .inner
+    })
+    .inner
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum DataAction {
     Import,

@@ -1,28 +1,46 @@
 //! Markdown notebook UI. Filesystem work and native pickers belong to the shell.
 use amigo_core::journal::{
-    Document, Entry, Mode, Preferences, PreviewLayout,
+    Document, Entry, Mode, Preferences, PreviewLayout, TRASH_FOLDER,
     formatting::{self, Format},
+    is_in_trash,
 };
 use amigo_ui::design::{self, Icon, colors};
 use egui::{self, RichText};
+mod dialogs;
+mod editing;
 mod highlight;
 mod panes;
+mod preview_format;
 mod render;
 mod scroll;
+mod search;
+mod sidebar;
 mod toolbar;
 use std::{collections::BTreeSet, time::Instant};
 
 #[derive(Clone, Debug)]
 pub enum Action {
     Open(String),
-    FollowLink { from: String, target: String },
+    FollowLink {
+        from: String,
+        target: String,
+    },
     Refresh,
     Search(String),
     NewNote(String),
     NewFolder(String),
-    Rename { old: String, name: String },
+    Rename {
+        old: String,
+        name: String,
+    },
     Trash(String),
-    Import(String),
+    Restore(String),
+    DeletePermanently(String),
+    OpenExternal,
+    StoreExternal {
+        source: std::path::PathBuf,
+        folder: String,
+    },
     Export(String),
     Reload,
     SaveCopy,
@@ -42,6 +60,9 @@ pub struct Editor {
     scroll: scroll::ScrollSync,
     preview_link: Option<String>,
     toolbar_menus: Vec<egui::Id>,
+    format_state: Option<(u64, std::ops::Range<usize>, formatting::SelectionState)>,
+    preview_editing: Option<bool>,
+    preview_tools: preview_format::Tools,
 }
 impl Editor {
     pub fn new(document: Document) -> Self {
@@ -60,7 +81,26 @@ impl Editor {
             scroll: Default::default(),
             preview_link: None,
             toolbar_menus: vec![],
+            format_state: None,
+            preview_editing: None,
+            preview_tools: Default::default(),
         }
+    }
+    fn formatting_state(&mut self) -> formatting::SelectionState {
+        if self
+            .format_state
+            .as_ref()
+            .is_none_or(|(revision, range, _)| {
+                *revision != self.revision || *range != self.selection
+            })
+        {
+            self.format_state = Some((
+                self.revision,
+                self.selection.clone(),
+                formatting::SelectionState::new(&self.document.text, self.selection.clone()),
+            ));
+        }
+        self.format_state.as_ref().unwrap().2.clone()
     }
     pub fn dirty(&self) -> bool {
         self.document.text != self.saved_text
@@ -74,12 +114,9 @@ pub struct JournalTab {
     pub loading: bool,
     pub error: String,
     pub loaded: bool,
-    search: String,
-    searched: String,
-    searched_at: Option<Instant>,
-    pub matches: Option<Vec<Entry>>,
+    search: Option<search::SearchDialog>,
+    external_file: Option<dialogs::ExternalFileDialog>,
     expanded: BTreeSet<String>,
-    folder: String,
     dialog: Option<NameDialog>,
     title_edit: Option<TitleEdit>,
 }
@@ -94,268 +131,50 @@ struct NameDialog {
     error: String,
 }
 enum NameKind {
-    Note,
-    Folder,
-    Rename(String),
+    Note(String),
+    Folder(String),
     Delete(String),
 }
 impl JournalTab {
     pub fn open(&mut self, document: Document) {
-        self.folder = document
+        let folder = document
             .path
             .rsplit_once('/')
             .map_or(String::new(), |(parent, _)| parent.into());
+        self.expand_folder(&folder);
         self.title_edit = None;
         self.editor = Some(Editor::new(document));
         self.error.clear();
     }
+    pub fn expand_folder(&mut self, folder: &str) {
+        let mut parent = String::new();
+        for part in folder.split('/').filter(|part| !part.is_empty()) {
+            if !parent.is_empty() {
+                parent.push('/');
+            }
+            parent.push_str(part);
+            self.expanded.insert(parent.clone());
+        }
+    }
     pub fn dirty(&self) -> bool {
         self.editor.as_ref().is_some_and(Editor::dirty)
     }
-    pub fn apply_search(&mut self, query: &str, entries: Vec<Entry>) {
-        if self.search.trim() == query.trim() {
-            self.matches = Some(entries);
-        }
+    pub fn close_note(&mut self) {
+        self.editor = None;
+        self.title_edit = None;
     }
-
-    pub fn sidebar(&mut self, ui: &mut egui::Ui) -> Option<Action> {
-        let mut action = None;
-        design::eyebrow(ui, "NOTEBOOK");
-        ui.add_space(5.);
-        if ui
-            .add(
-                design::input(&mut self.search)
-                    .id(egui::Id::new("journal-search"))
-                    .hint_text("Search notes…")
-                    .desired_width(ui.available_width()),
-            )
-            .changed()
-        {
-            self.searched_at = Some(Instant::now());
-        }
-        if self.search != self.searched
-            && self
-                .searched_at
-                .is_some_and(|t| t.elapsed().as_millis() >= 250)
-            && !self.busy
-        {
-            self.searched = self.search.clone();
-            action = Some(if self.search.trim().is_empty() {
-                self.matches = None;
-                Action::Refresh
-            } else {
-                Action::Search(self.search.clone())
-            });
-        }
-        if self.searched_at.is_some() && self.search != self.searched {
-            ui.ctx()
-                .request_repaint_after(std::time::Duration::from_millis(250));
-        }
-        ui.horizontal(|ui| {
-            if design::small_button(ui, "+ Note").clicked() {
-                self.dialog = Some(NameDialog {
-                    kind: NameKind::Note,
-                    value: self.prefix("Untitled"),
-                    error: String::new(),
-                });
-            }
-            if design::icon_button(
-                ui,
-                egui::Id::new("journal-new-folder"),
-                Icon::Folder,
-                "New Folder",
-                28.,
-            )
-            .clicked()
-            {
-                self.dialog = Some(NameDialog {
-                    kind: NameKind::Folder,
-                    value: self.prefix("New folder"),
-                    error: String::new(),
-                });
-            }
-            if design::icon_button(
-                ui,
-                egui::Id::new("journal-refresh"),
-                Icon::Refresh,
-                "Refresh Notes",
-                28.,
-            )
-            .clicked()
-            {
-                action = Some(Action::Refresh);
-            }
-        });
-        ui.add_space(6.);
-        let entries = self.matches.as_ref().unwrap_or(&self.entries).clone();
-        if !self.folder.is_empty() && design::small_button(ui, "All Notes").clicked() {
-            self.folder.clear();
-        }
-        for entry in entries {
-            let parent = entry.path.rsplit_once('/').map_or("", |(p, _)| p);
-            if self.matches.is_none()
-                && parent
-                    .split('/')
-                    .scan(String::new(), |path, part| {
-                        if !path.is_empty() {
-                            path.push('/');
-                        }
-                        path.push_str(part);
-                        Some(path.clone())
-                    })
-                    .any(|p| !p.is_empty() && !self.expanded.contains(&p))
-            {
-                continue;
-            }
-            let depth = if self.matches.is_some() {
-                0
-            } else {
-                entry.path.matches('/').count()
-            };
-            ui.horizontal(|ui| {
-                let label = if self.matches.is_some() {
-                    entry.path.strip_suffix(".md").unwrap_or(&entry.path)
-                } else {
-                    entry
-                        .path
-                        .rsplit('/')
-                        .next()
-                        .unwrap_or("")
-                        .strip_suffix(".md")
-                        .unwrap_or(entry.path.rsplit('/').next().unwrap_or(""))
-                };
-                let selected = self
-                    .editor
-                    .as_ref()
-                    .is_some_and(|e| e.document.path == entry.path);
-                let row = design::nav_row_with_options(
-                    ui,
-                    label,
-                    if entry.folder {
-                        Icon::Folder
-                    } else {
-                        Icon::Book
-                    },
-                    selected,
-                    design::NavRowOptions {
-                        indent: depth as f32 * 12.,
-                        disclosure: entry.folder.then(|| self.expanded.contains(&entry.path)),
-                        ..Default::default()
-                    },
-                );
-                ui.interact(
-                    row.rect,
-                    egui::Id::new(("journal-entry", &entry.path)),
-                    egui::Sense::hover(),
-                );
-                if row.clicked() {
-                    if entry.folder {
-                        if !self.expanded.remove(&entry.path) {
-                            self.expanded.insert(entry.path.clone());
-                        }
-                        self.folder = entry.path.clone();
-                    } else {
-                        action = Some(Action::Open(entry.path.clone()));
-                    }
-                }
-                row.context_menu(|ui| {
-                    if design::button(ui, "Rename / Move…").clicked() {
-                        self.dialog = Some(NameDialog {
-                            kind: NameKind::Rename(entry.path.clone()),
-                            value: entry.path.clone(),
-                            error: String::new(),
-                        });
-                        ui.close();
-                    }
-                    if design::button(ui, "Move to Trash…").clicked() {
-                        self.dialog = Some(NameDialog {
-                            kind: NameKind::Delete(entry.path.clone()),
-                            value: String::new(),
-                            error: String::new(),
-                        });
-                        ui.close();
-                    }
-                });
-            });
-        }
-        if self.entries.is_empty() && self.loaded {
-            design::hint(ui, "Create a note or import Markdown files.");
-        }
-        action
-    }
-    fn prefix(&self, name: &str) -> String {
-        if self.folder.is_empty() {
-            name.into()
-        } else {
-            format!("{}/{name}", self.folder)
-        }
+    pub fn update_entries(&mut self, entries: Vec<Entry>) {
+        self.entries = entries;
+        let folders: BTreeSet<_> = self
+            .entries
+            .iter()
+            .filter(|entry| entry.folder)
+            .map(|entry| entry.path.as_str())
+            .collect();
+        self.expanded.retain(|path| folders.contains(path.as_str()));
     }
     pub fn show(&mut self, ui: &mut egui::Ui, preferences: &mut Preferences) -> Option<Action> {
         let mut action = None;
-        let title_width = (ui.available_width() - 130.).max(0.);
-        ui.horizontal(|ui| {
-            ui.allocate_ui_with_layout(
-                egui::vec2(title_width, 38.),
-                egui::Layout::left_to_right(egui::Align::Center),
-                |ui| {
-                    let response = ui.add(
-                        egui::Label::new(RichText::new("Journal").size(32.).strong())
-                            .halign(egui::Align::Min),
-                    );
-                    ui.interact(
-                        response.rect,
-                        egui::Id::new("journal-page-title"),
-                        egui::Sense::hover(),
-                    );
-                },
-            );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                for (key, icon, label, candidate) in [
-                    (
-                        "import",
-                        Icon::Import,
-                        "Import Markdown",
-                        Some(Action::Import(self.folder.clone())),
-                    ),
-                    ("rename", Icon::Edit, "Rename Note", None),
-                    ("delete", Icon::Trash, "Move Note to Trash", None),
-                ] {
-                    if ui
-                        .add_enabled_ui(key == "import" || self.editor.is_some(), |ui| {
-                            design::icon_button(
-                                ui,
-                                egui::Id::new(("journal", key)),
-                                icon,
-                                label,
-                                32.,
-                            )
-                        })
-                        .inner
-                        .clicked()
-                    {
-                        if key == "rename" {
-                            let path = self.editor.as_ref().unwrap().document.path.clone();
-                            self.dialog = Some(NameDialog {
-                                kind: NameKind::Rename(path.clone()),
-                                value: path,
-                                error: String::new(),
-                            });
-                        } else if key == "delete" {
-                            self.dialog = Some(NameDialog {
-                                kind: NameKind::Delete(
-                                    self.editor.as_ref().unwrap().document.path.clone(),
-                                ),
-                                value: String::new(),
-                                error: String::new(),
-                            });
-                        } else {
-                            action = candidate;
-                        }
-                    }
-                }
-            });
-        });
-        ui.add_space(10.);
         if !self.error.is_empty() {
             ui.colored_label(colors(ui).red, &self.error);
             if self.editor.as_ref().is_some_and(|e| e.conflict) {
@@ -378,14 +197,14 @@ impl JournalTab {
         let palette = colors(ui);
         let notebook = egui::Frame::new()
             .fill(palette.card)
-            .stroke(egui::Stroke::new(1., palette.hover_line))
-            .corner_radius(6)
+            .corner_radius(0)
             .inner_margin(0)
             .show(ui, |ui| {
-                ui.set_min_size(egui::vec2(width - 2., height - 2.));
-                ui.set_max_size(egui::vec2(width - 2., height - 2.));
+                ui.spacing_mut().item_spacing.y = 0.;
+                ui.set_min_size(egui::vec2(width, height));
+                ui.set_max_size(egui::vec2(width, height));
+                action = self.note_header(ui, preferences).or(action.take());
                 if self.editor.is_some() {
-                    action = self.note_header(ui, preferences).or(action.take());
                     let Some(editor) = &mut self.editor else {
                         return;
                     };
@@ -399,7 +218,7 @@ impl JournalTab {
                         ui.add_space(80.);
                         design::icon(ui, Icon::Book, colors(ui).muted, 44.);
                         ui.heading("Your Journal");
-                        design::hint(ui, "Create a Markdown note or import existing .md files.");
+                        design::hint(ui, "Create a note or open an external Markdown file.");
                     });
                 }
             });
@@ -437,54 +256,84 @@ impl JournalTab {
     }
     fn note_header(&mut self, ui: &mut egui::Ui, preferences: &mut Preferences) -> Option<Action> {
         let keys = design::ActionKeys::capture(ui.ctx());
-        let editor = self.editor.as_ref()?;
-        let path = editor.document.path.clone();
-        let filename = path.rsplit('/').next().unwrap_or(&path);
+        let has_note = self.editor.is_some();
+        let path = self
+            .editor
+            .as_ref()
+            .map(|editor| editor.document.path.clone())
+            .unwrap_or_default();
+        let filename = amigo_core::journal::entry_name(&path);
         let name = filename.strip_suffix(".md").unwrap_or(filename);
         let width = ui.available_width();
         let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 46.), egui::Sense::hover());
-        let title_rect = egui::Rect::from_center_size(
-            rect.center(),
-            egui::vec2(
-                (width
-                    - if self.title_edit.is_some() {
-                        500.
-                    } else {
-                        340.
-                    })
-                .clamp(80., 500.),
-                34.,
-            ),
-        );
+        ui.painter().rect_filled(rect, 0, colors(ui).field);
+        let show_edit = has_note && preferences.mode != Mode::Source;
+        let controls_width = if show_edit { 176. } else { 140. };
+        let controls_left = rect.right() - controls_width - 12.;
+        let rename_controls_left = controls_left - 76.;
+        let title_width = (width - 2. * (controls_width + 24.)).clamp(80., 500.);
+        let mut title_center = rect.center();
+        if self.title_edit.is_some() {
+            title_center.x = title_center
+                .x
+                .min(rename_controls_left - 8. - title_width / 2.);
+        }
+        let title_rect = egui::Rect::from_center_size(title_center, egui::vec2(title_width, 34.));
         let mut action = None;
+        let open_file =
+            egui::Rect::from_min_size(rect.min + egui::vec2(12., 7.), egui::vec2(32., 32.));
+        ui.scope_builder(
+            egui::UiBuilder::new()
+                .max_rect(open_file)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+            |ui| {
+                if ui
+                    .add_enabled_ui(!self.busy, |ui| {
+                        design::icon_button(
+                            ui,
+                            egui::Id::new("journal-open-external"),
+                            Icon::OpenFile,
+                            "Open External Markdown File",
+                            32.,
+                        )
+                    })
+                    .inner
+                    .clicked()
+                {
+                    action = Some(Action::OpenExternal);
+                }
+            },
+        );
         if let Some(edit) = &mut self.title_edit {
             let id = egui::Id::new("journal-title-edit");
+            if edit.focus {
+                let mut state = egui::TextEdit::load_state(ui.ctx(), id).unwrap_or_default();
+                state
+                    .cursor
+                    .set_char_range(Some(egui::text::CCursorRange::one(
+                        egui::text::CCursor::new(edit.value.chars().count()),
+                    )));
+                state.store(ui.ctx(), id);
+            }
             let response = ui.put(
                 title_rect,
                 design::input(&mut edit.value)
                     .id(id)
+                    .frame(egui::Frame::NONE)
+                    .min_size(egui::vec2(0., title_rect.height()))
                     .font(egui::FontId::proportional(20.))
                     .horizontal_align(egui::Align::Center)
                     .interactive(!self.loading),
             );
             if edit.focus {
                 response.request_focus();
-                if let Some(mut state) = egui::TextEdit::load_state(ui.ctx(), id) {
-                    state
-                        .cursor
-                        .set_char_range(Some(egui::text::CCursorRange::two(
-                            egui::text::CCursor::new(0),
-                            egui::text::CCursor::new(edit.value.chars().count()),
-                        )));
-                    state.store(ui.ctx(), id);
-                }
                 edit.focus = false;
             }
             let valid = !edit.value.trim().is_empty() && !edit.value.contains(['/', '\\']);
             let mut save = false;
             let mut cancel = false;
             let controls = egui::Rect::from_min_size(
-                egui::pos2(rect.right() - 242., rect.top() + 7.),
+                egui::pos2(rename_controls_left, rect.top() + 7.),
                 egui::vec2(72., 32.),
             );
             ui.scope_builder(
@@ -532,7 +381,7 @@ impl JournalTab {
                 self.title_edit = None;
                 ui.memory_mut(|m| m.surrender_focus(id));
             }
-        } else {
+        } else if has_note {
             let response = ui
                 .put(
                     title_rect,
@@ -557,8 +406,8 @@ impl JournalTab {
             }
         }
         let controls = egui::Rect::from_min_size(
-            egui::pos2(rect.right() - 160., rect.top() + 7.),
-            egui::vec2(154., 32.),
+            egui::pos2(controls_left, rect.top() + 7.),
+            egui::vec2(controls_width, 32.),
         );
         ui.scope_builder(
             egui::UiBuilder::new()
@@ -566,6 +415,32 @@ impl JournalTab {
                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
             |ui| {
                 ui.spacing_mut().item_spacing.x = 4.;
+                if show_edit {
+                    let editor = self.editor.as_mut().unwrap();
+                    let editing = editor
+                        .preview_editing
+                        .unwrap_or(preferences.preview_editable);
+                    if design::selected_icon_button(
+                        ui,
+                        egui::Id::new("journal-preview-edit"),
+                        Icon::Edit,
+                        if editing {
+                            "Finish Editing Preview"
+                        } else {
+                            "Edit Preview"
+                        },
+                        32.,
+                        editing,
+                    )
+                    .clicked()
+                        && !self.loading
+                    {
+                        editor.preview_editing = Some(!editing);
+                        editor.preview_tools = Default::default();
+                        editor.preview = render::Preview::document(&editor.document.text);
+                        editor.preview_revision = editor.revision;
+                    }
+                }
                 mode_buttons_with_layout(
                     ui,
                     &mut preferences.mode,
@@ -580,7 +455,8 @@ impl JournalTab {
                     32.,
                 );
                 egui::Popup::menu(&menu).show(|ui| {
-                    ui.label(RichText::new("Split Layout").strong());
+                    ui.set_min_width(220.);
+                    design::eyebrow(ui, "PREVIEW LAYOUT");
                     let side = ui.radio_value(
                         &mut preferences.preview_layout,
                         PreviewLayout::SideBySide,
@@ -608,82 +484,17 @@ impl JournalTab {
                         ui.close();
                     }
                     ui.separator();
-                    design::checkbox(ui, &mut preferences.sync_scroll, "Synchronize Scrolling");
+                    design::eyebrow(ui, "MARKDOWN EDITOR");
                     design::checkbox(ui, &mut preferences.line_numbers, "Line Numbers");
                     design::checkbox(ui, &mut preferences.word_wrap, "Soft Wraps");
+                    ui.separator();
+                    design::eyebrow(ui, "SCROLLING");
+                    design::checkbox(ui, &mut preferences.sync_scroll, "Synchronize Scrolling");
                 });
             },
         );
-        ui.painter().line_segment(
-            [rect.left_bottom(), rect.right_bottom()],
-            egui::Stroke::new(1., colors(ui).hover_line),
-        );
+        ui.advance_cursor_after_rect(rect);
         action
-    }
-    pub fn dialogs(&mut self, ctx: &egui::Context) -> Option<Action> {
-        let mut dialog = self.dialog.take()?;
-        let keys = design::ActionKeys::capture(ctx);
-        let mut close = false;
-        let mut submit = false;
-        let deleting = matches!(dialog.kind, NameKind::Delete(_));
-        let title = match &dialog.kind {
-            NameKind::Note => "New Note",
-            NameKind::Folder => "New Folder",
-            NameKind::Rename(_) => "Rename / Move",
-            NameKind::Delete(_) => "Move to Trash",
-        };
-        let response = design::modal(ctx, egui::Id::new("journal-name-dialog")).show(ctx, |ui| {
-            ui.set_width(design::dialog_width(ctx, 520.));
-            close = design::dialog_heading(ui, title).clicked();
-            if let NameKind::Delete(path) = &dialog.kind {
-                ui.label(path);
-                design::hint(
-                    ui,
-                    "The file or folder will be moved to journal/.trash. You can recover it there.",
-                );
-            } else {
-                ui.label("Path inside Journal");
-                ui.add(
-                    design::input(&mut dialog.value)
-                        .id(egui::Id::new("journal-note-name"))
-                        .desired_width(f32::INFINITY),
-                );
-            }
-            if !dialog.error.is_empty() {
-                ui.colored_label(colors(ui).red, &dialog.error);
-            }
-            design::dialog_footer(ui, |ui| {
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    submit = ui
-                        .add_enabled_ui(deleting || !dialog.value.trim().is_empty(), |ui| {
-                            design::dialog_primary(
-                                ui,
-                                if deleting { "Move to Trash" } else { "Save" },
-                            )
-                        })
-                        .inner
-                        .clicked();
-                    close |= design::button(ui, "Cancel").clicked();
-                });
-            });
-        });
-        let shortcut = keys.dialog(&response, !deleting && !dialog.value.trim().is_empty());
-        if close || shortcut.cancel {
-            return None;
-        }
-        if submit || shortcut.confirm {
-            return Some(match dialog.kind {
-                NameKind::Note => Action::NewNote(dialog.value.trim().into()),
-                NameKind::Folder => Action::NewFolder(dialog.value.trim().into()),
-                NameKind::Rename(old) => Action::Rename {
-                    old,
-                    name: dialog.value.trim().into(),
-                },
-                NameKind::Delete(path) => Action::Trash(path),
-            });
-        }
-        self.dialog = Some(dialog);
-        None
     }
 }
 pub fn mode_buttons(ui: &mut egui::Ui, mode: &mut Mode, prefix: &str) {
@@ -724,60 +535,9 @@ pub fn mode_buttons_with_layout(
     }
 }
 fn markdown_source(text: &str) -> String {
-    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
-    let body = if let Some(rest) = text.strip_prefix("---\r\n") {
-        rest.split_once("\r\n---\r\n")
-            .map_or(text, |(_, body)| body)
-    } else if let Some(rest) = text.strip_prefix("---\n") {
-        rest.split_once("\n---\n").map_or(text, |(_, body)| body)
-    } else {
-        text
-    };
-    // Parser offsets keep wiki syntax inside code spans and fenced/indented blocks literal.
-    let mut protected: Vec<_> = pulldown_cmark::Parser::new(body)
-        .into_offset_iter()
-        .filter_map(|(event, range)| {
-            matches!(
-                event,
-                pulldown_cmark::Event::Code(_)
-                    | pulldown_cmark::Event::Start(pulldown_cmark::Tag::CodeBlock(_))
-            )
-            .then_some(range)
-        })
-        .collect();
-    protected.sort_by_key(|range| range.start);
-    let mut output = String::new();
-    let mut cursor = 0;
-    for range in protected {
-        if range.start < cursor {
-            continue;
-        }
-        wiki_text(&body[cursor..range.start], &mut output);
-        output.push_str(&body[range.clone()]);
-        cursor = range.end;
-    }
-    wiki_text(&body[cursor..], &mut output);
-    output
+    editing::Prepared::new(text).text
 }
 
-fn wiki_text(mut rest: &str, output: &mut String) {
-    while let Some(start) = rest.find("[[") {
-        output.push_str(&rest[..start]);
-        let Some(end) = rest[start + 2..].find("]]").map(|n| n + start + 2) else {
-            output.push_str(&rest[start..]);
-            return;
-        };
-        let content = &rest[start + 2..end];
-        let (target, label) = content.split_once('|').unwrap_or((content, content));
-        output.push_str(&format!(
-            "[{}](amigo-journal://{})",
-            label.replace('[', "\\[").replace(']', "\\]"),
-            encode_target(target)
-        ));
-        rest = &rest[end + 2..];
-    }
-    output.push_str(rest);
-}
 fn encode_target(value: &str) -> String {
     value
         .as_bytes()

@@ -132,8 +132,12 @@ impl TasksUi<'_> {
                 egui::Layout::left_to_right(egui::Align::Center),
                 |ui| {
                     ui.add(
-                        egui::Label::new(RichText::new(self.board_name).size(32.0).strong())
-                            .truncate(),
+                        egui::Label::new(
+                            RichText::new(self.board_name)
+                                .size(design::PAGE_TITLE_SIZE)
+                                .strong(),
+                        )
+                        .truncate(),
                     )
                     .on_hover_text(self.board_name);
                 },

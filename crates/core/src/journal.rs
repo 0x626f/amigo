@@ -8,9 +8,30 @@ use std::{
 };
 
 pub mod formatting;
+mod trash;
 
 type Result<T> = std::result::Result<T, String>;
 pub const MAX_NOTE_BYTES: u64 = 8 * 1024 * 1024;
+pub const TRASH_FOLDER: &str = "Trash";
+
+pub fn is_in_trash(path: &str) -> bool {
+    path.split('/')
+        .next()
+        .is_some_and(|folder| folder.eq_ignore_ascii_case(TRASH_FOLDER))
+}
+/// Trash storage IDs avoid collisions; people still see the original filename.
+pub fn entry_name(path: &str) -> &str {
+    let mut name = path.rsplit('/').next().unwrap_or(path);
+    if is_in_trash(path) {
+        while let Some(prefix) = name.get(..37) {
+            if !prefix.ends_with('-') || uuid::Uuid::parse_str(&prefix[..36]).is_err() {
+                break;
+            }
+            name = &name[37..];
+        }
+    }
+    name
+}
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Mode {
@@ -34,6 +55,7 @@ pub struct Preferences {
     pub word_wrap: bool,
     pub preview_font_size: f32,
     pub preview_layout: PreviewLayout,
+    pub preview_editable: bool,
     pub sync_scroll: bool,
     pub line_numbers: bool,
 }
@@ -45,6 +67,7 @@ impl Default for Preferences {
             word_wrap: true,
             preview_font_size: 16.,
             preview_layout: PreviewLayout::SideBySide,
+            preview_editable: false,
             sync_scroll: true,
             line_numbers: true,
         }
@@ -110,9 +133,55 @@ impl Journal {
             return Err("The Journal folder must not be a symbolic link.".into());
         }
         fs::create_dir_all(&root).map_err(|e| e.to_string())?;
-        Ok(Self {
+        let journal = Self {
             root: root.canonicalize().map_err(|e| e.to_string())?,
-        })
+        };
+        journal.prepare_trash()?;
+        Ok(journal)
+    }
+    fn prepare_trash(&self) -> Result<()> {
+        let trash = self.path(TRASH_FOLDER)?;
+        if !trash.exists() {
+            for entry in fs::read_dir(&self.root).map_err(|error| error.to_string())? {
+                let entry = entry.map_err(|error| error.to_string())?;
+                if entry
+                    .file_name()
+                    .to_string_lossy()
+                    .eq_ignore_ascii_case(TRASH_FOLDER)
+                {
+                    let kind = entry.file_type().map_err(|error| error.to_string())?;
+                    if !kind.is_dir() || kind.is_symlink() {
+                        return Err("The Journal Trash must be a regular folder.".into());
+                    }
+                    fs::rename(entry.path(), &trash).map_err(|error| error.to_string())?;
+                    break;
+                }
+            }
+        }
+        fs::create_dir_all(&trash).map_err(|error| error.to_string())?;
+        let legacy = self.root.join(".trash");
+        match fs::symlink_metadata(&legacy) {
+            Ok(meta) if meta.is_dir() && !meta.file_type().is_symlink() => (),
+            Ok(_) => return Err("The old Journal trash must be a regular folder.".into()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error.to_string()),
+        }
+        let mut names: std::collections::BTreeSet<_> = fs::read_dir(&trash)
+            .map_err(|error| error.to_string())?
+            .map(|entry| entry.map(|entry| entry.file_name().to_string_lossy().to_lowercase()))
+            .collect::<std::io::Result<_>>()
+            .map_err(|error| error.to_string())?;
+        for entry in fs::read_dir(&legacy).map_err(|error| error.to_string())? {
+            let entry = entry.map_err(|error| error.to_string())?;
+            let mut name = entry.file_name();
+            while !names.insert(name.to_string_lossy().to_lowercase()) {
+                let mut unique = std::ffi::OsString::from(format!("{}-", id()));
+                unique.push(name);
+                name = unique;
+            }
+            fs::rename(entry.path(), trash.join(name)).map_err(|error| error.to_string())?;
+        }
+        fs::remove_dir(legacy).map_err(|error| error.to_string())
     }
     fn path(&self, value: &str) -> Result<PathBuf> {
         let relative = relative(value)?;
@@ -171,7 +240,7 @@ impl Journal {
         }
         let mut entries = vec![];
         visit(&self.root, &self.root, &mut entries, 0)?;
-        entries.sort_by_key(|e| e.path.to_lowercase());
+        entries.sort_by_key(|e| (is_in_trash(&e.path), e.path.to_lowercase()));
         Ok(entries)
     }
     pub fn read(&self, name: &str) -> Result<Document> {
@@ -279,6 +348,9 @@ impl Journal {
         fs::create_dir(path).map_err(|e| e.to_string())
     }
     pub fn rename(&self, old: &str, name: &str) -> Result<String> {
+        if old.eq_ignore_ascii_case(TRASH_FOLDER) {
+            return Err("The default Trash folder cannot be renamed or moved.".into());
+        }
         let old_path = self.path(old)?;
         let folder = old_path.is_dir();
         let name = if folder || name.to_ascii_lowercase().ends_with(".md") {
@@ -301,28 +373,6 @@ impl Journal {
         )?;
         fs::rename(old_path, new_path).map_err(|e| e.to_string())?;
         Ok(name)
-    }
-    pub fn trash(&self, name: &str) -> Result<()> {
-        let path = self.path(name)?;
-        let trash = self.root.join(".trash");
-        if trash.exists()
-            && fs::symlink_metadata(&trash)
-                .map_err(|e| e.to_string())?
-                .file_type()
-                .is_symlink()
-        {
-            return Err("The Journal trash folder must not be a symbolic link.".into());
-        }
-        fs::create_dir_all(&trash).map_err(|e| e.to_string())?;
-        fs::rename(
-            path,
-            trash.join(format!(
-                "{}-{}",
-                id(),
-                Path::new(name).file_name().unwrap().to_string_lossy()
-            )),
-        )
-        .map_err(|e| e.to_string())
     }
     pub fn import(&self, sources: &[PathBuf], folder: &str) -> Result<Vec<Document>> {
         let mut documents = vec![];
@@ -393,6 +443,7 @@ impl Journal {
             .into_iter()
             .filter(|entry| {
                 !entry.folder
+                    && !is_in_trash(&entry.path)
                     && (entry.path.to_lowercase().contains(&query)
                         || self
                             .read(&entry.path)
@@ -445,7 +496,11 @@ impl Journal {
         }
         let matches: Vec<_> = entries
             .iter()
-            .filter(|e| !e.folder && e.path.rsplit('/').next() == Some(target.as_str()))
+            .filter(|e| {
+                !e.folder
+                    && !is_in_trash(&e.path)
+                    && e.path.rsplit('/').next() == Some(target.as_str())
+            })
             .collect();
         if matches.len() == 1 {
             return self.read(&matches[0].path);
@@ -480,6 +535,157 @@ mod tests {
         (root, journal)
     }
     #[test]
+    fn trash_is_a_default_browsable_folder_and_cannot_be_trashed_or_renamed() {
+        let (root, journal) = library();
+        assert_eq!(
+            journal.entries().unwrap(),
+            vec![Entry {
+                path: TRASH_FOLDER.into(),
+                folder: true
+            }]
+        );
+        journal.create_folder("Work").unwrap();
+        journal.create("Work/Note", "Recover this 🌍").unwrap();
+        journal.trash("Work").unwrap();
+        let entries = journal.entries().unwrap();
+        let note = entries.iter().find(|entry| !entry.folder).unwrap();
+        assert!(is_in_trash(&note.path));
+        assert_eq!(entry_name(&note.path), "Note.md");
+        assert_eq!(journal.read(&note.path).unwrap().text, "Recover this 🌍");
+        assert!(journal.search("Recover").unwrap().is_empty());
+        assert!(journal.follow_link("Other.md", "Note").is_err());
+        assert!(journal.trash(TRASH_FOLDER).is_err());
+        assert!(journal.trash(&note.path).is_err());
+        assert!(journal.rename(TRASH_FOLDER, "Elsewhere").is_err());
+        assert_eq!(Journal::open(&root).unwrap().entries().unwrap(), entries);
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn permanent_deletion_removes_only_trash_items_and_survives_reopening() {
+        let (root, journal) = library();
+        journal.create("Keep", "Active note").unwrap();
+        journal.create("Removed", "Delete this note").unwrap();
+        journal.create_folder("Work").unwrap();
+        journal.create_folder("Work/Deep").unwrap();
+        journal
+            .create("Work/Deep/Note", "Delete this folder")
+            .unwrap();
+        fs::write(root.join("journal/Work/Deep/extra.txt"), "Also remove").unwrap();
+        journal.trash("Removed.md").unwrap();
+        journal.trash("Work").unwrap();
+        let entries = journal.entries().unwrap();
+        let note = &entries
+            .iter()
+            .find(|e| entry_name(&e.path) == "Removed.md")
+            .unwrap()
+            .path;
+        let folder = &entries
+            .iter()
+            .find(|e| entry_name(&e.path) == "Work")
+            .unwrap()
+            .path;
+        for invalid in [
+            "Keep.md",
+            "Trash",
+            "trash",
+            "Trash/../Keep.md",
+            "Trash/",
+            "/Trash",
+        ] {
+            assert!(journal.delete_permanently(invalid).is_err(), "{invalid}");
+        }
+        journal.delete_permanently(note).unwrap();
+        assert!(!root.join("journal").join(note).exists());
+        assert!(journal.read(&format!("{folder}/Deep/Note.md")).is_ok());
+        journal.delete_permanently(folder).unwrap();
+        assert!(!root.join("journal").join(folder).exists());
+        let reopened = Journal::open(&root).unwrap();
+        assert_eq!(reopened.read("Keep.md").unwrap().text, "Active note");
+        assert_eq!(reopened.entries().unwrap().len(), 2);
+        assert!(root.join("journal/Trash").is_dir());
+        assert_eq!(fs::read_dir(root.join("journal/Trash")).unwrap().count(), 0);
+        assert!(reopened.delete_permanently(note).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn permanent_deletion_rejects_symlink_paths_and_never_follows_nested_links() {
+        let (root, journal) = library();
+        let outside = root.join("outside");
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("Keep.md"), "Keep outside").unwrap();
+        let link = root.join("journal/Trash/Link");
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        assert!(journal.delete_permanently("Trash/Link").is_err());
+        assert!(journal.delete_permanently("Trash/Link/Keep.md").is_err());
+        journal.create_folder("Trash/Folder").unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("journal/Trash/Folder/Nested")).unwrap();
+        journal.delete_permanently("Trash/Folder").unwrap();
+        assert!(!root.join("journal/Trash/Folder").exists());
+        assert_eq!(
+            fs::read_to_string(outside.join("Keep.md")).unwrap(),
+            "Keep outside"
+        );
+        assert!(link.symlink_metadata().unwrap().file_type().is_symlink());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn legacy_hidden_trash_migrates_without_overwriting_existing_files_and_only_once() {
+        let (root, _) = library();
+        let visible = root.join("journal/Trash");
+        let legacy = root.join("journal/.trash");
+        fs::create_dir_all(legacy.join("Old folder")).unwrap();
+        fs::write(visible.join("same.md"), "Existing trash").unwrap();
+        fs::write(legacy.join("Same.md"), "Old trash 🌍").unwrap();
+        fs::write(legacy.join("Old folder/Nested.md"), "Nested note").unwrap();
+        let journal = Journal::open(&root).unwrap();
+        assert!(!legacy.exists());
+        assert_eq!(
+            fs::read_to_string(visible.join("same.md")).unwrap(),
+            "Existing trash"
+        );
+        let entries = journal.entries().unwrap();
+        let contents: std::collections::BTreeSet<_> = entries
+            .iter()
+            .filter(|entry| !entry.folder)
+            .map(|entry| journal.read(&entry.path).unwrap().text)
+            .collect();
+        assert_eq!(
+            contents,
+            [
+                "Existing trash".into(),
+                "Old trash 🌍".into(),
+                "Nested note".into()
+            ]
+            .into()
+        );
+        assert!(entries.iter().all(|entry| is_in_trash(&entry.path)));
+        assert_eq!(Journal::open(&root).unwrap().entries().unwrap(), entries);
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn trash_migration_rejects_symlink_directories_and_preserves_outside_files() {
+        let (root, _) = library();
+        let outside = root.join("outside");
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("Keep.md"), "Outside").unwrap();
+        let trash = root.join("journal/Trash");
+        fs::remove_dir(&trash).unwrap();
+        std::os::unix::fs::symlink(&outside, &trash).unwrap();
+        assert!(Journal::open(&root).is_err());
+        fs::remove_file(&trash).unwrap();
+        fs::create_dir(&trash).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("journal/.trash")).unwrap();
+        assert!(Journal::open(&root).is_err());
+        assert_eq!(
+            fs::read_to_string(outside.join("Keep.md")).unwrap(),
+            "Outside"
+        );
+        assert_eq!(fs::read_dir(&outside).unwrap().count(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn markdown_is_plain_unicode_roundtrips_and_preserves_front_matter() {
         let (root, j) = library();
         j.create_folder("Work").unwrap();
@@ -508,9 +714,24 @@ mod tests {
         assert_eq!(j.read(&doc.path).unwrap().text, "external");
         j.trash(&doc.path).unwrap();
         assert!(j.save(&doc.path, "draft", &doc.fingerprint).is_err());
-        assert!(j.entries().unwrap().is_empty());
+        let entries = j.entries().unwrap();
+        assert!(entries.iter().all(|entry| is_in_trash(&entry.path)));
+        assert!(
+            entries
+                .iter()
+                .any(|entry| entry.path == TRASH_FOLDER && entry.folder)
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|entry| !entry.folder && entry_name(&entry.path) == "Note.md")
+        );
         assert_eq!(
-            fs::read_dir(root.join("journal/.trash")).unwrap().count(),
+            j.entries()
+                .unwrap()
+                .iter()
+                .filter(|entry| !entry.folder)
+                .count(),
             1
         );
         fs::remove_dir_all(root).unwrap();
@@ -527,7 +748,14 @@ mod tests {
         let bad = root.join("bad.md");
         fs::write(&bad, [255]).unwrap();
         assert!(j.import(&[source, bad], "").is_err());
-        assert_eq!(j.entries().unwrap().len(), 2);
+        assert_eq!(
+            j.entries()
+                .unwrap()
+                .iter()
+                .filter(|entry| !is_in_trash(&entry.path))
+                .count(),
+            2
+        );
         assert_eq!(j.read("Note.md").unwrap().text, "original");
         fs::remove_dir_all(root).unwrap();
     }
@@ -561,7 +789,13 @@ mod tests {
         fs::create_dir(&outside).unwrap();
         std::os::unix::fs::symlink(&outside, root.join("journal/link")).unwrap();
         assert!(j.create("link/escape", "secret").is_err());
-        assert!(j.entries().unwrap().is_empty());
+        assert_eq!(
+            j.entries().unwrap(),
+            vec![Entry {
+                path: TRASH_FOLDER.into(),
+                folder: true
+            }]
+        );
         fs::remove_dir_all(root).unwrap();
     }
 }
@@ -624,6 +858,7 @@ mod preference_tests {
         assert_eq!(old.preview_layout, PreviewLayout::SideBySide);
         assert_eq!(old.preview_font_size, 16.);
         assert!(!old.word_wrap);
+        assert!(!old.preview_editable);
         assert_eq!(
             serde_json::from_str::<Preferences>(&serde_json::to_string(&old).unwrap()).unwrap(),
             old

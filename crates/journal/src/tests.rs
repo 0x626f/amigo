@@ -1,4 +1,10 @@
 use super::*;
+#[path = "interaction_tests.rs"]
+mod interactions;
+#[path = "list_editing_tests.rs"]
+mod list_editing;
+#[path = "preview_format_tests.rs"]
+mod preview_format;
 struct Harness {
     action: Option<Action>,
     tab: JournalTab,
@@ -25,7 +31,7 @@ fn frame(
     output.textures_delta.clear();
     output
 }
-fn label(output: &egui::FullOutput, text: &str) -> egui::Rect {
+fn label_optional(output: &egui::FullOutput, text: &str) -> Option<egui::Rect> {
     fn find(shape: &egui::Shape, text: &str) -> Option<egui::Rect> {
         match shape {
             egui::Shape::Text(t) if t.galley.text() == text => {
@@ -39,8 +45,10 @@ fn label(output: &egui::FullOutput, text: &str) -> egui::Rect {
         .shapes
         .iter()
         .rev()
-        .find_map(|s| find(&s.shape, text))
-        .unwrap_or_else(|| panic!("Missing {text}"))
+        .find_map(|s| find(&s.shape, text).filter(|rect| s.clip_rect.contains_rect(*rect)))
+}
+fn label(output: &egui::FullOutput, text: &str) -> egui::Rect {
+    label_optional(output, text).unwrap_or_else(|| panic!("Missing {text}"))
 }
 #[test]
 fn context_formatting_and_undo_keep_unicode_selection_and_markdown() {
@@ -199,7 +207,7 @@ fn click(app: &mut Harness, ctx: &egui::Context, pos: egui::Pos2, size: egui::Ve
     }
 }
 #[test]
-fn notebook_keeps_title_borders_and_icon_controls_and_double_click_renames() {
+fn notebook_keeps_title_and_icon_controls_and_double_click_renames() {
     for size in [egui::vec2(680., 500.), egui::vec2(1160., 760.)] {
         let ctx = egui::Context::default();
         design::install(&ctx);
@@ -224,13 +232,37 @@ fn notebook_keeps_title_borders_and_icon_controls_and_double_click_renames() {
             .read_response(egui::Id::new("journal-notebook"))
             .unwrap()
             .rect;
-        let heading = ctx
-            .read_response(egui::Id::new("journal-page-title"))
+        assert!(
+            ctx.read_response(egui::Id::new("journal-page-title"))
+                .is_none()
+        );
+        let open_external = ctx
+            .read_response(egui::Id::new("journal-open-external"))
             .unwrap()
             .rect;
+        assert!(notebook.contains_rect(open_external));
+        assert!((open_external.left() - notebook.left() - 12.).abs() < 2.);
+        assert!((open_external.center().y - title.center().y).abs() < 1.);
+        assert!(open_external.right() < title.left());
         assert!((title.center().x - notebook.center().x).abs() < 1.);
-        assert!(heading.left() < notebook.left() + 1.);
         assert!(notebook.right() <= size.x && notebook.bottom() <= size.y);
+        assert!(
+            ctx.read_response(egui::Id::new(("journal", "rename")))
+                .is_none()
+        );
+        let controls = [
+            egui::Id::new(("journal-mode", Mode::Source)),
+            egui::Id::new(("journal-mode", Mode::Split)),
+            egui::Id::new(("journal-mode", Mode::Preview)),
+        ]
+        .map(|id| ctx.read_response(id).unwrap().rect);
+        for control in controls {
+            assert!(notebook.contains_rect(control));
+            assert!((control.center().y - title.center().y).abs() < 1.);
+        }
+        for pair in controls.windows(2) {
+            assert!(pair[0].right() < pair[1].left());
+        }
         assert!(
             ctx.read_response(egui::Id::new(("journal", "export")))
                 .is_none()
@@ -239,14 +271,35 @@ fn notebook_keeps_title_borders_and_icon_controls_and_double_click_renames() {
         click(&mut app, &ctx, title.center(), size);
         frame(&mut app, &ctx, vec![], size);
         assert!(app.tab.title_edit.is_some());
+        let name_field = ctx
+            .read_response(egui::Id::new("journal-title-edit"))
+            .unwrap()
+            .rect;
+        let save_name = ctx
+            .read_response(egui::Id::new("journal-title-save"))
+            .unwrap()
+            .rect;
+        let cancel_name = ctx
+            .read_response(egui::Id::new("journal-title-cancel"))
+            .unwrap()
+            .rect;
+        assert!(name_field.right() < save_name.left());
+        assert!(cancel_name.right() < controls[0].left());
         assert_eq!(
             ctx.memory(|m| m.focused()),
             Some(egui::Id::new("journal-title-edit"))
         );
+        let cursor = egui::TextEdit::load_state(&ctx, egui::Id::new("journal-title-edit"))
+            .unwrap()
+            .cursor
+            .char_range()
+            .unwrap();
+        assert!(cursor.is_empty());
+        assert_eq!(cursor.primary.index.0, "Original".chars().count());
         frame(
             &mut app,
             &ctx,
-            vec![egui::Event::Text("Renamed 🌍".into())],
+            vec![egui::Event::Text(" revised 🌍".into())],
             size,
         );
         frame(
@@ -262,7 +315,7 @@ fn notebook_keeps_title_borders_and_icon_controls_and_double_click_renames() {
             size,
         );
         assert!(
-            matches!(&app.action, Some(Action::Rename {old, name}) if old == "Folder/Original.md" && name == "Folder/Renamed 🌍")
+            matches!(&app.action, Some(Action::Rename {old, name}) if old == "Folder/Original.md" && name == "Folder/Original revised 🌍")
         );
         assert_eq!(
             app.tab.editor.as_ref().unwrap().document.text,
@@ -296,6 +349,18 @@ fn notebook_keeps_title_borders_and_icon_controls_and_double_click_renames() {
             click(&mut app, &ctx, button.center(), size);
             assert_eq!(app.prefs.mode, mode);
         }
+        for name in ["import", "delete", "rename"] {
+            assert!(
+                ctx.read_response(egui::Id::new(("journal", name)))
+                    .is_none()
+            );
+        }
+        click(&mut app, &ctx, open_external.center(), size);
+        assert!(matches!(&app.action, Some(Action::OpenExternal)));
+        app.tab.editor = None;
+        settle(&mut app, &ctx, size, 4);
+        click(&mut app, &ctx, open_external.center(), size);
+        assert!(matches!(&app.action, Some(Action::OpenExternal)));
     }
 }
 #[test]
@@ -386,6 +451,150 @@ fn settle(app: &mut Harness, ctx: &egui::Context, size: egui::Vec2, frames: usiz
         frame(app, ctx, vec![], size);
     }
 }
+fn select_source(
+    app: &mut Harness,
+    ctx: &egui::Context,
+    size: egui::Vec2,
+    range: std::ops::Range<usize>,
+) {
+    let id = egui::Id::new(("journal-editor", "Note.md"));
+    let mut state = egui::TextEdit::load_state(ctx, id).unwrap();
+    state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::two(
+            egui::text::CCursor::new(range.start),
+            egui::text::CCursor::new(range.end),
+        )));
+    state.store(ctx, id);
+    ctx.memory_mut(|m| m.request_focus(id));
+    settle(app, ctx, size, 4);
+}
+fn choose_language(app: &mut Harness, ctx: &egui::Context, size: egui::Vec2, language: &str) {
+    let mut output = frame(app, ctx, vec![], size);
+    if let Some(item) = label_optional(&output, language) {
+        click(app, ctx, item.center(), size);
+        return;
+    }
+    let scroll_pos = label(&output, "Plain Text").center() + egui::vec2(0., 100.);
+    for _ in 0..6 {
+        if let Some(item) = label_optional(&output, language) {
+            assert!(item.top() >= 0. && item.bottom() <= size.y);
+            click(app, ctx, item.center(), size);
+            return;
+        }
+        frame(
+            app,
+            ctx,
+            vec![
+                egui::Event::PointerMoved(scroll_pos),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    phase: egui::TouchPhase::Move,
+                    delta: egui::vec2(0., -90.),
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+            size,
+        );
+        settle(app, ctx, size, 12);
+        output = frame(app, ctx, vec![], size);
+    }
+    panic!("Missing language {language}");
+}
+#[test]
+fn code_language_picker_inserts_one_fenced_block_changes_language_and_supports_undo() {
+    for size in [egui::vec2(680., 500.), egui::vec2(1160., 760.)] {
+        let ctx = egui::Context::default();
+        design::install(&ctx);
+        let body = "print(\"🌍\")";
+        let mut app = notebook(body.into());
+        app.prefs.mode = Mode::Source;
+        settle(&mut app, &ctx, size, 4);
+        select_source(&mut app, &ctx, size, 0..body.chars().count());
+        for (label_text, language) in [("Python", "python"), ("JavaScript", "javascript")] {
+            let code = ctx
+                .read_response(egui::Id::new("journal-floating-code"))
+                .unwrap()
+                .rect;
+            click(&mut app, &ctx, code.center(), size);
+            settle(&mut app, &ctx, size, 3);
+            choose_language(&mut app, &ctx, size, label_text);
+            settle(&mut app, &ctx, size, 3);
+            let editor = app.tab.editor.as_ref().unwrap();
+            assert_eq!(editor.document.text, format!("```{language}\n{body}\n```"));
+            assert!(!egui::Popup::is_any_open(&ctx));
+            let blocks = pulldown_cmark::Parser::new(&editor.document.text)
+                .filter(|event| {
+                    matches!(
+                        event,
+                        pulldown_cmark::Event::Start(pulldown_cmark::Tag::CodeBlock(_))
+                    )
+                })
+                .count();
+            assert_eq!(blocks, 1);
+        }
+        frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::Key {
+                key: egui::Key::Z,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::COMMAND,
+            }],
+            size,
+        );
+        assert_eq!(
+            app.tab.editor.as_ref().unwrap().document.text,
+            format!("```python\n{body}\n```")
+        );
+    }
+}
+#[test]
+fn grouped_context_submenus_keep_selection_while_choosing_code_language() {
+    let ctx = egui::Context::default();
+    design::install(&ctx);
+    let size = egui::vec2(980., 640.);
+    let mut app = notebook("let n = 1; 🌍".into());
+    app.prefs.mode = Mode::Source;
+    settle(&mut app, &ctx, size, 4);
+    select_source(&mut app, &ctx, size, 0..12);
+    let editor = ctx
+        .read_response(egui::Id::new(("journal-editor", "Note.md")))
+        .unwrap()
+        .rect;
+    let pos = editor.min + egui::vec2(20., 10.);
+    for pressed in [true, false] {
+        frame(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Secondary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+            size,
+        );
+    }
+    for item in ["Blocks", "Code Block"] {
+        settle(&mut app, &ctx, size, 4);
+        let output = frame(&mut app, &ctx, vec![], size);
+        click(&mut app, &ctx, label(&output, item).center(), size);
+    }
+    settle(&mut app, &ctx, size, 4);
+    choose_language(&mut app, &ctx, size, "Rust");
+    assert_eq!(
+        app.tab.editor.as_ref().unwrap().document.text,
+        "```rust\nlet n = 1; 🌍\n```"
+    );
+    settle(&mut app, &ctx, size, 3);
+    assert!(!egui::Popup::is_any_open(&ctx));
+}
 #[test]
 fn floating_toolbar_formats_the_selected_text_and_undo_restores_it() {
     let ctx = egui::Context::default();
@@ -443,6 +652,89 @@ fn floating_toolbar_formats_the_selected_text_and_undo_restores_it() {
         app.tab.editor.as_ref().unwrap().document.text,
         "## Hello 🌍 world"
     );
+}
+#[test]
+fn formatting_controls_detect_existing_styles_toggle_and_preserve_code_with_undo() {
+    for dark in [false, true] {
+        let ctx = egui::Context::default();
+        design::install(&ctx);
+        design::apply_theme(&ctx, dark);
+        let size = egui::vec2(980., 640.);
+        let original = "## **🌍 testing**\n\n```javascript\nconst x = 1;\n```";
+        let mut app = notebook(original.into());
+        settle(&mut app, &ctx, size, 4);
+        select_source(&mut app, &ctx, size, 3..16);
+        assert!(
+            app.tab
+                .editor
+                .as_mut()
+                .unwrap()
+                .formatting_state()
+                .is_active(Format::Bold)
+        );
+        let id = egui::Id::new(("journal-floating-format", "Bold"));
+        click(
+            &mut app,
+            &ctx,
+            ctx.read_response(id).unwrap().rect.center(),
+            size,
+        );
+        assert_eq!(
+            app.tab.editor.as_ref().unwrap().document.text,
+            "## 🌍 testing\n\n```javascript\nconst x = 1;\n```"
+        );
+        frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::Key {
+                key: egui::Key::Z,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::COMMAND,
+            }],
+            size,
+        );
+        assert_eq!(app.tab.editor.as_ref().unwrap().document.text, original);
+        select_source(&mut app, &ctx, size, 0..original.chars().count());
+        let headings = ctx
+            .read_response(egui::Id::new("journal-floating-headings"))
+            .unwrap()
+            .rect;
+        click(&mut app, &ctx, headings.center(), size);
+        settle(&mut app, &ctx, size, 3);
+        let output = frame(&mut app, &ctx, vec![], size);
+        click(&mut app, &ctx, label(&output, "Heading 3").center(), size);
+        assert_eq!(
+            app.tab.editor.as_ref().unwrap().document.text,
+            "### **🌍 testing**\n\n```javascript\nconst x = 1;\n```"
+        );
+        // The toolbar and keyboard both refuse to insert emphasis into code.
+        let text = &app.tab.editor.as_ref().unwrap().document.text;
+        let body = text[..text.find("const").unwrap()].chars().count();
+        select_source(&mut app, &ctx, size, body..body + 5);
+        assert!(!ctx.read_response(id).unwrap().enabled());
+        let revision = app.tab.editor.as_ref().unwrap().revision;
+        let before = app.tab.editor.as_ref().unwrap().document.text.clone();
+        frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::Key {
+                key: egui::Key::B,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::COMMAND,
+            }],
+            size,
+        );
+        let editor = app.tab.editor.as_ref().unwrap();
+        assert_eq!(editor.document.text, before);
+        assert_eq!(
+            editor.revision, revision,
+            "ignored styles must not create edits"
+        );
+    }
 }
 #[test]
 fn split_layout_menu_and_drag_resize_the_actual_panes() {
@@ -620,4 +912,297 @@ fn wikilinks_preserve_relative_links_and_do_not_touch_code_or_front_matter() {
     assert!(source.contains("[My note](amigo-journal://Folder/Note)"));
     assert!(source.contains("[[code]]"));
     assert!(source.contains("[Other](Other%20Note.md)"));
+}
+
+fn preview_key(
+    app: &mut Harness,
+    ctx: &egui::Context,
+    size: egui::Vec2,
+    key: egui::Key,
+    modifiers: egui::Modifiers,
+) {
+    for pressed in [true, false] {
+        frame(
+            app,
+            ctx,
+            vec![egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers,
+            }],
+            size,
+        );
+    }
+}
+fn preview_replace(
+    app: &mut Harness,
+    ctx: &egui::Context,
+    size: egui::Vec2,
+    id: egui::Id,
+    range: std::ops::Range<usize>,
+    value: &str,
+) {
+    let mut state = egui::TextEdit::load_state(ctx, id).unwrap();
+    state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::two(
+            egui::text::CCursor::new(range.start),
+            egui::text::CCursor::new(range.end),
+        )));
+    state.store(ctx, id);
+    ctx.memory_mut(|m| m.request_focus(id));
+    frame(app, ctx, vec![egui::Event::Text(value.into())], size);
+}
+#[test]
+fn preview_text_edits_keep_markdown_sync_and_undo_in_every_layout() {
+    for size in [egui::vec2(980., 640.), egui::vec2(1440., 900.)] {
+        for dark in [false, true] {
+            for (mode, layout) in [
+                (Mode::Preview, PreviewLayout::SideBySide),
+                (Mode::Split, PreviewLayout::SideBySide),
+                (Mode::Split, PreviewLayout::Stacked),
+            ] {
+                let ctx = egui::Context::default();
+                design::install(&ctx);
+                design::apply_theme(&ctx, dark);
+                let original = "---\nprivate: Keep me\n---\n# Heading\n\nHello **bold** and [link](Note.md).\n";
+                let mut app = Harness {
+                    action: None,
+                    tab: JournalTab::default(),
+                    prefs: Preferences {
+                        mode,
+                        preview_editable: true,
+                        preview_layout: layout,
+                        ..Default::default()
+                    },
+                };
+                app.tab.open(Document {
+                    path: "Note.md".into(),
+                    text: original.into(),
+                    fingerprint: "test".into(),
+                });
+                for _ in 0..4 {
+                    frame(&mut app, &ctx, vec![], size);
+                }
+                let output = frame(&mut app, &ctx, vec![], size);
+                click(
+                    &mut app,
+                    &ctx,
+                    label(&output, "Hello bold and link.").center(),
+                    size,
+                );
+                let id = ctx.memory(|m| m.focused()).unwrap();
+                preview_replace(&mut app, &ctx, size, id, 6..10, "brave🌍");
+                let edited = "---\nprivate: Keep me\n---\n# Heading\n\nHello **brave🌍** and [link](Note.md).\n";
+                assert_eq!(app.tab.editor.as_ref().unwrap().document.text, edited);
+                assert!(app.tab.dirty());
+                preview_key(&mut app, &ctx, size, egui::Key::Z, egui::Modifiers::COMMAND);
+                assert_eq!(
+                    app.tab.editor.as_ref().unwrap().document.text,
+                    original,
+                    "{mode:?} {layout:?}"
+                );
+                preview_key(
+                    &mut app,
+                    &ctx,
+                    size,
+                    egui::Key::Z,
+                    egui::Modifiers {
+                        shift: true,
+                        ..egui::Modifiers::COMMAND
+                    },
+                );
+                assert_eq!(app.tab.editor.as_ref().unwrap().document.text, edited);
+                app.prefs.mode = Mode::Source;
+                for _ in 0..3 {
+                    frame(&mut app, &ctx, vec![], size);
+                }
+                assert_eq!(app.tab.editor.as_ref().unwrap().document.text, edited);
+            }
+        }
+    }
+}
+#[test]
+fn preview_code_edits_preserve_fences_and_loading_blocks_input() {
+    let ctx = egui::Context::default();
+    design::install(&ctx);
+    let size = egui::vec2(980., 640.);
+    let original = "```rust\nlet n = 1;\n```\n";
+    let mut app = Harness {
+        action: None,
+        tab: JournalTab::default(),
+        prefs: Preferences {
+            mode: Mode::Preview,
+            preview_editable: true,
+            ..Default::default()
+        },
+    };
+    app.tab.open(Document {
+        path: "Code.md".into(),
+        text: original.into(),
+        fingerprint: "test".into(),
+    });
+    for _ in 0..4 {
+        frame(&mut app, &ctx, vec![], size);
+    }
+    let output = frame(&mut app, &ctx, vec![], size);
+    click(&mut app, &ctx, label(&output, "let n = 1;").center(), size);
+    let id = ctx.memory(|m| m.focused()).unwrap();
+    preview_replace(&mut app, &ctx, size, id, 8..9, "2");
+    assert_eq!(
+        app.tab.editor.as_ref().unwrap().document.text,
+        "```rust\nlet n = 2;\n```\n"
+    );
+    app.tab.loading = true;
+    frame(
+        &mut app,
+        &ctx,
+        vec![egui::Event::Text("Blocked".into())],
+        size,
+    );
+    assert!(
+        !app.tab
+            .editor
+            .as_ref()
+            .unwrap()
+            .document
+            .text
+            .contains("Blocked")
+    );
+    app.tab.loading = false;
+    ctx.memory_mut(|m| m.request_focus(id));
+    frame(&mut app, &ctx, vec![egui::Event::Text("3".into())], size);
+    assert!(
+        app.tab
+            .editor
+            .as_ref()
+            .unwrap()
+            .document
+            .text
+            .contains("23")
+    );
+}
+
+#[test]
+fn preview_table_cells_tasks_and_separate_paragraphs_edit_independently() {
+    let ctx = egui::Context::default();
+    design::install(&ctx);
+    let size = egui::vec2(980., 640.);
+    let mut app = Harness {
+        action: None,
+        tab: JournalTab::default(),
+        prefs: Preferences {
+            mode: Mode::Preview,
+            preview_editable: true,
+            ..Default::default()
+        },
+    };
+    app.tab.open(Document { path: "Note.md".into(), text: "First **paragraph**.\n\nSecond paragraph.\n\n- [ ] Task\n\n| A | B |\n| --- | --- |\n| one | two |\n".into(), fingerprint: "test".into() });
+    for _ in 0..4 {
+        frame(&mut app, &ctx, vec![], size);
+    }
+    let output = frame(&mut app, &ctx, vec![], size);
+    click(
+        &mut app,
+        &ctx,
+        label(&output, "First paragraph.").center(),
+        size,
+    );
+    let first_id = ctx.memory(|m| m.focused()).unwrap();
+    preview_replace(&mut app, &ctx, size, first_id, 6..15, "edited");
+    preview_key(
+        &mut app,
+        &ctx,
+        size,
+        egui::Key::Enter,
+        egui::Modifiers::NONE,
+    );
+    frame(
+        &mut app,
+        &ctx,
+        vec![egui::Event::Text("New line".into())],
+        size,
+    );
+    assert!(
+        app.tab
+            .editor
+            .as_ref()
+            .unwrap()
+            .document
+            .text
+            .starts_with("First **edited\nNew line**."),
+        "{:?}",
+        app.tab.editor.as_ref().unwrap().document.text
+    );
+    let output = frame(&mut app, &ctx, vec![], size);
+    click(
+        &mut app,
+        &ctx,
+        label(&output, "Second paragraph.").center(),
+        size,
+    );
+    let second_id = ctx.memory(|m| m.focused()).unwrap();
+    assert_ne!(first_id, second_id);
+    preview_replace(&mut app, &ctx, size, second_id, 0..6, "Another");
+    let output = frame(&mut app, &ctx, vec![], size);
+    let task = label(&output, "Task");
+    click(
+        &mut app,
+        &ctx,
+        task.left_center() - egui::vec2(28., 0.),
+        size,
+    );
+    assert!(
+        app.tab
+            .editor
+            .as_ref()
+            .unwrap()
+            .document
+            .text
+            .contains("- [x] Task")
+    );
+    preview_key(&mut app, &ctx, size, egui::Key::Z, egui::Modifiers::COMMAND);
+    assert!(
+        app.tab
+            .editor
+            .as_ref()
+            .unwrap()
+            .document
+            .text
+            .contains("- [ ] Task")
+    );
+    preview_key(
+        &mut app,
+        &ctx,
+        size,
+        egui::Key::Z,
+        egui::Modifiers {
+            shift: true,
+            ..egui::Modifiers::COMMAND
+        },
+    );
+    assert!(
+        app.tab
+            .editor
+            .as_ref()
+            .unwrap()
+            .document
+            .text
+            .contains("- [x] Task")
+    );
+    let output = frame(&mut app, &ctx, vec![], size);
+    click(&mut app, &ctx, label(&output, "one").center(), size);
+    let one_id = ctx.memory(|m| m.focused()).unwrap();
+    preview_replace(&mut app, &ctx, size, one_id, 0..3, "1");
+    let output = frame(&mut app, &ctx, vec![], size);
+    click(&mut app, &ctx, label(&output, "two").center(), size);
+    let two_id = ctx.memory(|m| m.focused()).unwrap();
+    assert_ne!(one_id, two_id);
+    preview_replace(&mut app, &ctx, size, two_id, 0..3, "2");
+    let text = &app.tab.editor.as_ref().unwrap().document.text;
+    assert!(text.contains("Another paragraph."), "{text}");
+    assert!(text.contains("| 1 | 2 |"), "{text}");
+    assert!(text.starts_with("First **edited\nNew line**."), "{text}");
 }

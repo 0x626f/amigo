@@ -52,6 +52,51 @@ fn validate(
     Ok(())
 }
 
+fn value_list(ui: &mut egui::Ui, title: &str, values: &mut Vec<StoredValue>) {
+    design::settings_group(ui, title, |ui| {
+        let mut remove = None;
+        let row_width = ui.available_width();
+        let field_width = (row_width - 30. - ui.spacing().item_spacing.x).max(24.);
+        for (index, value) in values.iter_mut().enumerate() {
+            if index > 0 {
+                design::settings_separator(ui);
+            }
+            ui.push_id(&value.id, |ui| {
+                ui.horizontal(|ui| {
+                    ui.set_width(row_width);
+                    ui.add_sized(
+                        [field_width, design::CONTROL_HEIGHT],
+                        design::input(&mut value.name)
+                            .id(egui::Id::new(("finance-category-name", &value.id)))
+                            .desired_width(field_width)
+                            .hint_text("Category Name"),
+                    );
+                    if design::icon_button(
+                        ui,
+                        ui.id().with("remove"),
+                        Icon::Trash,
+                        "Remove Category",
+                        30.,
+                    )
+                    .clicked()
+                    {
+                        remove = Some(value.id.clone());
+                    }
+                });
+            });
+        }
+        if let Some(id) = remove {
+            values.retain(|value| value.id != id);
+        }
+        if design::button(ui, "+ Category").clicked() {
+            values.push(StoredValue {
+                id: id(),
+                name: String::new(),
+            });
+        }
+    });
+}
+
 pub(crate) fn dialog(state: &mut FinanceTab, plan: &mut FinancePlan, ctx: &egui::Context) {
     show_mode(state, plan, ctx, None)
 }
@@ -78,55 +123,17 @@ fn show_mode(
     let inline = embedded.is_some();
     let mut body = |ui: &mut egui::Ui| {
         if inline {
-            ui.heading(format!("{} Categories", draft.view.name()));
+            ui.heading(format!("{} Settings", draft.view.name()));
         } else {
             ui.set_width(design::dialog_width(ctx, 600.0));
             cancel =
                 design::settings_heading(ui, &format!("{} Settings", draft.view.name())).clicked();
         }
-        field_label(ui, "Categories");
         egui::ScrollArea::vertical()
-            .max_height(design::dialog_body_height(ctx))
+            .max_height((design::dialog_body_height(ctx) - 65.).max(140.))
             .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
             .show(ui, |ui| {
-                let mut remove = None;
-                let row_width = ui.available_width();
-                let field_width = (row_width - 30. - ui.spacing().item_spacing.x).max(24.);
-                for category in &mut draft.categories {
-                    ui.push_id(&category.id, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.set_width(row_width);
-                            ui.add_sized(
-                                [field_width, design::CONTROL_HEIGHT],
-                                design::input(&mut category.name)
-                                    .id(egui::Id::new(("finance-category-name", &category.id)))
-                                    .desired_width(field_width)
-                                    .hint_text("Category Name"),
-                            );
-                            if design::icon_button(
-                                ui,
-                                ui.id().with("remove"),
-                                Icon::Trash,
-                                "Remove Category",
-                                30.0,
-                            )
-                            .clicked()
-                            {
-                                remove = Some(category.id.clone());
-                            }
-                        });
-                    });
-                    ui.add_space(10.0);
-                }
-                if let Some(id) = remove {
-                    draft.categories.retain(|c| c.id != id);
-                }
-                if design::button(ui, "+ Category").clicked() {
-                    draft.categories.push(StoredValue {
-                        id: id(),
-                        name: String::new(),
-                    });
-                }
+                value_list(ui, "Categories", &mut draft.categories);
             });
         if !draft.error.is_empty() {
             ui.colored_label(colors(ui).red, &draft.error);

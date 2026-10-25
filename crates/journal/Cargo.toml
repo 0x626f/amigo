@@ -10,4 +10,4 @@ amigo-core.workspace = true
 amigo-ui.workspace = true
 egui.workspace = true
 
-pulldown-cmark = { version = "0.13", default-features = false }
+pulldown-cmark.workspace = true

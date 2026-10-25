@@ -3,13 +3,13 @@ mod controls;
 pub use crate::dialogs::{
     DataAction, NameEdit, data_settings_heading, dialog_body_height, dialog_footer, dialog_heading,
     dialog_primary, dialog_section, dialog_should_close, dialog_width, modal, named_dialog_heading,
-    property_row, settings_heading,
+    property_row, settings_group, settings_heading, settings_row, settings_separator,
 };
 pub use crate::keyboard::{ActionKeys, ActionShortcut, contains_keyboard_focus};
 pub use crate::search::SearchField;
 pub use controls::{
-    Button, button, checkbox, chip, icon_button, menu_button, selected_icon_button, small_button,
-    small_checkbox,
+    Button, button, checkbox, chip, dropdown_button, icon_button, menu_button,
+    selected_icon_button, small_button, small_checkbox,
 };
 use egui::{self, Color32, Rect, RichText, Stroke, StrokeKind, Vec2};
 
@@ -41,51 +41,51 @@ impl Palette {
     pub fn for_dark(dark: bool) -> Self {
         if dark {
             Self {
-                accent: Color32::from_rgb(100, 173, 255),
+                accent: Color32::from_rgb(110, 180, 255),
                 primary: Color32::from_rgb(0, 102, 204),
                 ink: Color32::from_rgb(240, 240, 242),
-                muted: Color32::from_rgb(158, 157, 153),
+                muted: Color32::from_rgb(171, 174, 184),
                 green: Color32::from_rgb(106, 216, 170),
                 red: Color32::from_rgb(255, 143, 154),
                 amber: Color32::from_rgb(234, 187, 111),
-                canvas: Color32::from_rgb(25, 25, 25),
-                sidebar: Color32::from_rgb(31, 31, 30),
-                card: Color32::from_rgb(34, 34, 33),
-                line: Color32::from_rgb(54, 54, 52),
-                blue_tint: Color32::from_rgb(46, 46, 44),
-                column: Color32::from_rgb(30, 30, 29),
-                hover: Color32::from_rgb(46, 46, 44),
-                hover_line: Color32::from_rgb(82, 82, 78),
-                nav_ink: Color32::from_rgb(180, 179, 175),
-                progress: Color32::from_rgb(40, 40, 38),
+                canvas: Color32::from_rgb(24, 25, 28),
+                sidebar: Color32::from_rgb(30, 31, 35),
+                card: Color32::from_rgb(35, 36, 41),
+                line: Color32::from_rgb(55, 57, 64),
+                blue_tint: Color32::from_rgb(37, 55, 78),
+                column: Color32::from_rgb(29, 30, 35),
+                hover: Color32::from_rgb(48, 50, 57),
+                hover_line: Color32::from_rgb(82, 85, 94),
+                nav_ink: Color32::from_rgb(194, 197, 205),
+                progress: Color32::from_rgb(43, 45, 51),
                 violet: Color32::from_rgb(193, 168, 255),
                 violet_tint: Color32::from_rgb(45, 40, 51),
-                field: Color32::from_rgb(30, 30, 29),
-                stripe: Color32::from_rgb(39, 39, 37),
+                field: Color32::from_rgb(29, 30, 35),
+                stripe: Color32::from_rgb(39, 41, 46),
             }
         } else {
             Self {
-                accent: Color32::from_rgb(0, 113, 227),
-                primary: Color32::from_rgb(0, 113, 227),
+                accent: Color32::from_rgb(0, 102, 204),
+                primary: Color32::from_rgb(0, 102, 204),
                 ink: Color32::from_rgb(29, 29, 31),
-                muted: Color32::from_rgb(120, 119, 116),
-                green: Color32::from_rgb(36, 145, 102),
-                red: Color32::from_rgb(211, 77, 87),
-                amber: Color32::from_rgb(188, 130, 34),
+                muted: Color32::from_rgb(101, 103, 110),
+                green: Color32::from_rgb(32, 124, 83),
+                red: Color32::from_rgb(190, 49, 62),
+                amber: Color32::from_rgb(146, 96, 12),
                 canvas: Color32::from_rgb(255, 255, 255),
                 sidebar: Color32::from_rgb(245, 245, 247),
                 card: Color32::WHITE,
-                line: Color32::from_rgb(233, 233, 230),
-                blue_tint: Color32::from_rgb(235, 235, 232),
-                column: Color32::from_rgb(247, 247, 245),
-                hover: Color32::from_rgb(237, 237, 234),
-                hover_line: Color32::from_rgb(211, 210, 205),
-                nav_ink: Color32::from_rgb(100, 99, 95),
-                progress: Color32::from_rgb(239, 239, 236),
-                violet: Color32::from_rgb(121, 93, 190),
+                line: Color32::from_rgb(226, 228, 233),
+                blue_tint: Color32::from_rgb(224, 237, 252),
+                column: Color32::from_rgb(247, 248, 250),
+                hover: Color32::from_rgb(233, 235, 240),
+                hover_line: Color32::from_rgb(205, 208, 216),
+                nav_ink: Color32::from_rgb(80, 82, 90),
+                progress: Color32::from_rgb(233, 235, 240),
+                violet: Color32::from_rgb(112, 70, 180),
                 violet_tint: Color32::from_rgb(244, 241, 248),
                 field: Color32::from_rgb(245, 245, 247),
-                stripe: Color32::from_rgb(250, 250, 248),
+                stripe: Color32::from_rgb(249, 250, 252),
             }
         }
     }
@@ -233,7 +233,7 @@ pub fn panel(ui: &egui::Ui) -> egui::Frame {
     egui::Frame::new()
         .fill(p.card)
         .inner_margin(22)
-        .corner_radius(7)
+        .corner_radius(10)
         .stroke(Stroke::new(1.0, p.line))
         .shadow(shadow())
 }
@@ -244,14 +244,10 @@ pub fn dialog(ctx: &egui::Context) -> egui::Frame {
         .stroke(Stroke::new(1.0, p.line))
         .inner_margin(24)
         .corner_radius(14)
-        .shadow(egui::epaint::Shadow {
-            offset: [0, 12],
-            blur: 45,
-            spread: 2,
-            color: Color32::from_black_alpha(35),
-        })
+        .shadow(ctx.global_style().visuals.window_shadow)
 }
 pub const CONTROL_HEIGHT: f32 = 38.0;
+pub const PAGE_TITLE_SIZE: f32 = 28.0;
 
 /// Keep hints, entered text, and adjacent selectors on the same baseline.
 pub fn input(text: &mut dyn egui::TextBuffer) -> egui::TextEdit<'_> {
@@ -279,10 +275,10 @@ pub fn eyebrow(ui: &mut egui::Ui, text: &str) {
     let p = colors(ui);
     ui.label(
         RichText::new(text)
-            .size(10.0)
+            .size(11.0)
             .strong()
             .color(p.muted)
-            .extra_letter_spacing(1.0),
+            .extra_letter_spacing(0.8),
     );
 }
 pub fn badge(ui: &mut egui::Ui, text: &str, color: Color32) {
@@ -334,9 +330,11 @@ pub enum Icon {
     SplitStacked,
     Preview,
     Book,
+    Note,
     Lock,
     Unlock,
     Refresh,
+    Restore,
     Grip,
     Account,
     Board,
@@ -350,6 +348,7 @@ pub enum Icon {
     Search,
     Check,
     Folder,
+    OpenFile,
     Calendar,
     Email,
     Plus,
@@ -474,11 +473,28 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, kind: Icon, color: Color3
             painter.circle_stroke(p(8., 8.), rect.width() * 2. / 24., stroke);
             line(&[(4., 20.), (13., 11.), (20., 18.)]);
         }
+        Icon::OpenFile => {
+            line(&[(3., 20.), (3., 6.), (10., 6.), (13., 9.), (20., 9.)]);
+            line(&[(3., 20.), (7., 12.), (22., 12.), (18., 20.), (3., 20.)]);
+        }
         Icon::Book => {
             box_at((4., 3.), (20., 21.), 2);
             line(&[(8., 3.), (8., 21.)]);
             line(&[(11., 8.), (17., 8.)]);
             line(&[(11., 12.), (17., 12.)]);
+        }
+        Icon::Note => {
+            line(&[
+                (14., 3.),
+                (5., 3.),
+                (5., 21.),
+                (19., 21.),
+                (19., 8.),
+                (14., 3.),
+            ]);
+            line(&[(14., 3.), (14., 8.), (19., 8.)]);
+            line(&[(8., 12.), (16., 12.)]);
+            line(&[(8., 16.), (16., 16.)]);
         }
         Icon::Lock | Icon::Unlock => {
             box_at((5., 10.), (19., 21.), 2);
@@ -509,6 +525,18 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, kind: Icon, color: Color3
                 (19., 18.),
             ]);
             line(&[(20., 3.), (20., 9.), (14., 9.)]);
+        }
+        Icon::Restore => {
+            line(&[
+                (4., 10.),
+                (8., 6.),
+                (14., 6.),
+                (19., 10.),
+                (19., 16.),
+                (15., 20.),
+                (9., 20.),
+            ]);
+            line(&[(4., 4.), (4., 10.), (10., 10.)]);
         }
         Icon::Grip => {
             for x in [9., 15.] {
@@ -695,6 +723,7 @@ pub fn nav_row(
 pub struct NavRowOptions {
     pub indent: f32,
     pub disclosure: Option<bool>,
+    pub leading_disclosure: bool,
     pub count: Option<usize>,
 }
 pub fn nav_row_with_options(
@@ -707,6 +736,7 @@ pub fn nav_row_with_options(
     let NavRowOptions {
         indent,
         disclosure,
+        leading_disclosure,
         count,
     } = options;
     let p = colors(ui);
@@ -719,12 +749,27 @@ pub fn nav_row_with_options(
         response.hovered(),
         0.16,
     );
-    let bg = p
-        .sidebar
+    let bg = Color32::TRANSPARENT
         .lerp_to_gamma(p.hover, hover_t)
         .lerp_to_gamma(p.blue_tint, selected_t);
-    let color = p.nav_ink.lerp_to_gamma(p.ink, selected_t);
-    ui.painter().rect_filled(rect, 5, bg);
+    let color = p.nav_ink.lerp_to_gamma(p.accent, selected_t);
+    ui.painter().rect_filled(rect, 7, bg);
+    if response.has_focus() {
+        ui.painter().rect_stroke(
+            rect.shrink(1.),
+            7,
+            Stroke::new(1., p.accent),
+            StrokeKind::Inside,
+        );
+    }
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::SelectableLabel,
+            ui.is_enabled(),
+            selected,
+            label,
+        )
+    });
     paint_icon(
         ui.painter(),
         Rect::from_center_size(
@@ -741,7 +786,7 @@ pub fn nav_row_with_options(
             Some(egui::TextWrapMode::Truncate),
             (rect.width()
                 - indent
-                - if count.is_some() || disclosure.is_some() {
+                - if count.is_some() || (disclosure.is_some() && !leading_disclosure) {
                     77.0
                 } else {
                     54.0
@@ -761,8 +806,15 @@ pub fn nav_row_with_options(
         paint_icon(
             ui.painter(),
             Rect::from_center_size(
-                egui::pos2(rect.right() - 17., rect.center().y),
-                Vec2::splat(15.),
+                egui::pos2(
+                    if leading_disclosure {
+                        rect.left() + 5. + indent
+                    } else {
+                        rect.right() - 17.
+                    },
+                    rect.center().y,
+                ),
+                Vec2::splat(if leading_disclosure { 10. } else { 15. }),
             ),
             if open {
                 Icon::ChevronUp
@@ -889,7 +941,12 @@ fn visuals(p: Palette, dark: bool, amount: f32) -> egui::Visuals {
         spread: 2,
         color: Color32::from_black_alpha((35.0 + 50.0 * amount).round() as u8),
     };
-    v.popup_shadow = shadow();
+    v.popup_shadow = egui::epaint::Shadow {
+        offset: [0, 5],
+        blur: 18,
+        spread: 0,
+        color: Color32::from_black_alpha((24.0 + 36.0 * amount).round() as u8),
+    };
     v.warn_fg_color = p.amber;
     v.error_fg_color = p.red;
     for w in [
@@ -941,10 +998,12 @@ pub fn install(ctx: &egui::Context) {
             animation_time: 0.16,
             ..Default::default()
         };
-        style.spacing.item_spacing = Vec2::new(10., 10.);
+        style.spacing.item_spacing = Vec2::new(10., 12.);
+        style.spacing.icon_spacing = 10.;
         style.spacing.button_padding = Vec2::new(14., 9.);
         style.spacing.interact_size.y = CONTROL_HEIGHT;
         style.spacing.window_margin = egui::Margin::same(22);
+        style.spacing.menu_margin = egui::Margin::same(8);
         // Combo-box popups create their own scroll areas; hide those bars too.
         style.spacing.scroll = egui::style::ScrollStyle {
             bar_width: 0.0,
@@ -964,7 +1023,7 @@ pub fn install(ctx: &egui::Context) {
             (egui::TextStyle::Body, 15.),
             (egui::TextStyle::Button, 14.),
             (egui::TextStyle::Small, 13.),
-            (egui::TextStyle::Heading, 32.),
+            (egui::TextStyle::Heading, PAGE_TITLE_SIZE),
         ] {
             style
                 .text_styles
@@ -978,6 +1037,45 @@ pub fn install(ctx: &egui::Context) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn interface_text_remains_readable_on_light_and_dark_surfaces() {
+        fn luminance(color: Color32) -> f64 {
+            let linear = |value: u8| {
+                let value = f64::from(value) / 255.;
+                if value <= 0.04045 {
+                    value / 12.92
+                } else {
+                    ((value + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * linear(color.r()) + 0.7152 * linear(color.g()) + 0.0722 * linear(color.b())
+        }
+        let contrast = |a, b| {
+            let (a, b) = (luminance(a), luminance(b));
+            (a.max(b) + 0.05) / (a.min(b) + 0.05)
+        };
+        for dark in [false, true] {
+            let p = Palette::for_dark(dark);
+            for surface in [p.canvas, p.sidebar, p.card, p.column, p.field, p.blue_tint] {
+                for text in [p.ink, p.muted, p.nav_ink] {
+                    assert!(
+                        contrast(text, surface) >= 4.5,
+                        "dark={dark}, {text:?} on {surface:?}"
+                    );
+                }
+            }
+            for text in [p.accent, p.green, p.red, p.amber, p.violet] {
+                for surface in [p.canvas, p.card, p.field] {
+                    assert!(
+                        contrast(text, surface) >= 4.5,
+                        "dark={dark}, {text:?} on {surface:?}"
+                    );
+                }
+            }
+            assert!(contrast(Color32::WHITE, p.primary) >= 4.5);
+        }
+    }
 
     fn theme_frame(ctx: &egui::Context, time: f64, dark: bool) -> Palette {
         sample_theme_frame(ctx, time, dark).0

@@ -13,7 +13,7 @@ pub fn month() -> String {
     Local::now().format("%Y-%m").to_string()
 }
 /// Persist schema cleanup once when an older vault is opened.
-pub const RECORD_METADATA_VERSION: u32 = 3;
+pub const RECORD_METADATA_VERSION: u32 = 4;
 pub fn month_key(date: &str) -> String {
     chrono::NaiveDate::parse_from_str(date.trim(), "%Y-%m-%d")
         .map(|date| date.format("%Y-%m").to_string())
@@ -75,8 +75,7 @@ record!(Meta {
 });
 record!(Chain {
     id: String,
-    name: String,
-    rpc_url: String
+    name: String
 });
 record!(Currency {
     id: String,
@@ -111,9 +110,16 @@ record!(Income {
 });
 record!(Expense {
     audit: RecordAudit,
-    id: String, title: String, due_date: String, amount: Amount, currency: String, currency_id: String,
-    category: String, category_id: String, priority: String, labels: Vec<String>, label_ids: Vec<String>,
-    applicable: bool, regular: bool,
+    id: String,
+    title: String,
+    due_date: String,
+    amount: Amount,
+    currency: String,
+    currency_id: String,
+    category: String,
+    category_id: String,
+    priority: String,
+    regular: bool,
     regular_until: String,
     cancelled_on: String
 });
@@ -122,7 +128,6 @@ record!(Budget {
     audit: RecordAudit,
     month: String,
     label: String,
-    label_id: String,
     amount: Amount,
     currency: String,
     currency_id: String,
@@ -139,9 +144,17 @@ record!(BudgetExpense {
     audit: RecordAudit
 });
 record!(Saving {
-    audit: RecordAudit, category: String, category_id: String,
-    id: String, source: String, source_id: String, deduct: bool, comment: String,
-    labels: Vec<String>, amount: Amount, currency: String, currency_id: String, label_ids: Vec<String>
+    audit: RecordAudit,
+    category: String,
+    category_id: String,
+    id: String,
+    source: String,
+    source_id: String,
+    deduct: bool,
+    comment: String,
+    amount: Amount,
+    currency: String,
+    currency_id: String
 });
 record!(Account {
     id: String,
@@ -150,8 +163,7 @@ record!(Account {
 });
 record!(FinancePlan {
     version: u32, meta: Meta, chains: Vec<Chain>, currencies: Vec<Currency>, categories: Vec<StoredValue>,
-    clients: Vec<StoredValue>, income_accounts: Vec<StoredValue>, labels: Vec<StoredValue>,
-    expense_labels: Vec<StoredValue>, savings_labels: Vec<StoredValue>, tax_countries: Vec<StoredValue>,
+    clients: Vec<StoredValue>, income_accounts: Vec<StoredValue>, tax_countries: Vec<StoredValue>,
     savings_categories: Vec<StoredValue>, accounts: Vec<Account>,
     fx_rates: Vec<ExchangeRate>, income: Vec<Income>, expenses: Vec<Expense>, budgets: Vec<Budget>, savings: Vec<Saving>
 });
@@ -475,7 +487,7 @@ impl FinancePlan {
         let expense = self
             .expenses
             .iter()
-            .filter(|r| r.includes_month(selected_month) && (!actual || r.regular || r.applicable))
+            .filter(|r| r.includes_month(selected_month))
             .filter(|r| {
                 dates.is_none()
                     || if r.regular {
@@ -558,23 +570,7 @@ impl FinancePlan {
                 });
             }
         }
-        if self.meta.savings_categories_version == 0 {
-            for category in &self.savings_labels {
-                if !self
-                    .savings_categories
-                    .iter()
-                    .any(|c| c.name == category.name)
-                {
-                    self.savings_categories.push(category.clone());
-                }
-            }
-            for saving in &mut self.savings {
-                if saving.category.is_empty() {
-                    saving.category = saving.labels.first().cloned().unwrap_or_default();
-                }
-            }
-            self.meta.savings_categories_version = 1;
-        }
+        self.meta.savings_categories_version = self.meta.savings_categories_version.max(1);
         for row in &mut self.tax_countries {
             if let Some(country) = crate::reference_data::country(&row.name) {
                 row.name = country.name.into();
@@ -612,8 +608,6 @@ impl FinancePlan {
             &mut self.clients,
             &mut self.income_accounts,
             &mut self.tax_countries,
-            &mut self.expense_labels,
-            &mut self.savings_labels,
             &mut self.savings_categories,
         ] {
             for r in list.iter_mut() {
@@ -675,7 +669,6 @@ impl FinancePlan {
             ensure_id(&mut r.id);
             resolve_currency(&mut r.currency, &mut r.currency_id, &currencies);
             resolve(&mut r.category, &mut r.category_id, &mut self.categories);
-            resolve_labels(&mut r.labels, &mut r.label_ids, &mut self.expense_labels);
             if r.priority.is_empty() {
                 r.priority = "Normal".into();
             }
@@ -684,7 +677,6 @@ impl FinancePlan {
             ensure_id(&mut r.id);
             resolve_currency(&mut r.currency, &mut r.currency_id, &currencies);
             resolve(&mut r.source, &mut r.source_id, &mut self.income_accounts);
-            resolve_labels(&mut r.labels, &mut r.label_ids, &mut self.savings_labels);
             resolve(
                 &mut r.category,
                 &mut r.category_id,
@@ -715,8 +707,6 @@ impl FinancePlan {
             &mut self.clients,
             &mut self.income_accounts,
             &mut self.tax_countries,
-            &mut self.expense_labels,
-            &mut self.savings_labels,
             &mut self.savings_categories,
         ] {
             for r in list.iter_mut() {
@@ -724,7 +714,6 @@ impl FinancePlan {
                 r.name = r.name.trim().into();
             }
         }
-        self.labels = self.expense_labels.clone();
         for reference in &self.income_accounts {
             if let Some(account) = self.accounts.iter_mut().find(|r| r.id == reference.id) {
                 account.label = reference.name.clone();
@@ -773,23 +762,6 @@ fn resolve(name: &mut String, reference: &mut String, records: &mut Vec<StoredVa
         });
     }
 }
-fn resolve_labels(names: &mut Vec<String>, ids: &mut Vec<String>, records: &mut Vec<StoredValue>) {
-    for reference in ids.iter() {
-        if let Some(r) = records.iter().find(|r| r.id == *reference)
-            && !names.contains(&r.name)
-        {
-            names.push(r.name.clone());
-        }
-    }
-    names.retain(|s| !s.trim().is_empty());
-    ids.clear();
-    for name in names {
-        let mut reference = String::new();
-        resolve(name, &mut reference, records);
-        ids.push(reference);
-    }
-}
-
 /// Read the original browser format, including its older string lists and token references.
 pub fn plan_from_value(mut value: Value) -> Result<FinancePlan, String> {
     if !value.is_object()
@@ -806,8 +778,6 @@ pub fn plan_from_value(mut value: Value) -> Result<FinancePlan, String> {
         "categories",
         "clients",
         "incomeAccounts",
-        "labels",
-        "expenseLabels",
         "savingsLabels",
         "taxCountries",
         "currencies",
@@ -820,22 +790,8 @@ pub fn plan_from_value(mut value: Value) -> Result<FinancePlan, String> {
             }
         }
     }
-    let legacy_labels = value
-        .get("labels")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
+    migrate_savings_categories(&mut value);
     let object = value.as_object_mut().unwrap();
-    let expense_labels = object
-        .entry("expenseLabels")
-        .or_insert_with(|| Value::Array(vec![]));
-    if let Some(labels) = expense_labels.as_array_mut() {
-        for label in legacy_labels {
-            if !labels.iter().any(|r| r["name"] == label["name"]) {
-                labels.push(label);
-            }
-        }
-    }
     if let Some(tokens) = object
         .remove("currencyTokens")
         .and_then(|v| v.as_array().cloned())
@@ -903,6 +859,53 @@ pub fn plan_from_value(mut value: Value) -> Result<FinancePlan, String> {
     plan.normalize();
     Ok(plan)
 }
+// Convert the former savings labels before serde discards the obsolete properties.
+// This runs only for files predating the separate savings category catalogue.
+fn migrate_savings_categories(value: &mut Value) {
+    if value["meta"]["savingsCategoriesVersion"]
+        .as_u64()
+        .unwrap_or(0)
+        != 0
+    {
+        return;
+    }
+    let labels = value["savingsLabels"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    let mut categories = value["savingsCategories"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    for label in &labels {
+        if !categories
+            .iter()
+            .any(|category| category["name"] == label["name"])
+        {
+            categories.push(label.clone());
+        }
+    }
+    if let Some(rows) = value.get_mut("savings").and_then(Value::as_array_mut) {
+        for row in rows {
+            if row["category"].as_str().unwrap_or("").is_empty()
+                && row["categoryId"].as_str().unwrap_or("").is_empty()
+            {
+                let label = row["labels"]
+                    .as_array()
+                    .and_then(|names| names.first())
+                    .cloned();
+                let reference = row["labelIds"].as_array().and_then(|ids| ids.first());
+                let linked =
+                    reference.and_then(|id| labels.iter().find(|label| label["id"] == *id));
+                if let Some(name) = linked.map(|label| label["name"].clone()).or(label) {
+                    row["category"] = name;
+                }
+            }
+        }
+    }
+    value["savingsCategories"] = Value::Array(categories);
+}
+
 fn json_number(v: &Value) -> f64 {
     v.as_f64()
         .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
@@ -966,7 +969,7 @@ pub fn default_task_statuses() -> Vec<TaskStatus> {
 }
 record!(Task {
     id: String, number: u32, title: String, description: String, status: String, category_id: String, priority: String,
-    labels: Vec<String>, due_date: String, created: String, attachments: Vec<TaskAttachment>
+    due_date: String, created: String, attachments: Vec<TaskAttachment>
 });
 record!(TaskAttachment {
     id: String,

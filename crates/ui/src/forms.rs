@@ -24,30 +24,6 @@ pub fn choice(ui: &mut egui::Ui, salt: &str, value: &mut String, options: &[&str
             }
         });
 }
-pub fn labels_field(ui: &mut egui::Ui, labels: &mut Vec<String>) {
-    let field_id = ui.make_persistent_id("labels-text");
-    let mut text = if ui.memory(|m| m.has_focus(field_id)) {
-        ui.data(|d| d.get_temp::<String>(field_id))
-            .unwrap_or_else(|| labels.join(", "))
-    } else {
-        labels.join(", ")
-    };
-    let response = ui.add(
-        design::input(&mut text)
-            .id(field_id)
-            .hint_text("Labels, separated by commas")
-            .desired_width(f32::INFINITY),
-    );
-    if response.changed() {
-        *labels = text
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-    }
-    ui.data_mut(|d| d.insert_temp(field_id, text));
-}
-
 pub fn priority_color(ui: &egui::Ui, priority: &str) -> Color32 {
     match priority {
         "High" => colors(ui).red,

@@ -4,7 +4,7 @@ default-members = [".", "crates/core", "crates/ui", "crates/tasks", "crates/fina
 resolver = "3"
 
 [workspace.package]
-version = "0.0.1"
+version = "0.0.2"
 edition = "2024"
 license = "GPL-3.0-or-later"
 authors = ["0x626f"]
@@ -24,6 +24,7 @@ base64 = "0.22"
 rand = "0.8"
 zeroize = "1.9"
 egui = "0.36.2"
+pulldown-cmark = { version = "0.13", default-features = false }
 amigo-core = { path = "crates/core" }
 amigo-ui = { path = "crates/ui" }
 amigo-tasks = { path = "crates/tasks" }

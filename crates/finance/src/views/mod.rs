@@ -30,6 +30,7 @@ struct FinanceUi<'a> {
     vault: Option<&'a Vault>,
     keys: design::ActionKeys,
     confirm_all: bool,
+    reference_settings: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug, Hash)]
@@ -43,6 +44,15 @@ pub enum FinanceView {
     Rates,
 }
 impl FinanceView {
+    /// Workspace navigation; Stored Values is managed through Finance settings.
+    pub const NAVIGATION: [Self; 6] = [
+        Self::Wallet,
+        Self::Income,
+        Self::Expenses,
+        Self::Savings,
+        Self::Budgets,
+        Self::Rates,
+    ];
     pub const ALL: [Self; 7] = [
         Self::Wallet,
         Self::Income,
@@ -475,8 +485,12 @@ pub(crate) fn show_tab(
         vault,
         keys,
         confirm_all: false,
+        reference_settings: false,
     };
     show(&mut view, ui);
+    finish_edits(&mut view, ui);
+}
+fn finish_edits(view: &mut FinanceUi<'_>, ui: &mut egui::Ui) {
     let deleting = view
         .state
         .active_row
@@ -484,12 +498,27 @@ pub(crate) fn show_tab(
         .and_then(|key| view.state.drafts.get(key))
         .is_some_and(|draft| draft.delete_confirm);
     if !view.confirm_all && !view.state.drafts.is_empty() && !deleting {
-        view.confirm_all = keys.in_ui(ui, true).confirm;
+        view.confirm_all = view.keys.in_ui(ui, true).confirm;
     }
     if view.confirm_all {
         inline::confirm_pending(view.state, view.plan);
         ui.ctx().request_repaint();
     }
+}
+
+pub(crate) fn stored_values_in(state: &mut FinanceTab, plan: &mut FinancePlan, ui: &mut egui::Ui) {
+    state.view = FinanceView::Storage;
+    let keys = design::ActionKeys::capture(ui.ctx()).blocked(state.currency_editor.is_some());
+    let mut view = FinanceUi {
+        state,
+        plan,
+        vault: None,
+        keys,
+        confirm_all: false,
+        reference_settings: true,
+    };
+    references::settings(&mut view, ui);
+    finish_edits(&mut view, ui);
 }
 impl FinanceUi<'_> {
     fn vault_controls(&mut self, ui: &mut egui::Ui) {

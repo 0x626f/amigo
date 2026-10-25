@@ -7,6 +7,8 @@ description: Apple Human Interface Guidelines (HIG) reference for designing or r
 
 Vendored from [tzzs/apple-design-skill](https://github.com/tzzs/apple-design-skill) under the included [MIT license](LICENSE). For this Rust desktop project, read [Amigo adaptation](references/amigo.md) before applying platform-specific advice.
 
+Upstream references and license were verified on 2026-10-23. [SOURCE.json](SOURCE.json) records the source and downloaded file hashes; local adaptations are listed separately.
+
 This skill distills Apple's official design resources (`developer.apple.com/design/`) into ready-to-use reference material, so you can give interface design and review advice for iOS / iPadOS / macOS / watchOS / visionOS / tvOS apps that is grounded in current official guidance.
 
 ## Grounded, or guessing

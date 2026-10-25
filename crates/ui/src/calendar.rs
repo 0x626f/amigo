@@ -63,6 +63,9 @@ fn picker(
     let width = ui.available_width();
     let response = ui
         .horizontal(|ui| {
+            if compact {
+                ui.spacing_mut().icon_spacing = 6.;
+            }
             let calendar_id = egui::Id::new((id, "calendar"));
             let calendar_size = if compact {
                 18.0
@@ -90,6 +93,7 @@ fn picker(
                     ));
             }
             let output = input.show(ui);
+
             let Some(calendar_rect) = output.response.rect(calendar_id) else {
                 return output.response.response;
             };

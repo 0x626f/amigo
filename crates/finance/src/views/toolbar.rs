@@ -61,7 +61,7 @@ impl FinanceUi<'_> {
                     ui.add(
                         egui::Label::new(
                             RichText::new(title_case(self.state.view.name()))
-                                .size(32.0)
+                                .size(design::PAGE_TITLE_SIZE)
                                 .strong(),
                         )
                         .truncate(),
@@ -274,12 +274,11 @@ impl FinanceUi<'_> {
                 if self.state.view == FinanceView::Storage {
                     field_label(ui, "Reference Type");
                     egui::ComboBox::from_id_salt("stored-value-type")
-                        .selected_text(title_case(
-                            super::references::UNITS[self.state.storage_unit],
-                        ))
+                        .selected_text(title_case(super::references::unit_name(
+                            self.state.storage_unit,
+                        )))
                         .show_ui(ui, |ui| {
-                            for (index, name) in super::references::UNITS.iter().enumerate().take(8)
-                            {
+                            for &(index, name) in &super::references::UNITS {
                                 ui.selectable_value(
                                     &mut self.state.storage_unit,
                                     index,

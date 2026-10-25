@@ -3,6 +3,7 @@ pub mod attachments;
 pub mod audit;
 pub mod backup;
 pub mod credentials;
+pub mod finance_settings;
 pub mod journal;
 pub mod library;
 pub mod model;

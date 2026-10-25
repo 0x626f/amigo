@@ -60,10 +60,8 @@ pub struct CalendarEvent {
     pub account: String,
     pub calendar: String,
     pub remote_id: String,
-    pub etag: String,
     pub title: String,
     pub description: String,
-    pub original_description: String,
     pub description_editable: bool,
     pub location: String,
     pub start: DateTime<Utc>,
@@ -85,10 +83,8 @@ impl Default for CalendarEvent {
             account: String::new(),
             calendar: String::new(),
             remote_id: String::new(),
-            etag: String::new(),
             title: String::new(),
             description: String::new(),
-            original_description: String::new(),
             description_editable: true,
             location: String::new(),
             start,
@@ -304,6 +300,30 @@ pub struct Notification {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn legacy_event_sync_metadata_is_ignored_and_omitted_on_save() {
+        let root = std::env::temp_dir().join(id());
+        let mut organizer: Organizer = serde_json::from_value(serde_json::json!({
+            "version":3,
+            "events":[{"id":"event","remote_id":"feed-event","title":"Meeting",
+                "description":"Edited description","description_editable":false,
+                "etag":"unused-tag","original_description":"Old description"}]
+        }))
+        .unwrap();
+        let event = &mut organizer.events[0];
+        assert_eq!(event.id, "event");
+        assert_eq!(event.remote_id, "feed-event");
+        assert_eq!(event.description, "Edited description");
+        assert!(!event.description_editable);
+        organizer.save(&root).unwrap();
+        let value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.join("organizer.json")).unwrap()).unwrap();
+        assert!(value["events"][0].get("etag").is_none());
+        assert!(value["events"][0].get("original_description").is_none());
+        assert_eq!(Organizer::load(&root).unwrap(), organizer);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn retired_integration_data_survives_saves_but_is_not_shown_or_notified() {
         let root = std::env::temp_dir().join(id());

@@ -242,9 +242,8 @@ impl Amigo {
                         }
                     }
                     finance.view = amigo_finance::FinanceView::Storage;
-                    for unit in 0..9 {
-                        finance.storage_unit = unit;
-                        prepare(&mut |ui| finance.show(&mut workspace.finance, vault.as_ref(), ui));
+                    for page in amigo_finance::FinanceReference::ALL {
+                        prepare(&mut |ui| finance.reference_in(page, &mut workspace.finance, ui));
                     }
                 }
                 jobs
@@ -311,7 +310,7 @@ mod tests {
             assert!(text_rect_optional(&output, "Loading workspace…").is_none());
         }
         app.finance.view = amigo_finance::FinanceView::Storage;
-        for unit in 0..9 {
+        for unit in [0, 1, 2, 3, 4, 5, 7] {
             app.finance.storage_unit = unit;
             let _ = render_frame(&mut app, &ctx, vec![]);
             assert!(

@@ -125,13 +125,15 @@ fn show_mode(
         egui::ScrollArea::both()
             .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
             .id_salt("board-settings-content")
-            .max_height((design::dialog_body_height(ctx) - 130.0).max(140.0))
+            .max_height((design::dialog_body_height(ctx) - 110.0).max(160.0))
             .show(ui, |ui| {
-                if editor.categories_tab {
-                    categories(&mut editor, workspace, ui);
-                } else {
-                    statuses(&mut editor, ui);
-                }
+                design::settings_group(ui, "", |ui| {
+                    if editor.categories_tab {
+                        categories(&mut editor, workspace, ui);
+                    } else {
+                        statuses(&mut editor, ui);
+                    }
+                });
                 removal_confirmation(&mut editor, workspace, ui);
             });
         if editor.categories_tab {
@@ -317,6 +319,11 @@ fn statuses(editor: &mut BoardEditor, ui: &mut egui::Ui) {
                     .union(completed.rect)
                     .union(order.response.rect)
                     .union(delete.rect);
+                ui.painter().hline(
+                    row_rect.x_range(),
+                    row_rect.top() - 6.,
+                    egui::Stroke::new(1., colors(ui).line),
+                );
                 ui.interact(
                     row_rect,
                     egui::Id::new(("status-row", &status.id)),
@@ -398,8 +405,8 @@ fn categories(editor: &mut BoardEditor, workspace: &Workspace, ui: &mut egui::Ui
     egui::Grid::new("category-settings-table")
         .spacing([14.0, 12.0])
         .show(ui, |ui| {
-            for category in &mut editor.categories {
-                ui.add_sized(
+            for (index, category) in editor.categories.iter_mut().enumerate() {
+                let field = ui.add_sized(
                     [340.0, design::CONTROL_HEIGHT],
                     design::input(&mut category.name)
                         .id(egui::Id::new(("category-name", &category.id)))
@@ -417,7 +424,15 @@ fn categories(editor: &mut BoardEditor, workspace: &Workspace, ui: &mut egui::Ui
                             .count()
                     ),
                 );
-                if design::button(ui, "Delete…").clicked() {
+                let delete = design::button(ui, "Delete…");
+                if index > 0 {
+                    ui.painter().hline(
+                        field.rect.left()..=delete.rect.right(),
+                        field.rect.top() - 6.,
+                        egui::Stroke::new(1., colors(ui).line),
+                    );
+                }
+                if delete.clicked() {
                     editor.removing_category = Some(category.id.clone());
                     editor.removing_status = None;
                     ui.memory_mut(|m| {

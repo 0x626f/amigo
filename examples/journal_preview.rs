@@ -15,8 +15,10 @@ struct Preview {
     board: String,
     vault: String,
     code_document: Document,
+    trash_document: Document,
+    entries: Vec<amigo_core::journal::Entry>,
 }
-const SCENES: [&str; 12] = [
+const SCENES: [&str; 26] = [
     "journal-split",
     "journal-preview",
     "journal-source",
@@ -29,9 +31,114 @@ const SCENES: [&str; 12] = [
     "journal-selection",
     "journal-stacked",
     "journal-code",
+    "journal-search",
+    "journal-open-external",
+    "journal-trash",
+    "journal-trash-delete",
+    "journal-tree-menu",
+    "calendar-settings",
+    "finance-settings",
+    "expense-settings",
+    "savings-settings",
+    "currencies-settings",
+    "chains-settings",
+    "clients-settings",
+    "accounts-settings",
+    "countries-settings",
 ];
 impl App for Preview {
     fn raw_input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
+        if self.step == 1 && std::env::args().any(|a| a == "--edit-preview") {
+            let pos = if self.frames == 9 {
+                ctx.read_response(egui::Id::new("journal-preview-edit"))
+                    .map(|r| r.rect.center())
+            } else if self.frames == 12 {
+                ctx.read_response(egui::Id::new("journal-preview-pane"))
+                    .map(|r| {
+                        let content = (r.rect.width() - 48.).clamp(60., 820.);
+                        egui::pos2(
+                            r.rect.left() + (r.rect.width() - content) / 2. + 60.,
+                            r.rect.top() + 76.,
+                        )
+                    })
+            } else {
+                None
+            };
+            if let Some(pos) = pos {
+                input.events.push(egui::Event::PointerMoved(pos));
+                for pressed in [true, false] {
+                    input.events.push(egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    });
+                }
+            }
+            if self.frames == 14 {
+                for pressed in [true, false] {
+                    input.events.push(egui::Event::Key {
+                        key: egui::Key::A,
+                        physical_key: None,
+                        pressed,
+                        repeat: false,
+                        modifiers: egui::Modifiers::COMMAND,
+                    });
+                }
+            }
+        }
+        if matches!(self.step, 14 | 16) && self.frames == 1 {
+            input.events.push(egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        if ((self.step == 15 && self.frames == 5) || (self.step == 16 && self.frames == 5))
+            && let Some(response) = ctx.read_response(egui::Id::new((
+                if self.step == 15 {
+                    "journal-note-trash"
+                } else {
+                    "journal-entry-menu"
+                },
+                if self.step == 16 {
+                    "Projects"
+                } else {
+                    &self.trash_document.path
+                },
+            )))
+        {
+            let pos = response.rect.center();
+            input.events.push(egui::Event::PointerMoved(pos));
+            for pressed in [true, false] {
+                input.events.push(egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+        }
+        if self.step == 12
+            && self.frames == 5
+            && let Some(response) = ctx.read_response(egui::Id::new("journal-search-open"))
+        {
+            let pos = response.rect.center();
+            input.events.push(egui::Event::PointerMoved(pos));
+            for pressed in [true, false] {
+                input.events.push(egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+        }
+        if self.step == 12 && self.frames == 9 {
+            input.events.push(egui::Event::Text("plan".into()));
+        }
         if self.step == 9
             && self.frames == 5
             && let Some(response) = ctx.read_response(egui::Id::new(("journal-mode", Mode::Split)))
@@ -53,13 +160,13 @@ impl App for Preview {
         {
             let id = egui::Id::new(("journal-editor", &editor.document.path));
             if let Some(mut state) = egui::TextEdit::load_state(ctx, id) {
-                let byte = editor.document.text.find("your ideas").unwrap();
+                let byte = editor.document.text.find("Markdown").unwrap();
                 let start = editor.document.text[..byte].chars().count();
                 state
                     .cursor
                     .set_char_range(Some(egui::text::CCursorRange::two(
                         egui::text::CCursor::new(start),
-                        egui::text::CCursor::new(start + 10),
+                        egui::text::CCursor::new(start + 8),
                     )));
                 state.store(ctx, id);
                 ctx.memory_mut(|m| m.request_focus(id));
@@ -150,8 +257,16 @@ impl App for Preview {
             )
             .unwrap();
             println!("Captured {}", path.display());
+            egui::Popup::close_all(ui.ctx());
             self.app.close_settings();
             self.step += 1;
+            if self.step == 3 && std::env::args().any(|a| a == "--list-editing") {
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                return;
+            }
+            if std::env::args().any(|a| a == "--settings") && self.step == 8 {
+                self.step = 17;
+            }
             self.frames = 0;
             self.pending = false;
             if self.step == SCENES.len() {
@@ -169,12 +284,52 @@ impl App for Preview {
             if self.step == 11 {
                 self.app.journal.open(self.code_document.clone());
             }
+            if self.step == 13 {
+                self.app.journal.choose_external_destination(
+                    self.output.join("External.md"),
+                    String::new(),
+                    String::new(),
+                );
+            }
+            if matches!(self.step, 14 | 15) {
+                self.app.journal.open(self.trash_document.clone());
+                // Keep the Trash controls in view in the compact preview too.
+                self.app
+                    .journal
+                    .entries
+                    .retain(|entry| amigo_core::journal::is_in_trash(&entry.path));
+            }
+            if self.step == 16 {
+                self.app.journal.entries = self.entries.clone();
+                self.app.journal.open(self.code_document.clone());
+            }
             let page = match self.step {
                 3 => Some(SettingsPage::Tasks),
                 4 => Some(SettingsPage::Updates),
                 5 => Some(SettingsPage::Journal),
                 6 => Some(SettingsPage::Board(self.board.clone())),
                 7 => Some(SettingsPage::Vault(self.vault.clone())),
+                17 => Some(SettingsPage::Calendar),
+                18 => Some(SettingsPage::Finance),
+                19 => Some(SettingsPage::Expenses(self.vault.clone())),
+                20 => Some(SettingsPage::Savings(self.vault.clone())),
+                21 => Some(SettingsPage::FinanceReference(
+                    amigo_finance::FinanceReference::Currencies,
+                )),
+                22 => Some(SettingsPage::FinanceReference(
+                    amigo_finance::FinanceReference::Chains,
+                )),
+                23 => Some(SettingsPage::Reference(
+                    self.vault.clone(),
+                    amigo_finance::FinanceReference::Clients,
+                )),
+                24 => Some(SettingsPage::Reference(
+                    self.vault.clone(),
+                    amigo_finance::FinanceReference::Accounts,
+                )),
+                25 => Some(SettingsPage::FinanceReference(
+                    amigo_finance::FinanceReference::Countries,
+                )),
                 _ => None,
             };
             if let Some(page) = page {
@@ -201,9 +356,19 @@ fn main() -> eframe::Result {
     );
     let output = PathBuf::from(std::env::args().nth(1).expect("Pass screenshot directory"));
     std::fs::create_dir_all(&output).unwrap();
+    std::fs::write(
+        output.join("External.md"),
+        "# An external Markdown note\n\nChoose a Journal folder for this copy.\n",
+    )
+    .unwrap();
     let library = Library::open(library::default_root(), None).unwrap();
     let journal = Journal::open(&library.root).unwrap();
-    let text = "---\ntags: [planning, journal]\n---\n# A place to think\n\nKeep your ideas close, in plain **Markdown**.\n\n## Today's focus\n\n- [x] Bring settings into one place\n- [x] Keep notes as portable `.md` files\n- [ ] Plan the next small improvement\n\n> Start with a clear thought. Leave room for the next one.\n\n## Working notes\n\nUse **bold** for decisions, *italics* for emphasis, and `code` for details.\nSelect text and right-click to format it.\n\n| View | Best for |\n| --- | --- |\n| Markdown | Writing without distraction |\n| Preview | Reading the finished note |\n| Split | Seeing changes as you write |\n\n## Next steps\n\nOpen [[Projects/Ideas|project ideas]] or [the daily note](Daily.md).\n";
+    let text = "---\ntags: [planning, journal]\n---\n# A place to think\n\nKeep your ideas close, in plain **Markdown**.\n\n## Today's focus\n\n- [x] Bring settings into one place\n- [x] Keep notes as portable `.md` files\n- [ ] Plan the next small improvement\n\n> Start with a clear thought. Leave room for the next one.\n\n## Working notes\n\nUse **bold** for decisions, *italics* for emphasis, and `code` for details.\nEdit here or format Markdown in the source pane.\n\n| View | Best for |\n| --- | --- |\n| Markdown | Writing without distraction |\n| Preview | Writing in the finished note |\n| Split | Seeing changes as you write |\n\n## Next steps\n\nOpen [[Projects/Ideas|project ideas]] or [the daily note](Daily.md).\n";
+    let text = if std::env::args().any(|a| a == "--list-editing") {
+        "# Lists that keep flowing\n\n- First bullet\n- \n\n1. First numbered item\n2. \n\n- [x] A finished task\n- [ ] \n\n> Enter continues the list. Enter on the empty item finishes it.\n"
+    } else {
+        text
+    };
     journal.create_folder("Projects").unwrap();
     journal
         .create(
@@ -215,8 +380,20 @@ fn main() -> eframe::Result {
         .create("Daily", "# Daily note\n\nA fresh page.\n")
         .unwrap();
     let document = journal.create("Welcome", text).unwrap();
-    let code_document = journal.create("Code", "# Code and tables\n\nReadable code blocks keep their language and a copy action.\n\n```rust\npub fn greeting(name: &str) -> String {\n    let message = \"Hello from Amigo\";\n    format!(\"{message}, {name}!\")\n}\n```\n\n## Planning together\n\n| Feature | State | Notes |\n| --- | --- | --- |\n| **Editor** | Ready | Syntax, line numbers, selection toolbar |\n| **Preview** | Ready | Clear headings and real bold text |\n\n> Plain Markdown, kept in your own notebook.\n").unwrap();
+    let code_document = journal.create("Code", "# Code and tables\n\nReadable code blocks keep their language and a copy action.\n\n```rust\npub fn greeting(name: &str) -> String {\n    let message = \"Hello from Amigo\";\n    format!(\"{message}, {name}!\")\n}\n```\n\n## Planning together\n\n| Feature | State | Notes |\n| --- | --- | --- |\n| **Editor** | Ready | Syntax, line numbers, selection toolbar |\n| **Preview** | Ready | Editable headings and formatted text |\n\n> Plain Markdown, kept in your own notebook.\n").unwrap();
+    journal.create_folder("Discarded").unwrap();
+    journal.create("Discarded/Old plan", "# Old plan\n\nThis note is in Trash. Restore the note or its folder, or remove it permanently.\n").unwrap();
+    journal.trash("Discarded").unwrap();
     let entries = journal.entries().unwrap();
+    let trash_document = journal
+        .read(
+            &entries
+                .iter()
+                .find(|entry| amigo_core::journal::is_in_trash(&entry.path) && !entry.folder)
+                .unwrap()
+                .path,
+        )
+        .unwrap();
     let board = library.settings.board.clone();
     let vault = library.settings.vault.clone();
     let options = eframe::NativeOptions {
@@ -237,17 +414,27 @@ fn main() -> eframe::Result {
             app.workspace.dark_mode = std::env::args().any(|a| a == "--dark");
             app.section = Section::Journal;
             app.journal.open(document);
-            app.journal.entries = entries;
+            app.journal.entries = entries.clone();
             app.journal.loaded = true;
             Ok(Box::new(Preview {
                 app,
                 output,
-                step: 0,
+                step: if std::env::args().any(|a| a == "--settings") {
+                    3
+                } else if std::env::args().any(|a| a == "--tree-menu") {
+                    16
+                } else if std::env::args().any(|a| a == "--trash") {
+                    14
+                } else {
+                    0
+                },
                 frames: 0,
                 pending: false,
                 board,
                 vault,
                 code_document,
+                trash_document,
+                entries,
             }))
         }),
     )

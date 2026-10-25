@@ -362,6 +362,19 @@ fn calendar_delete_preserves_journal_boards_vaults_and_telegram_and_setup_roundt
     let journal = crate::journal::Journal::open(&library.root).unwrap();
     let note = "---\ntags: [notes]\n---\n# Journal 🌍\n\n**Markdown**\n";
     journal.create("Note", note).unwrap();
+    journal.create_folder("Projects").unwrap();
+    journal.create_folder("Projects/Discarded").unwrap();
+    journal
+        .create("Projects/Discarded/Restore", "Restorable after backup")
+        .unwrap();
+    journal.trash("Projects/Discarded").unwrap();
+    let trashed = journal
+        .entries()
+        .unwrap()
+        .into_iter()
+        .find(|entry| entry.folder && crate::journal::entry_name(&entry.path) == "Discarded")
+        .unwrap()
+        .path;
     let mut organizer = Organizer {
         name: "Work Calendar".into(),
         ..Default::default()
@@ -411,5 +424,11 @@ fn calendar_delete_preserves_journal_boards_vaults_and_telegram_and_setup_roundt
             .unwrap()
             .text,
         note
+    );
+    let restored = crate::journal::Journal::open(&dest.root).unwrap();
+    assert_eq!(restored.restore(&trashed).unwrap(), "Projects/Discarded");
+    assert_eq!(
+        restored.read("Projects/Discarded/Restore.md").unwrap().text,
+        "Restorable after backup"
     );
 }

@@ -1,0 +1,25 @@
+{
+  "source": "https://github.com/tzzs/apple-design-skill",
+  "branch": "main",
+  "verified_on": "2026-10-23",
+  "license": "MIT",
+  "upstream_files_sha256": {
+    "SKILL.md": "849ee2f5320bbc9362cb1960631f5697baf309510824ed97d54724144237c304",
+    "LICENSE": "928a6e490cc3d4cd470dc9256e92f1120213c43d46d8831cdb58578d14a299a2",
+    "references/accessibility.md": "19d1a8162dd7e571caacb58281dd24b51b2abdd6b3c6c3dfbd58220cca4aab84",
+    "references/app-icons.md": "ff0f239acaeb5561ba902e0662c28f23b745dc6e6ee2efa90f4e5015c3926627",
+    "references/components.md": "083b7b92ef9c3065f31abc780a4d663c93f47a8884f05b26a17a0931570bba38",
+    "references/hig-sitemap.md": "d61b29fedeee8a8e5ff36463455d77e198070de568bf5bb517b8f404feace7eb",
+    "references/layout.md": "77bb4a1289dffa92a73aeeff602398eefb37d32bd57ac292936f58a6b9a67bf9",
+    "references/materials-color.md": "69a254138b7273027b6873fd9287cfa61a175f05efc3152a0328feaee58b8981",
+    "references/patterns-gestures.md": "40827582d32e82df262c9b6f3725fae221acc73eac8f7529589997813e39c298",
+    "references/platforms.md": "2d0b578e492e966939aa492aa7ddea6bf7c884e9479468795775d3310414354b",
+    "references/principles.md": "2f59dfa2f8f61369e3b34d35b76255c4aa202803625af50f431ba33900063ca1",
+    "references/resources.md": "cfca867bb3c4522d59c9b60dc2bbe0b3c2d3ea334450bc03b94120841d796a6c",
+    "references/typography-symbols.md": "034d3cfb80680a0854ee32595ece053aac9a3cf7500a4778b5f95a938cbb1d54"
+  },
+  "local_adaptations": [
+    "SKILL.md adds upstream attribution, the verification record, and a link to the Amigo adaptation.",
+    "references/amigo.md adapts the guidance for the Rust/egui desktop app."
+  ]
+}

@@ -327,6 +327,9 @@ impl Archive {
             &settings_path,
             &serde_json::to_vec_pretty(&settings).map_err(|e| e.to_string())?,
         )?;
+        if let Scope::Vault(id) = &self.scope {
+            Library::unavailable(stage.0.clone()).forget_finance_vault(id)?;
+        }
         validate_library(&stage.0)?;
         Ok(stage)
     }
@@ -379,6 +382,7 @@ fn validate_library(root: &Path) -> Result<Library> {
         vaults: vec![],
     };
     library.refresh()?;
+    library.finance_settings()?;
     if library.boards.is_empty()
         || library.vaults.is_empty()
         || !library.boards.iter().any(|b| b.id == settings.board)

@@ -32,10 +32,50 @@ struct Preview {
     protected_vault: Option<library::Vault>,
     vault_id: String,
 }
+fn preview_click(input: &mut egui::RawInput, pos: egui::Pos2) {
+    input.events.push(egui::Event::PointerMoved(pos));
+    for pressed in [true, false] {
+        input.events.push(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+}
 impl App for Preview {
     fn raw_input_hook(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
         if self.app.is_page_loading() {
             return;
+        }
+        if self.finance_reference_scenes && self.step == 1 {
+            let currency = self
+                .app
+                .workspace
+                .finance
+                .currencies
+                .iter()
+                .find(|c| c.name == "USDC")
+                .unwrap();
+            if let (Some(row), Some(list)) = (
+                ctx.read_response(egui::Id::new(("stored-value-currency", &currency.id))),
+                ctx.read_response(egui::Id::new("stored-values-list")),
+            ) {
+                if self.frames == 3 && !list.rect.contains(row.rect.center()) {
+                    input
+                        .events
+                        .push(egui::Event::PointerMoved(list.rect.center()));
+                    input.events.push(egui::Event::MouseWheel {
+                        unit: egui::MouseWheelUnit::Point,
+                        phase: egui::TouchPhase::Move,
+                        delta: egui::vec2(0., list.rect.bottom() - row.rect.bottom() - 20.),
+                        modifiers: egui::Modifiers::NONE,
+                    });
+                }
+                if self.frames == 15 {
+                    preview_click(input, row.rect.center());
+                }
+            }
         }
         if self.finance_settings && self.frames == 5 {
             self.app.open_settings(app::SettingsPage::Finance);
@@ -367,12 +407,17 @@ impl App for Preview {
             3 => finance_ui::FinanceView::Expenses,
             4 => finance_ui::FinanceView::Savings,
             5 => finance_ui::FinanceView::Budgets,
-            6 => finance_ui::FinanceView::Storage,
+
             7 => finance_ui::FinanceView::Rates,
             8 => finance_ui::FinanceView::Income,
             9 => finance_ui::FinanceView::Expenses,
             _ => finance_ui::FinanceView::Wallet,
         };
+        if self.frames == 0 && self.step == 6 {
+            self.app.open_settings(app::SettingsPage::FinanceReference(
+                finance_ui::FinanceReference::Currencies,
+            ));
+        }
         if self.frames == 0 && (8..10).contains(&self.step) {
             let record = if self.step == 8 {
                 finance_ui::Record::Income(self.app.workspace.finance.income[0].clone())
@@ -427,38 +472,24 @@ impl App for Preview {
         if self.finance_reference_scenes {
             self.app.section = app::Section::Finance;
             self.app.finance.view = if self.step < 2 {
-                finance_ui::FinanceView::Storage
+                finance_ui::FinanceView::Wallet
             } else {
                 finance_ui::FinanceView::Rates
             };
-            self.app.finance.storage_unit = 0;
-            if self.step == 1 && self.frames == 0 {
-                let currency = self
-                    .app
-                    .workspace
-                    .finance
-                    .currencies
-                    .iter()
-                    .find(|c| c.name == "USDC")
-                    .unwrap()
-                    .clone();
-                self.app
-                    .finance
-                    .edit_record(finance_ui::Record::Currency(currency), false);
+            if self.step < 2 && self.frames == 0 {
+                self.app.open_settings(app::SettingsPage::FinanceReference(
+                    finance_ui::FinanceReference::Currencies,
+                ));
             }
         }
         if self.finance_country_scenes {
             self.app.section = app::Section::Finance;
-            self.app.finance.view = if self.step < 2 {
-                finance_ui::FinanceView::Income
-            } else {
-                finance_ui::FinanceView::Storage
-            };
-            if self.step == 2 {
-                self.app.finance.storage_unit = 5;
-                if self.frames == 0 {
-                    egui::Popup::close_all(ui.ctx());
-                }
+            self.app.finance.view = finance_ui::FinanceView::Income;
+            if self.step == 2 && self.frames == 0 {
+                egui::Popup::close_all(ui.ctx());
+                self.app.open_settings(app::SettingsPage::FinanceReference(
+                    finance_ui::FinanceReference::Countries,
+                ));
             }
         }
         if self.wallet_chart {
@@ -467,8 +498,13 @@ impl App for Preview {
         }
         if self.stored_accounts {
             self.app.section = app::Section::Finance;
-            self.app.finance.view = finance_ui::FinanceView::Storage;
-            self.app.finance.storage_unit = 4;
+            self.app.finance.view = finance_ui::FinanceView::Wallet;
+            if self.frames == 0 {
+                self.app.open_settings(app::SettingsPage::Reference(
+                    self.vault_id.clone(),
+                    finance_ui::FinanceReference::Accounts,
+                ));
+            }
         }
         if self.structure_scenes {
             self.app.section = if self.step == 5 {
@@ -644,7 +680,7 @@ fn main() -> eframe::Result {
             "currencies":["EUR","USD"], "categories":["Home", "Subscriptions"],
             "fxRates":[{"date":date,"currency":"EUR","rate":1.10}],
             "income":[{"date":date,"source":"Consulting", "account":"Main account", "grossAmount":4800,"currency":"EUR","appliedTax":20,"withdrawFee":1,"received":true}, {"date":date,"source":"Side project","grossAmount":550,"currency":"USD","received":false}],
-            "expenses":[{"title":"Rent", "dueDate":date,"amount":950,"currency":"EUR","category":"Home","labels":["Essential"],"regular":true,"applicable":true}, {"title":"Cloud hosting","dueDate":date,"amount":35,"currency":"USD","category":"Subscriptions","labels":["Tools"],"priority":"Low","regular":true}],
+            "expenses":[{"title":"Rent", "dueDate":date,"amount":950,"currency":"EUR","category":"Home","regular":true}, {"title":"Cloud hosting","dueDate":date,"amount":35,"currency":"USD","category":"Subscriptions","priority":"Low","regular":true}],
             "savings":[{"source":"Main account","amount":6400,"currency":"EUR","labels":["Emergency"],"comment":"Six-month emergency reserve.\n\nKeep this balance available for unexpected repairs, medical costs, or changes in income. Review the target every quarter.\n\nTarget: six months of essential expenses.\nNext review: January 2027."}],
             "budgets":[{"month":month,"label":"Weekend in Lisbon","amount":1500,"currency":"EUR","expenses":[{"id":"hotel-preview","label":"Hotel · 3 nights","amount":420,"currency":"EUR","comment":"Riverside hotel, breakfast included.\n\nCheck-in after 15:00. Keep the confirmation and contact the hotel about late arrival.\nFree cancellation until one week before the trip.","audit":{"createdAt":format!("{date}T12:00:00Z")}}, {"id":"flight-preview","label":"Return flights","amount":220,"currency":"USD","comment":"Cabin luggage included.","audit":{"createdAt":format!("{date}T12:00:00Z")}}]}]
         })).unwrap();
@@ -684,40 +720,20 @@ fn main() -> eframe::Result {
                         amount: model::Amount::Number(
                             1200.0 + (index % 5) as f64 * 150.0 + (index % 7) as f64 * 90.0,
                         ),
-                        applicable: true,
                         ..Default::default()
                     });
                 }
             }
-            for (number, status, title, priority, labels) in [
-                (
-                    1,
-                    0,
-                    "Explore ideas for the next side project",
-                    "Low",
-                    vec!["Ideas"],
-                ),
-                (2, 1, "Plan the week ahead", "High", vec!["Personal"]),
-                (3, 1, "Review subscriptions", "Medium", vec!["Finance"]),
-                (
-                    4,
-                    2,
-                    "Build a calmer daily routine",
-                    "Medium",
-                    vec!["Personal"],
-                ),
-                (
-                    5,
-                    3,
-                    "Set up the personal workspace",
-                    "Low",
-                    vec!["Workspace"],
-                ),
+            for (number, status, title, priority) in [
+                (1, 0, "Explore ideas for the next side project", "Low"),
+                (2, 1, "Plan the week ahead", "High"),
+                (3, 1, "Review subscriptions", "Medium"),
+                (4, 2, "Build a calmer daily routine", "Medium"),
+                (5, 3, "Set up the personal workspace", "Low"),
             ] {
                 let mut task = model::Task::new(number, model::DEFAULT_STATUS_IDS[status]);
                 task.title = title.into();
                 task.priority = priority.into();
-                task.labels = labels.into_iter().map(String::from).collect();
                 if custom_board {
                     task.category_id = match number {
                         1 => "work",
@@ -729,9 +745,6 @@ fn main() -> eframe::Result {
                     if number == 4 {
                         task.status = "review".into();
                     }
-                    task.labels.retain(|label| {
-                        !["Personal", "Finance", "Workspace"].contains(&label.as_str())
-                    });
                 }
                 app.workspace.tasks.push(task);
             }

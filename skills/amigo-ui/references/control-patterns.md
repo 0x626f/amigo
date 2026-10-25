@@ -44,7 +44,7 @@ Keyboard ownership comes from `amigo_ui::design::ActionKeys`; look at `crates/ui
 
 When adding a column, update the header list and `record_cells` in the same order, including the unnamed actions cell. Adjust `column_widths` only if the content needs a meaningful weight or minimum width. Keep computed and editable cells inside those shared bounds.
 
-Nested budget expenses reuse the table cell primitives. Stored Values → Accounts is a Label-only table using the same account IDs as Income/Savings references. Wallet has no account list. Test these embedded tables after scrolling; settling layout and scroll animation may require several frames.
+Nested budget expenses reuse the table cell primitives. Settings → Finance → the vault → Accounts is a Label-only table using the same account IDs as Income/Savings references. Wallet has no account list. Test these embedded tables after scrolling; settling layout and scroll animation may require several frames.
 
 Current table typography intentionally becomes more compact at narrow widths. Keep the complete heading available on hover and ensure full values can be read or edited. A compact header is not permission to clip a control.
 
@@ -57,3 +57,7 @@ Existing examples are in `crates/finance/src/views/tests.rs`, `crates/tasks/src/
 - For centered text, use the rendered galley’s actual rectangle translated by its paint position; its local origin can be offset.
 - Include long labels/comments and more rows than fit vertically when these affect the change.
 - Use the same public shell/tab APIs in previews. Build with `cargo build --locked --example preview` and run with a fresh `AMIGO_DATA_FILE` under a temporary directory. Read `README.md` for the scene flags; `--compact` and `--dark` cover the main layout variants.
+
+Dropdown captions reserve an arrow gutter and truncate within it. Keep at least an 8-pixel visible gap before the arrow; short currency codes must fit at compact table widths. Shared ComboBoxes use a 10-pixel icon gap, while the compact date picker uses 6 pixels to retain centered dates. Settings groups use 16-pixel horizontal and 12-pixel vertical insets with 8 pixels between rows.
+
+Journal preview uses frameless text inputs with rendered Markdown typography. Keep paragraph separation, task-checkbox gutters, and top-aligned table cells; give every cell a distinct input ID. The preview stays flush with the workspace and the split divider remains its only outer pane border.

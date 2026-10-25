@@ -144,6 +144,9 @@ jobs:
       - name: Record checksums and source commit
         run: python -B scripts/distribute.py prepare
 
+      - name: Validate packaged contents and native containers
+        run: python -B scripts/validate_packages.py dist --native
+
       - uses: actions/upload-artifact@v7
         with:
           name: amigo-${{ matrix.platform }}-${{ matrix.arch }}

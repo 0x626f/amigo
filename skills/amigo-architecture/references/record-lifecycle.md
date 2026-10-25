@@ -8,7 +8,7 @@ Use this checklist selectively for persisted Finance changes; task-specific data
 2. Keep stable record/reference IDs. Add normalization where needed, ensuring a second normalize/load does not regenerate IDs, reset edits, or recreate deliberately removed defaults.
 3. Distinguish legacy inference from new data. Use creation audits for new financial records; do not restamp an existing record when editing or refreshing its rates. A copied transaction is a new record.
 4. Share domain calculations through core methods. If a field participates in totals, update all relevant summaries/charts through those methods, including missing-rate behavior.
-5. Inspect seed and migration markers. When a normalized upgrade must be persisted even without user edits, check the shell’s `last_saved` baseline handling on initial load and vault unlock. `meta.record_metadata_version` (currently `RECORD_METADATA_VERSION = 3`) coordinates this; update its writers and tests together if a new migration requires a version change.
+5. Inspect seed and migration markers. When a normalized upgrade must be persisted even without user edits, check the shell’s `last_saved` baseline handling on initial load and vault unlock. `meta.record_metadata_version` (currently `RECORD_METADATA_VERSION = 4`) coordinates this; update its writers and tests together if a new migration requires a version change.
 
 ## Inline Finance integration
 
@@ -26,13 +26,13 @@ Names are editable display data; IDs maintain relationships. Update ID-based ren
 
 Account details in `FinancePlan.accounts` and the older `income_accounts` reference list deliberately share IDs. Wallet account commits update both; normalization keeps Income/Savings links and account metadata consistent. Stored Values editing/deletion must use the same lifecycle, not resurrect a deleted account or recreate removed account properties.
 
-Expense categories, savings categories, expense labels, and country entries are distinct catalogues. Do not resolve a free-form budget label through an expense-label catalogue. Country selection is constrained, but a migration preserves unrecognized historical data until an edit can validate it.
+Expense categories, savings categories, and country entries are distinct catalogues. Budget labels remain free text; obsolete label catalogues and label IDs are removed. Country selection is constrained, but a migration preserves unrecognized historical data until an edit can validate it.
 
 ## Disk and encrypted payloads
 
 Plain-vault record collections are enumerated by `RECORDS` in `crates/core/src/library.rs`. Add a new standalone collection to both plain writing/reading and record-order preservation through this list. Old vaults can lack the new directory; loading must still work.
 
-References and transaction collections serialize through the same FinancePlan for encrypted vaults. Verify all new fields survive encrypted round trips and remain absent from plaintext while the vault is encrypted. Use existing atomic writes and interrupted-conversion recovery.
+`finance_settings.rs` owns library-wide currencies, chains, countries, migration aliases, and per-vault reference usage in `finance.json`. Merge and hydrate references at vault open/unlock; keep record autosave and global catalogue updates serialized. Setup backups include the canonical catalogue. Vaults retain portable snapshots, and transactions and their reference snapshots serialize through the same FinancePlan for encrypted vaults. Verify all new fields survive encrypted round trips and remain absent from plaintext while the vault is encrypted. Use existing atomic writes and interrupted-conversion recovery.
 
 Board tasks use Markdown front matter for structured metadata and a heading/body for title/description. File attachments live in the board-owned attachment folder and are referenced by metadata, not embedded as large serialized byte arrays.
 
