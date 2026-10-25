@@ -33,7 +33,8 @@ class PackageValidationTests(unittest.TestCase):
             self.assertEqual(child.returncode, 0)
             self.assertFalse(app.exists())
 
-    @unittest.skipUnless(shutil.which("ar") and shutil.which("zstd"), "requires Linux DEB inspection tools")
+    @unittest.skipUnless(sys.platform == "linux" and shutil.which("ar") and shutil.which("zstd"),
+                         "requires native Linux DEB inspection tools")
     def test_zstd_deb_payload_is_readable_before_python_314(self):
         with tempfile.TemporaryDirectory(prefix="amigo-zstd-deb-") as temp:
             root = Path(temp)
@@ -62,6 +63,20 @@ class PackageValidationTests(unittest.TestCase):
         self.assertEqual(validate.elf_sections(binary), validate.elf_sections(stripped))
         stripped[192:196] = b"evil"
         self.assertNotEqual(validate.elf_sections(binary), validate.elf_sections(stripped))
+
+    def test_appimage_symbol_section_indices_may_be_reordered_without_changing_symbols(self):
+        binary = bytearray(256)
+        binary[:6] = b"\x7fELF\x02\x01"
+        struct.pack_into("<Q", binary, 40, 64)
+        struct.pack_into("<HH", binary, 58, 64, 1)
+        struct.pack_into("<IQQQQ", binary, 68, 11, 2, 0x1000, 192, 24)
+        struct.pack_into("<IBBHQQ", binary, 192, 0, 3, 0, 26, 0x2000, 0)
+        relocated = bytearray(binary)
+        struct.pack_into("<H", relocated, 198, 19)
+        self.assertNotEqual(validate.elf_sections(binary), validate.elf_sections(relocated))
+        self.assertEqual(validate.elf_sections(binary, relocated=True), validate.elf_sections(relocated, relocated=True))
+        struct.pack_into("<Q", relocated, 200, 0x3000)
+        self.assertNotEqual(validate.elf_sections(binary, relocated=True), validate.elf_sections(relocated, relocated=True))
 
     def fixture(self, platform="windows", arch="x86_64"):
         temp = tempfile.TemporaryDirectory(prefix="amigo-validation-test-")

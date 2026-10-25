@@ -87,8 +87,14 @@ def elf_sections(binary, relocated=False):
         if flags & 2:  # SHF_ALLOC: retained program data and code, including the build ID.
             if relocated and kind in (3, 6):  # patchelf adds AppImage RPATH to DYNSTR / DYNAMIC.
                 continue
+            payload = binary[start:start + length] if kind != 8 else b""
+            if relocated and kind == 11:  # DYNSYM section indices follow patchelf's reordered section table.
+                payload = bytearray(payload)
+                for symbol in range(0, len(payload), 24):
+                    payload[symbol + 6:symbol + 8] = b"\0\0"
+                payload = bytes(payload)
             sections.append((kind, flags, 0 if relocated else address, length,
-                             binary[start:start + length] if kind != 8 else b""))
+                             payload))
     require(sections, "ELF has no allocated sections")
     return sorted(sections)
 
