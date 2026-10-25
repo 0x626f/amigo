@@ -229,7 +229,7 @@ builds packages, validates their contents and native containers, and uploads wor
 
 The interface follows Apple-inspired macOS conventions: borderless buttons, rounded controls, blue primary actions, restrained hover/press feedback, and a quiet sidebar. Selected navigation rows use a blue tint and accent icon; inactive rows inherit their container. Page headings share a consistent type scale, and muted labels remain readable in both themes. Text inputs use soft surfaces, while keyboard focus remains visible. Dialogs keep clear headings, grouped fields, readable labels, and fixed Save/Cancel actions; menus and dialogs use theme-aware shadows. Use **Light / Dark** at the bottom of the sidebar; the saved appearance transitions smoothly without rebuilding the font atlas. Shared egui helpers keep all four tabs consistent. Adwaita Sans is bundled under the SIL Open Font License; see `crates/ui/assets/fonts/LICENSE`. The project includes an MIT-licensed [Apple design skill](skills/apple-design/SKILL.md), with upstream attribution, a [verified source record](skills/apple-design/SOURCE.json), and [Amigo-specific guidance and review](skills/apple-design/references/amigo.md).
 
-Open **Settings** in the action row immediately below the Amigo title. The same row contains **Import Amigo Setup** and **Export Amigo Setup**. One settings window contains Tasks and its boards, Calendar, Finance and its vaults/categories, Journal, and Updates. Board and vault drafts survive navigation between settings pages; Save commits the current page, while closing the window discards unconfirmed drafts.
+Open **Settings** beside the Amigo title and logo. **Import Amigo Setup** and **Export Amigo Setup** are inside App Settings, before Close. One settings window contains Tasks and its boards, Calendar, Finance and its vaults/categories, Journal, and Updates. Board and vault drafts survive navigation between settings pages; Save commits the current page, while closing the window discards unconfirmed drafts.
 
 **Settings → Calendar** contains URL subscriptions, refresh timing, and Telegram notifications. **Settings → Finance** owns exchange refresh timing (60 seconds by default). **Settings → Journal** sets the default editor mode, font size, and wrapping. Confirmed changes autosave; periodic directory polling remains disabled.
 
@@ -445,9 +445,11 @@ python3 -B -m unittest discover -s scripts -p 'test_*.py'
 
 The [native CI workflow](.github/workflows/ci.yml) runs these checks, compiles the
 preview examples, and creates packages on Linux, macOS, and Windows for x86_64 and
-ARM64. Package-helper tests validate ZIP contents, app-bundle metadata, architecture
-checks, and release integrity using synthetic files. Native desktop behavior and
-OS trust/signing prompts still require platform testing.
+ARM64. Package-helper tests exercise integrity failures with synthetic files.
+The built packages also undergo architecture, source, checksum, and content checks,
+AppImage extraction, macOS DMG/signature verification, and Windows installation
+and uninstallation on their native runners. Native desktop behavior and OS
+trust/signing prompts still require platform testing.
 
 The regular tests cover calculations, historical FX selection, recurrence, persistence, encryption, reference renames, custom statuses and reassignment, category filtering, Markdown editing, automatic migration, board/vault switching, encrypted vault locking and password prompts, and pointer-driven board settings, task editing, and drag-and-drop. Optional checks require Node.js (independent browser Web Crypto compatibility) and network access (live fiat rates):
 
