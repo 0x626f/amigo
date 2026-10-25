@@ -92,7 +92,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libgl1-mesa-dev libegl1-mesa-dev libdbus-1-dev xdg-utils xdg-desktop-portal desktop-file-utils binutils rpm dpkg
+          sudo apt-get install -y build-essential pkg-config libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev libgl1-mesa-dev libegl1-mesa-dev libdbus-1-dev xdg-utils xdg-desktop-portal desktop-file-utils binutils rpm rpm2cpio dpkg
           curl --fail --location --retry 3 "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${{ matrix.arch }}.AppImage" --output "$RUNNER_TEMP/linuxdeploy"
           chmod +x "$RUNNER_TEMP/linuxdeploy"
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"

@@ -14,6 +14,20 @@ import validate_packages as validate
 
 
 class PackageValidationTests(unittest.TestCase):
+    def test_elf_comparison_ignores_stripped_symbols_but_detects_changed_code(self):
+        binary = bytearray(256)
+        binary[:6] = b"\x7fELF\x02\x01"
+        struct.pack_into("<Q", binary, 40, 64)
+        struct.pack_into("<HH", binary, 58, 64, 2)
+        struct.pack_into("<IQQQQ", binary, 68, 1, 2, 0x1000, 192, 4)
+        struct.pack_into("<IQQQQ", binary, 132, 2, 0, 0, 196, 4)
+        binary[192:200] = b"codeSYMS"
+        stripped = bytearray(binary)
+        stripped[196:200] = b"none"
+        self.assertEqual(validate.elf_sections(binary), validate.elf_sections(stripped))
+        stripped[192:196] = b"evil"
+        self.assertNotEqual(validate.elf_sections(binary), validate.elf_sections(stripped))
+
     def fixture(self, platform="windows", arch="x86_64"):
         temp = tempfile.TemporaryDirectory(prefix="amigo-validation-test-")
         self.addCleanup(temp.cleanup)

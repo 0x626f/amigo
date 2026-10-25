@@ -6,7 +6,6 @@ setup in a temporary directory. Use it on disposable native CI runners.
 """
 
 import argparse
-import hashlib
 import io
 import json
 from pathlib import Path
@@ -52,6 +51,42 @@ def deb_part(path, prefix):
     return subprocess.check_output(["ar", "p", str(path), matches[0]])
 
 
+def rpm_payload(path):
+    """Read newc records without extracting paths or depending on cpio."""
+    payload = subprocess.check_output(["rpm2cpio", str(path)])
+    files, offset = {}, 0
+    while offset + 110 <= len(payload):
+        header = payload[offset:offset + 110]
+        require(header[:6] in (b"070701", b"070702"), "Invalid RPM cpio payload")
+        size, namesize = int(header[54:62], 16), int(header[94:102], 16)
+        name = payload[offset + 110:offset + 110 + namesize - 1].decode()
+        offset = (offset + 110 + namesize + 3) & ~3
+        if name == "TRAILER!!!":
+            return files
+        require(offset + size <= len(payload), "Truncated RPM cpio payload")
+        if int(header[14:22], 16) & 0o170000 == 0o100000:
+            files[name.removeprefix("./")] = payload[offset:offset + size]
+        offset = (offset + size + 3) & ~3
+    raise ValueError("Missing RPM cpio trailer")
+
+
+def elf_sections(binary, relocated=False):
+    """Compare loaded ELF sections; RPM may strip nonloaded symbol tables again."""
+    require(binary[:6] == b"\x7fELF\x02\x01", "Expected little-endian ELF64")
+    offset = struct.unpack_from("<Q", binary, 40)[0]
+    size, count = struct.unpack_from("<HH", binary, 58)
+    sections = []
+    for index in range(count):
+        kind, flags, address, start, length = struct.unpack_from("<IQQQQ", binary, offset + index * size + 4)
+        if flags & 2:  # SHF_ALLOC: retained program data and code, including the build ID.
+            if relocated and kind in (3, 6):  # patchelf adds AppImage RPATH to DYNSTR / DYNAMIC.
+                continue
+            sections.append((kind, flags, 0 if relocated else address, length,
+                             binary[start:start + length] if kind != 8 else b""))
+    require(sections, "ELF has no allocated sections")
+    return sorted(sections)
+
+
 def linux_packages(folder, stem, arch, version, native):
     with tarfile.open(fileobj=io.BytesIO(deb_part(folder / (stem + ".deb"), "data.tar"))) as archive:
         members = {item.name.removeprefix("./"): item for item in archive.getmembers()}
@@ -73,11 +108,12 @@ def linux_packages(folder, stem, arch, version, native):
         identity = dist.output("rpm", "-qp", "--qf", "%{NAME}|%{VERSION}|%{ARCH}|%{LICENSE}", rpm)
         require(identity == f"amigo|{version}|{arch}|GPL-3.0-or-later", "RPM identity mismatch")
         dist.run("rpm", "--checksig", "--nosignature", rpm)
-        hashes = dist.output("rpm", "-qp", "--qf", "[%{FILENAMES}|%{FILEDIGESTS}\n]", rpm)
-        rpm_files = dict(line.split("|", 1) for line in hashes.splitlines())
+        rpm_files = rpm_payload(rpm)
+        require(architecture(rpm_files["usr/bin/amigo"], "linux") == arch, "RPM executable architecture mismatch")
         for name, member in members.items():
             if member.isfile():
-                require(rpm_files.get("/" + name) == hashlib.sha256(read(name)).hexdigest(),
+                require(elf_sections(rpm_files[name]) == elf_sections(binary) if name == "usr/bin/amigo"
+                        else rpm_files.get(name) == read(name),
                         f"RPM and DEB payload differ: {name}")
     with tarfile.open(fileobj=io.BytesIO(deb_part(folder / (stem + ".deb"), "control.tar"))) as archive:
         member, = [item for item in archive.getmembers() if item.name.removeprefix("./") == "control"]
@@ -94,7 +130,10 @@ def linux_packages(folder, stem, arch, version, native):
             image.chmod(0o755)
             dist.run(str(image.resolve()), "--appimage-extract", cwd=temp, stdout=subprocess.DEVNULL)
             root = Path(temp) / "squashfs-root"
-            require((root / "usr/bin/amigo").read_bytes() == binary, "AppImage executable differs from DEB/RPM")
+            image_binary = (root / "usr/bin/amigo").read_bytes()
+            require(architecture(image_binary, "linux") == arch and
+                    elf_sections(image_binary, relocated=True) == elf_sections(binary, relocated=True),
+                    "AppImage executable differs from DEB/RPM")
             documents(lambda name: (root / name).read_bytes(), "usr/share/doc/amigo/")
             require(not list((root / "usr/lib").glob("libwayland-*.so*")), "AppImage bundles host Wayland libraries")
 
