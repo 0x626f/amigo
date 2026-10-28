@@ -25,6 +25,7 @@ mod autosave;
 mod journal;
 mod library_ui;
 mod settings;
+mod squidy;
 mod updates;
 pub use settings::SettingsPage;
 mod loading;
@@ -42,6 +43,7 @@ pub enum Section {
     Calendar,
     Finance,
     Journal,
+    Squidy,
 }
 pub struct Amigo {
     pub workspace: Workspace,
@@ -52,6 +54,8 @@ pub struct Amigo {
     productivity: organizer::Productivity,
     pub section: Section,
     pub journal: amigo_journal::JournalTab,
+    pub squidy: amigo_squidy::SquidyTab,
+    squidy_io: squidy::SquidyIo,
     app_settings: Option<settings::AppSettings>,
     updates: updates::Updates,
     journal_io: journal::JournalIo,
@@ -70,6 +74,7 @@ pub struct Amigo {
     page_loader: loading::PageLoader,
     transfers: transfers::Transfers,
     notifications: notifications::Notifications,
+    media_context: Option<egui::Context>,
     pub message: String,
     pub error: String,
 }
@@ -175,6 +180,8 @@ impl Amigo {
             vault_job: None,
             section: Section::Tasks,
             journal: Default::default(),
+            squidy: Default::default(),
+            squidy_io: Default::default(),
             app_settings: None,
             updates: Default::default(),
             journal_io: Default::default(),
@@ -186,6 +193,7 @@ impl Amigo {
             page_loader: loading::PageLoader::default(),
             transfers: transfers::Transfers::default(),
             notifications: notifications::Notifications::default(),
+            media_context: None,
             message: String::new(),
             error,
         }
@@ -297,6 +305,7 @@ impl Amigo {
                             (Section::Calendar, "Calendar", Icon::Calendar),
                             (Section::Finance, "Finance", Icon::Wallet),
                             (Section::Journal, "Journal", Icon::Book),
+                            (Section::Squidy, "Squidy", Icon::Link),
                         ] {
                             if design::nav_row(ui, label, icon, self.section == section, None)
                                 .clicked()
@@ -319,6 +328,11 @@ impl Amigo {
                             Section::Journal => {
                                 if let Some(action) = self.journal.sidebar(ui) {
                                     self.journal_action(action, ui.ctx());
+                                }
+                            }
+                            Section::Squidy => {
+                                if let Some(action) = self.squidy.sidebar(ui) {
+                                    self.squidy_action(action, ui.ctx());
                                 }
                             }
                         }
@@ -350,6 +364,7 @@ impl Amigo {
     }
     fn render(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
+        self.media_context.get_or_insert_with(|| ctx.clone());
         design::apply_theme(&ctx, self.workspace.dark_mode);
         ui.set_style(ctx.global_style());
         self.poll_transfer();
@@ -364,13 +379,16 @@ impl Amigo {
             });
             ctx.request_repaint_after(Duration::from_millis(50));
             self.show_notifications(&ctx);
+            amigo_ui::media::finish_frame(&ctx);
             return;
         }
         self.tick_journal(&ctx);
+        self.tick_squidy(&ctx);
         self.journal_close_request(&ctx);
         self.tick_updates(&ctx);
         if self.updates.applying() {
             self.installation_ui(ui);
+            amigo_ui::media::finish_frame(&ctx);
             ctx.request_repaint_after(Duration::from_millis(100));
             return;
         }
@@ -438,6 +456,10 @@ impl Amigo {
                     {
                         self.error = error;
                     }
+                } else if self.section == Section::Squidy {
+                    if let Some(action) = self.squidy.show(ui) {
+                        self.squidy_action(action, &ctx);
+                    }
                 } else if self.vault_unlocked {
                     let vault = self.current_vault().cloned();
                     self.finance
@@ -469,6 +491,11 @@ impl Amigo {
             self.calendar_action(action);
         }
         self.journal_dialogs(&ctx);
+        if self.section == Section::Squidy
+            && let Some(action) = self.squidy.dialogs(&ctx)
+        {
+            self.squidy_action(action, &ctx);
+        }
         self.app_settings_ui(&ctx);
         self.library_dialog_ui(&ctx);
         self.transfer_ui(&ctx);
@@ -489,6 +516,7 @@ impl Amigo {
         }
         self.show_notifications(&ctx);
         self.update_notice(&ctx);
+        amigo_ui::media::finish_frame(&ctx);
     }
 }
 impl eframe::App for Amigo {
@@ -496,7 +524,11 @@ impl eframe::App for Amigo {
         self.render(ui);
     }
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        if let Some(ctx) = &self.media_context {
+            amigo_ui::media::shutdown(ctx);
+        }
         self.finish_journal();
+        self.flush_squidy();
         self.finish_transfer();
         self.save_local();
     }

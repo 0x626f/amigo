@@ -62,7 +62,7 @@ fn job(
     });
 }
 
-fn open_default(path: &Path) -> Result<(), String> {
+pub fn open_default(path: &Path) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     let result = Command::new("gio")
         .arg("open")
@@ -202,6 +202,17 @@ pub(super) fn poll(state: &mut TasksTab, editor: &mut TaskEditor) -> bool {
                         FileResult::Opened(Err(error)) => editor.attachment_error = error,
                         FileResult::Opened(Ok(())) => editor.attachment_error.clear(),
                         FileResult::Imported(Ok(batch)) => {
+                            for file in &batch.files {
+                                if amigo_core::media::kind(&file.name).is_some() {
+                                    editor.draft.description.push_str(&format!(
+                                        "\n\n{}\n",
+                                        amigo_core::media::embed(
+                                            &file.name,
+                                            &amigo_core::media::target(file, 0)
+                                        )
+                                    ));
+                                }
+                            }
                             editor.draft.attachments.extend(batch.files.clone());
                             editor.pending_attachments.clear();
                             editor.imported_attachments.push(batch);
@@ -327,9 +338,28 @@ fn show_content(state: &mut TasksTab, editor: &mut TaskEditor, ui: &mut egui::Ui
                 remove = Some(attachment.id.clone());
             }
         });
+        if amigo_core::media::kind(&attachment.name).is_some()
+            && editor.description_editor.editing
+            && let Some(root) = &state.board_folder
+        {
+            amigo_ui::media::show(
+                ui,
+                &amigo_ui::media::Location {
+                    root: root.clone(),
+                    base: root.clone(),
+                },
+                &amigo_core::media::target(attachment, 0),
+            );
+        }
         ui.add_space(8.0);
     }
     if let Some(id) = remove {
+        if let Some(file) = editor.draft.attachments.iter().find(|a| a.id == id) {
+            amigo_core::media::remove_embeds(
+                &mut editor.draft.description,
+                &amigo_core::media::target(file, 0),
+            );
+        }
         editor.draft.attachments.retain(|a| a.id != id);
     }
     let mut remove = None;
@@ -355,6 +385,18 @@ fn show_content(state: &mut TasksTab, editor: &mut TaskEditor, ui: &mut egui::Ui
                 remove = Some(index);
             }
         });
+        if amigo_core::media::kind(&name).is_some()
+            && let Some(parent) = path.parent()
+        {
+            amigo_ui::media::show(
+                ui,
+                &amigo_ui::media::Location {
+                    root: parent.to_owned(),
+                    base: parent.to_owned(),
+                },
+                &amigo_core::media::filename_url(&name),
+            );
+        }
         ui.add_space(8.0);
     }
     if let Some(index) = remove {

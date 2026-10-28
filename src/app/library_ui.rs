@@ -632,27 +632,31 @@ impl Amigo {
         let modal=design::modal(ctx,egui::Id::new("library-dialog")).show(ctx,|ui| {
             ui.set_width(design::dialog_width(ctx, 460.0));
             cancel = design::dialog_heading(ui,title).clicked();
+            design::dialog_body(ui, "library-dialog-body", |ui| {
             ui.add_enabled_ui(!busy,|ui| {
                 if matches!(dialog.action,Action::Unlock(_)|Action::Encrypt(_)|Action::ChangePassword(_)) {ui.label(RichText::new(&dialog.name).strong());}
                 else {
                     amigo_ui::forms::field_label(ui,"Name");
                     let response=ui.add(design::input(&mut dialog.name).id(egui::Id::new("library-name")).desired_width(f32::INFINITY));
-                    if dialog.focus_name{response.request_focus();let mut state=egui::TextEdit::load_state(ctx,response.id).unwrap_or_default();state.cursor.set_char_range(Some(egui::text::CCursorRange::two(egui::text::CCursor::new(0),egui::text::CCursor::new(dialog.name.chars().count()))));state.store(ctx,response.id);dialog.focus_name=false;}
+                    if dialog.focus_name && !ui.is_sizing_pass(){response.request_focus();let mut state=egui::TextEdit::load_state(ctx,response.id).unwrap_or_default();state.cursor.set_char_range(Some(egui::text::CCursorRange::two(egui::text::CCursor::new(0),egui::text::CCursor::new(dialog.name.chars().count()))));state.store(ctx,response.id);dialog.focus_name=false;}
                 }
                 if matches!(dialog.action,Action::NewVault) {design::checkbox(ui, &mut dialog.encrypted,"Encrypt This Vault");}
                 if matches!(dialog.action,Action::Unlock(_)|Action::Encrypt(_)|Action::ChangePassword(_)) || matches!(dialog.action,Action::NewVault)&&dialog.encrypted {
                     if matches!(dialog.action, Action::ChangePassword(_)) {
                         amigo_ui::forms::field_label(ui,"Current Password");
-                        ui.add(design::input(&mut *dialog.current_password).id(egui::Id::new("vault-current-password")).password(true).desired_width(f32::INFINITY));
+                        let input = ui.add(design::input(&mut *dialog.current_password).id(egui::Id::new("vault-current-password")).password(true).desired_width(f32::INFINITY));
+                        if dialog.focus_name && !ui.is_sizing_pass() { input.request_focus(); dialog.focus_name=false; }
                     }
                     amigo_ui::forms::field_label(ui, if matches!(dialog.action, Action::ChangePassword(_)) { "New Password" } else { "Password" });
-                    ui.add(design::input(&mut *dialog.password).id_salt("vault-password").password(true).desired_width(f32::INFINITY));
+                    let input=ui.add(design::input(&mut *dialog.password).id(egui::Id::new("vault-password")).password(true).desired_width(f32::INFINITY));
+                    if dialog.focus_name && !ui.is_sizing_pass() { input.request_focus(); dialog.focus_name=false; }
                     if !matches!(dialog.action,Action::Unlock(_)) {
                         amigo_ui::forms::field_label(ui, if matches!(dialog.action, Action::ChangePassword(_)) { "Confirm New Password" } else { "Confirm Password" });ui.add(design::input(&mut *dialog.confirmation).password(true).desired_width(f32::INFINITY));
                         hint(ui,"Keep this password safe. It is required whenever you reopen this vault.");
                     }
                 }
                 if !dialog.error.is_empty() {ui.colored_label(colors(ui).red,&dialog.error);}
+            });
             });
             if busy {ui.horizontal(|ui| {ui.spinner();hint(ui,"Processing vault…");});}
             design::dialog_footer(ui, |ui| {

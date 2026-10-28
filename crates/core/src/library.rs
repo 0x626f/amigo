@@ -41,6 +41,8 @@ pub struct Settings {
     pub board: String,
     pub vault: String,
     #[serde(default)]
+    pub squidy_board: String,
+    #[serde(default)]
     pub sync: SyncSettings,
     #[serde(default)]
     pub journal: crate::journal::Preferences,

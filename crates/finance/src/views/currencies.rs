@@ -99,6 +99,7 @@ pub(crate) fn dialog(state: &mut FinanceTab, plan: &mut FinancePlan, ctx: &egui:
         return;
     };
     let keys = design::ActionKeys::capture(ctx);
+    let confirming_delete = editor.delete_confirm;
     let mut cancel = false;
     let mut save = false;
     let mut delete = false;
@@ -177,19 +178,16 @@ pub(crate) fn dialog(state: &mut FinanceTab, plan: &mut FinancePlan, ctx: &egui:
                     ui.add_space(12.0);
                     ui.colored_label(colors(ui).red, &editor.error);
                 }
-                if editor.delete_confirm {
-                    ui.add_space(16.0);
-                    ui.colored_label(colors(ui).red, "Delete this currency?");
-                    ui.horizontal(|ui| {
-                        delete = design::button(ui, "Delete Currency").clicked();
-                        if design::button(ui, "Keep Currency").clicked() {
-                            editor.delete_confirm = false;
-                        }
-                    });
-                }
             });
+        if editor.delete_confirm {
+            ui.colored_label(
+                colors(ui).red,
+                "Delete this currency? This cannot be undone.",
+            );
+        }
         design::dialog_footer(ui, |ui| {
-            if !editor.is_new && design::button(ui, "Delete…").clicked() {
+            if !editor.is_new && !editor.delete_confirm && design::button(ui, "Delete…").clicked()
+            {
                 editor.delete_confirm = true;
                 ui.memory_mut(|m| {
                     if let Some(id) = m.focused() {
@@ -198,17 +196,24 @@ pub(crate) fn dialog(state: &mut FinanceTab, plan: &mut FinancePlan, ctx: &egui:
                 });
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                save = ui
-                    .add_enabled_ui(!editor.delete_confirm, |ui| {
-                        design::dialog_primary(ui, "Save Currency")
-                    })
-                    .inner
-                    .clicked();
-                cancel |= design::button(ui, "Cancel").clicked();
+                if editor.delete_confirm {
+                    delete = ui
+                        .add_enabled_ui(confirming_delete, |ui| {
+                            design::dialog_destructive(ui, "Delete Currency")
+                        })
+                        .inner
+                        .clicked();
+                    if design::button(ui, "Keep Currency").clicked() {
+                        editor.delete_confirm = false;
+                    }
+                } else {
+                    save = design::dialog_primary(ui, "Save Currency").clicked();
+                    cancel |= design::button(ui, "Cancel").clicked();
+                }
             });
         });
     });
-    let shortcut = keys.dialog(&modal, true);
+    let shortcut = keys.dialog(&modal, !editor.delete_confirm || confirming_delete);
     if editor.delete_confirm {
         if shortcut.cancel {
             editor.delete_confirm = false;

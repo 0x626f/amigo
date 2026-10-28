@@ -8,6 +8,31 @@ use std::{
 fn safe_name(name: &str) -> bool {
     !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\', '\0'])
 }
+/// Copies remain provisional until their owning editor accepts them.
+pub struct Batch {
+    pub root: PathBuf,
+    pub files: Vec<TaskAttachment>,
+}
+impl Batch {
+    pub fn import(root: PathBuf, sources: &[PathBuf]) -> Result<Self, String> {
+        let mut batch = Self {
+            root,
+            files: vec![],
+        };
+        for path in sources {
+            batch.files.push(import(&batch.root, path)?);
+        }
+        Ok(batch)
+    }
+    pub fn keep(&mut self) {
+        self.files.clear();
+    }
+}
+impl Drop for Batch {
+    fn drop(&mut self) {
+        rollback(&self.root, &self.files);
+    }
+}
 pub fn import(board: &Path, source: &Path) -> Result<TaskAttachment, String> {
     let mut input = fs::File::open(source).map_err(|e| format!("Cannot read attachment: {e}"))?;
     if !input.metadata().map_err(|e| e.to_string())?.is_file() {
@@ -128,4 +153,26 @@ pub(crate) fn prune(board: &Path, tasks: &[crate::model::Task]) -> Result<(), St
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod batch_tests {
+    use super::*;
+    #[test]
+    fn failed_and_cancelled_batches_roll_back_only_their_new_files() {
+        let root = std::env::temp_dir().join(format!("amigo-media-batch-{}", id()));
+        fs::create_dir_all(&root).unwrap();
+        let source = root.join("source.txt");
+        fs::write(&source, "original").unwrap();
+        let kept = import(&root, &source).unwrap();
+        let batch = Batch::import(root.clone(), std::slice::from_ref(&source)).unwrap();
+        let cancelled = batch.files[0].clone();
+        drop(batch);
+        assert!(resolve(&root, &cancelled).is_err());
+        assert!(Batch::import(root.clone(), &[source.clone(), root.join("missing")]).is_err());
+        assert_eq!(fs::read_dir(root.join("attachments")).unwrap().count(), 1);
+        assert!(resolve(&root, &kept).unwrap().is_file());
+        assert_eq!(fs::read_to_string(source).unwrap(), "original");
+        fs::remove_dir_all(root).unwrap();
+    }
 }

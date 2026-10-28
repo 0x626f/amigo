@@ -210,7 +210,7 @@ pub(super) fn controls(
         control_id("journal-floating-headings"),
         egui::Sense::hover(),
     );
-    egui::Popup::menu(&headings).show(|ui| {
+    design::menu(&headings).show(|ui| {
         if inline_only {
             ui.disable();
         }
@@ -253,7 +253,7 @@ pub(super) fn controls(
         30.,
     );
     let language = state.language.as_deref();
-    egui::Popup::menu(&code).show(|ui| {
+    design::menu(&code).show(|ui| {
         menu_action(ui, "Inline Code", Format::Code, state, &mut action);
         ui.separator();
         design::eyebrow(ui, "CODE BLOCK LANGUAGE");
@@ -268,7 +268,7 @@ pub(super) fn controls(
         "Lists and Blocks",
         30.,
     );
-    egui::Popup::menu(&lists).show(|ui| {
+    design::menu(&lists).show(|ui| {
         if inline_only {
             ui.disable();
         }

@@ -2,6 +2,8 @@
 use crate::design::{self, Icon, colors};
 use egui::{Color32, RichText, Vec2};
 
+const TITLE_SIZE: f32 = 20.;
+
 pub fn modal(ctx: &egui::Context, id: egui::Id) -> egui::Modal {
     egui::Modal::new(id)
         .frame(design::dialog(ctx))
@@ -19,6 +21,20 @@ pub fn dialog_width(ctx: &egui::Context, preferred: f32) -> f32 {
 pub fn dialog_body_height(ctx: &egui::Context) -> f32 {
     (ctx.content_rect().height() - 270.0).clamp(180.0, 580.0)
 }
+/// Only the body scrolls, keeping the title and actions within reach.
+pub fn dialog_body<R>(
+    ui: &mut egui::Ui,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    egui::ScrollArea::vertical()
+        .id_salt(id)
+        .max_height(dialog_body_height(ui.ctx()))
+        .auto_shrink([false, true])
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+        .show(ui, contents)
+        .inner
+}
 pub fn dialog_heading(ui: &mut egui::Ui, title: &str) -> egui::Response {
     heading(ui, title, false)
 }
@@ -26,7 +42,7 @@ pub fn settings_heading(ui: &mut egui::Ui, title: &str) -> egui::Response {
     heading(ui, title, true)
 }
 fn heading(ui: &mut egui::Ui, title: &str, centered: bool) -> egui::Response {
-    ui.spacing_mut().item_spacing = Vec2::new(24.0, 12.0);
+    ui.spacing_mut().item_spacing = Vec2::new(12.0, 10.0);
     ui.visuals_mut().text_edit_bg_color = Some(colors(ui).column);
     let width = (ui.available_width() - 32.0 - ui.spacing().item_spacing.x).max(0.0);
     let close = ui
@@ -46,7 +62,7 @@ fn heading(ui: &mut egui::Ui, title: &str, centered: bool) -> egui::Response {
                         [width - inset, 32.0],
                         egui::Label::new(
                             RichText::new(crate::forms::title_case(title))
-                                .size(23.0)
+                                .size(TITLE_SIZE)
                                 .strong(),
                         )
                         .truncate()
@@ -67,9 +83,7 @@ fn heading(ui: &mut egui::Ui, title: &str, centered: bool) -> egui::Response {
             )
         })
         .inner;
-    ui.add_space(8.0);
-    ui.separator();
-    ui.add_space(10.0);
+    ui.add_space(16.0);
     close
 }
 pub fn dialog_section(ui: &mut egui::Ui, title: &str) {
@@ -100,12 +114,12 @@ pub fn settings_group<R>(
         let width = ui.available_width().min(ui.clip_rect().width());
         let result = egui::Frame::new()
             .fill(colors(ui).column)
-            .stroke(egui::Stroke::new(1., colors(ui).line))
             .corner_radius(10)
             .inner_margin(egui::Margin::symmetric(16, 12))
             .show(ui, |ui| {
-                ui.set_min_width((width - 34.).max(0.));
+                ui.set_min_width((width - 32.).max(0.));
                 ui.spacing_mut().item_spacing.y = 8.;
+                ui.visuals_mut().text_edit_bg_color = Some(colors(ui).card);
                 contents(ui)
             })
             .inner;
@@ -214,7 +228,7 @@ pub fn data_settings_heading(
                     ui.add_space(inset);
                     ui.add_sized(
                         [width - inset, 32.0],
-                        egui::Label::new(RichText::new(title).size(23.0).strong())
+                        egui::Label::new(RichText::new(title).size(TITLE_SIZE).strong())
                             .truncate()
                             .halign(egui::Align::Center),
                     )
@@ -233,9 +247,7 @@ pub fn data_settings_heading(
             )
         })
         .inner;
-    ui.add_space(8.0);
-    ui.separator();
-    ui.add_space(10.0);
+    ui.add_space(16.0);
     SettingsHeading { close, data_action }
 }
 pub fn property_row<R>(
@@ -260,10 +272,18 @@ pub fn property_row<R>(
     .inner
 }
 pub fn dialog_footer<R>(ui: &mut egui::Ui, controls: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    ui.add_space(12.0);
-    ui.separator();
-    ui.add_space(8.0);
+    ui.add_space(20.0);
+    ui.spacing_mut().item_spacing.x = 8.;
     ui.horizontal(controls).inner
+}
+/// A destructive action stays distinct from the blue default action.
+pub fn dialog_destructive(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    let red = colors(ui).red;
+    ui.add(
+        design::Button::new(RichText::new(text).color(red).strong())
+            .fill(red.gamma_multiply(0.10))
+            .min_size(Vec2::new(110., design::CONTROL_HEIGHT)),
+    )
 }
 pub fn dialog_primary(ui: &mut egui::Ui, text: &str) -> egui::Response {
     let blue = colors(ui).primary;
@@ -322,7 +342,7 @@ pub fn named_dialog_heading(
                             .painter()
                             .layout_no_wrap(
                                 suffix.into(),
-                                egui::FontId::proportional(23.0),
+                                egui::FontId::proportional(TITLE_SIZE),
                                 colors(ui).ink,
                             )
                             .size()
@@ -330,7 +350,7 @@ pub fn named_dialog_heading(
                             + 8.0;
                         let mut output = design::input(&mut edit.value)
                             .id(egui::Id::new(format!("{prefix}-name")))
-                            .font(egui::FontId::proportional(23.0))
+                            .font(egui::FontId::proportional(TITLE_SIZE))
                             .margin(egui::Margin::symmetric(4, 2))
                             .desired_width((title_width - suffix_width - 8.0).max(40.0))
                             .show(ui);
@@ -345,12 +365,12 @@ pub fn named_dialog_heading(
                             output.state.store(ui.ctx(), output.response.id);
                             edit.focus = false;
                         }
-                        ui.label(RichText::new(suffix).size(23.0).strong());
+                        ui.label(RichText::new(suffix).size(TITLE_SIZE).strong());
                     } else {
                         let title = format!("{name} {suffix}");
                         ui.add_sized(
                             [title_width, 32.0],
-                            egui::Label::new(RichText::new(&title).size(23.0).strong())
+                            egui::Label::new(RichText::new(&title).size(TITLE_SIZE).strong())
                                 .truncate()
                                 .halign(egui::Align::Center),
                         )
@@ -387,8 +407,68 @@ pub fn named_dialog_heading(
             )
         })
         .inner;
-    ui.add_space(8.0);
-    ui.separator();
-    ui.add_space(10.0);
+    ui.add_space(16.0);
     SettingsHeading { close, data_action }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn long_dialog_bodies_keep_the_heading_and_actions_inside_the_viewport() {
+        for dark in [false, true] {
+            for size in [Vec2::new(980., 640.), Vec2::new(1440., 900.)] {
+                let ctx = egui::Context::default();
+                design::install(&ctx);
+                design::apply_theme(&ctx, dark);
+                let mut heading = egui::Rect::NOTHING;
+                let mut save = egui::Rect::NOTHING;
+                let mut cancel = egui::Rect::NOTHING;
+                let mut modal_rect = egui::Rect::NOTHING;
+                for _ in 0..6 {
+                    let mut output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, size)),
+                            ..Default::default()
+                        },
+                        |_| {
+                            let response =
+                                modal(&ctx, egui::Id::new("long-form")).show(&ctx, |ui| {
+                                    ui.set_width(dialog_width(&ctx, 720.));
+                                    heading =
+                                        dialog_heading(ui, "A Long Form With Additional Details")
+                                            .rect;
+                                    dialog_body(ui, "long-form-body", |ui| {
+                                        for row in 0..80 {
+                                            ui.label(format!("Additional setting {row}"));
+                                        }
+                                    });
+                                    dialog_footer(ui, |ui| {
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                                save = dialog_primary(ui, "Save Settings").rect;
+                                                cancel = design::button(ui, "Cancel").rect;
+                                            },
+                                        );
+                                    });
+                                });
+                            modal_rect = response.response.rect;
+                        },
+                    );
+                    output.textures_delta.clear();
+                }
+                let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+                assert!(
+                    viewport.shrink(16.).contains_rect(modal_rect),
+                    "{modal_rect:?}"
+                );
+                assert!(modal_rect.contains_rect(heading) && modal_rect.contains_rect(save));
+                assert!(heading.bottom() < save.top());
+                assert!(cancel.right() < save.left());
+                assert!((cancel.center().y - save.center().y).abs() < 1.);
+            }
+        }
+    }
 }

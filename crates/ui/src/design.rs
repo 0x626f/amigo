@@ -1,15 +1,16 @@
 //! Shared visual language for the native workspace.
 mod controls;
 pub use crate::dialogs::{
-    DataAction, NameEdit, data_settings_heading, dialog_body_height, dialog_footer, dialog_heading,
-    dialog_primary, dialog_section, dialog_should_close, dialog_width, modal, named_dialog_heading,
-    property_row, settings_group, settings_heading, settings_row, settings_separator,
+    DataAction, NameEdit, data_settings_heading, dialog_body, dialog_body_height,
+    dialog_destructive, dialog_footer, dialog_heading, dialog_primary, dialog_section,
+    dialog_should_close, dialog_width, modal, named_dialog_heading, property_row, settings_group,
+    settings_heading, settings_row, settings_separator,
 };
 pub use crate::keyboard::{ActionKeys, ActionShortcut, contains_keyboard_focus};
 pub use crate::search::SearchField;
 pub use controls::{
-    Button, button, checkbox, chip, dropdown_button, icon_button, menu_button,
-    selected_icon_button, small_button, small_checkbox,
+    Button, button, checkbox, chip, context_menu, dropdown_button, icon_button, menu, menu_button,
+    menu_style, selected_icon_button, small_button, small_checkbox,
 };
 use egui::{self, Color32, Rect, RichText, Stroke, StrokeKind, Vec2};
 
@@ -323,6 +324,7 @@ pub enum Icon {
     Strikethrough,
     Code,
     Link,
+    Route,
     List,
     More,
     Markdown,
@@ -385,6 +387,20 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, kind: Icon, color: Color3
         )
     };
     match kind {
+        Icon::Route => {
+            painter.circle_stroke(p(5., 6.), 2.5 * rect.width() / 24., stroke);
+            painter.circle_stroke(p(19., 18.), 2.5 * rect.width() / 24., stroke);
+            line(&[
+                (8., 6.),
+                (16., 6.),
+                (19., 9.),
+                (16., 12.),
+                (8., 12.),
+                (5., 15.),
+                (8., 18.),
+                (16., 18.),
+            ]);
+        }
         Icon::Bold => {
             line(&[(6., 4.), (6., 20.)]);
             line(&[

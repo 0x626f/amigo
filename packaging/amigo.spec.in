@@ -12,6 +12,8 @@ Requires: libX11, libXcursor, libXi, libXrandr, libxkbcommon, libxkbcommon-x11
 Requires: libwayland-client.so.0()(64bit), libwayland-cursor.so.0()(64bit), libwayland-egl.so.1()(64bit)
 Requires: libglvnd-glx, libglvnd-egl
 Requires: dbus-libs, xdg-utils, xdg-desktop-portal
+# Codec tools are optional; file capabilities work across provider package names.
+Recommends: /usr/bin/ffmpeg, /usr/bin/ffprobe, /usr/bin/ffplay
 
 # Package the already-built executable. Keep automatic ELF dependency discovery.
 %global debug_package %{nil}

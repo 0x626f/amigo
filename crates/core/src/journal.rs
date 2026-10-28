@@ -88,6 +88,16 @@ pub struct Document {
 pub struct Journal {
     root: PathBuf,
 }
+impl Journal {
+    pub fn media_folder(&self) -> Result<PathBuf> {
+        let path = self.root.join(".media");
+        if fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
+            return Err("The media directory must not be a symbolic link.".into());
+        }
+        fs::create_dir_all(&path).map_err(|e| e.to_string())?;
+        Ok(path)
+    }
+}
 fn hash(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }

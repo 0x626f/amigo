@@ -15,11 +15,17 @@ struct Job {
     receiver: mpsc::Receiver<Result<Outcome, String>>,
 }
 enum Outcome {
+    MediaAttached {
+        path: String,
+        batch: amigo_core::attachments::Batch,
+    },
     Updated {
         entries: Vec<Entry>,
         document: Option<Document>,
         clear: bool,
         reveal: Option<String>,
+        renamed: Option<(String, String)>,
+        folder_edit: bool,
     },
     Saved {
         path: String,
@@ -86,10 +92,40 @@ impl Amigo {
             ctx.request_repaint();
         });
     }
-    fn journal_result(&mut self, result: Result<Outcome, String>) {
+    fn journal_result(&mut self, result: Result<Outcome, String>, ctx: Option<&egui::Context>) {
         self.journal.busy = false;
         self.journal.loading = false;
         match result {
+            Ok(Outcome::MediaAttached { path, mut batch }) => {
+                if let Some(editor) = &mut self.journal.editor
+                    && editor.document.path == path
+                {
+                    let levels = std::path::Path::new(&path)
+                        .parent()
+                        .unwrap_or(std::path::Path::new(""))
+                        .components()
+                        .count();
+                    let mut markdown = String::new();
+                    for file in &batch.files {
+                        let target = format!(
+                            "{}.media/{}",
+                            "../".repeat(levels),
+                            amigo_core::media::target(file, 0)
+                        );
+                        markdown.push_str(&format!(
+                            "\n\n{}\n",
+                            amigo_core::media::embed(&file.name, &target)
+                        ));
+                    }
+                    // Repaint will project the appended source into Preview and Split modes.
+                    if let Some(ctx) = ctx {
+                        editor.append_markdown(ctx, &markdown);
+                    } else {
+                        editor.document.text.push_str(&markdown);
+                    }
+                    batch.keep();
+                }
+            }
             Ok(Outcome::Saved {
                 path,
                 text,
@@ -109,7 +145,15 @@ impl Amigo {
                 document,
                 clear,
                 reveal,
+                renamed,
+                folder_edit,
             }) => {
+                if let Some((old, new)) = renamed {
+                    self.journal.renamed_folder(&old, &new);
+                }
+                if folder_edit {
+                    self.journal.folder_edit_result(None);
+                }
                 self.journal.update_entries(entries);
                 if let Some(path) = reveal {
                     let folder = if self
@@ -145,6 +189,7 @@ impl Amigo {
             Ok(Outcome::Cancelled) => (),
             Ok(Outcome::Exported) => self.message = "Markdown note exported.".into(),
             Err(error) => {
+                self.journal.folder_edit_result(Some(&error));
                 if let Some(editor) = &mut self.journal.editor
                     && editor.dirty()
                 {
@@ -157,16 +202,18 @@ impl Amigo {
         }
     }
     pub(super) fn tick_journal(&mut self, ctx: &egui::Context) {
+        self.journal.media_root = Some(self.data_path.join("journal"));
         if self.save_blocked {
             return;
         }
         if let Some(job) = self.journal_io.job.take() {
             match job.receiver.try_recv() {
-                Ok(result) => self.journal_result(result),
+                Ok(result) => self.journal_result(result, Some(ctx)),
                 Err(mpsc::TryRecvError::Empty) => self.journal_io.job = Some(job),
-                Err(mpsc::TryRecvError::Disconnected) => self.journal_result(Err(
-                    "The Journal worker stopped. Your editor contents are preserved.".into(),
-                )),
+                Err(mpsc::TryRecvError::Disconnected) => self.journal_result(
+                    Err("The Journal worker stopped. Your editor contents are preserved.".into()),
+                    Some(ctx),
+                ),
             }
         }
         if self.journal_io.job.is_some() {
@@ -218,7 +265,36 @@ impl Amigo {
             let mut document = None;
             let mut clear = false;
             let mut reveal = None;
+            let mut renamed = None;
+            let folder_edit = matches!(
+                &action,
+                Action::NewNote(_) | Action::NewFolder(_) | Action::Rename { .. }
+            );
             match action {
+                Action::AttachMedia => {
+                    let Some(current) = current else {
+                        return Ok(Outcome::Cancelled);
+                    };
+                    let paths = rfd::FileDialog::new()
+                        .set_title("Attach Photo or Video")
+                        .add_filter(
+                            "Photos and Videos",
+                            &[
+                                "png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "mp4",
+                                "m4v", "mov", "webm", "mkv", "avi", "ogv",
+                            ],
+                        )
+                        .pick_files()
+                        .unwrap_or_default();
+                    if paths.is_empty() {
+                        return Ok(Outcome::Cancelled);
+                    }
+                    let root = Journal::media_folder(&journal)?;
+                    return Ok(Outcome::MediaAttached {
+                        path: current.path,
+                        batch: amigo_core::attachments::Batch::import(root, &paths)?,
+                    });
+                }
                 Action::Open(path) => document = Some(journal.read(&path)?),
                 Action::FollowLink { from, target } => {
                     document = Some(journal.follow_link(&from, &target)?)
@@ -241,6 +317,7 @@ impl Amigo {
                 }
                 Action::Rename { old, name } => {
                     let new = journal.rename(&old, &name)?;
+                    renamed = Some((old.clone(), new.clone()));
                     if let Some(current) = current {
                         if current.path == old {
                             document = Some(journal.read(&new)?);
@@ -354,19 +431,30 @@ impl Amigo {
                 document,
                 clear,
                 reveal,
+                renamed,
+                folder_edit,
             })
         });
     }
     pub(super) fn journal_close_request(&mut self, ctx: &egui::Context) {
         if ctx.input(|i| i.viewport().close_requested())
-            && (self.journal.busy || self.journal.dirty())
+            && (self.journal.busy
+                || self.journal.dirty()
+                || self.squidy_busy()
+                || self.squidy_dirty())
         {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.journal_io.close_requested = true;
             self.journal_io.pending.clear();
+            self.squidy_io.pending.clear();
+            self.squidy.changed_at = Instant::now() - Duration::from_secs(1);
         }
         if self.journal_io.close_requested {
-            if !self.journal.busy && !self.journal.dirty() {
+            if !self.journal.busy
+                && !self.journal.dirty()
+                && !self.squidy_busy()
+                && !self.squidy_dirty()
+            {
                 if self.save_local() {
                     self.journal_io.close_requested = false;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -388,13 +476,16 @@ impl Amigo {
             let mut copy = false;
             let mut discard = false;
             let response=design::modal(ctx,egui::Id::new("journal-close-confirm")).show(ctx,|ui|{
-                ui.set_width(design::dialog_width(ctx,540.));
-                cancel=design::dialog_heading(ui,"Unsaved Journal Changes").clicked();
-                if self.journal.busy{ui.spinner();ui.label("Saving your note before closing…");}
-                else{ui.colored_label(colors(ui).red,&self.journal.error);ui.label("Your note could not be saved. Keep your edits as a separate note, or return to the editor.");}
+                ui.set_width(design::dialog_width(ctx,760.));
+                cancel=design::dialog_heading(ui,"Unsaved Workspace Changes").clicked();
+                if self.journal.busy||self.squidy_busy(){ui.spinner();ui.label("Saving your changes before closing…");}
+                else{ui.colored_label(colors(ui).red,if self.squidy_dirty(){&self.squidy.error}else{&self.journal.error});ui.label("Your changes could not be saved. Return to the editor to preserve or resolve them.");}
                 design::dialog_footer(ui,|ui|{
-                    cancel|=design::button(ui,"Return to Journal").clicked();
-                    if !self.journal.busy{copy=design::primary(ui,"Save Copy and Close").clicked();discard=design::button(ui,"Discard Edits and Close").clicked();}
+                    if !self.journal.busy&&!self.squidy_busy(){discard=design::dialog_destructive(ui,"Discard Edits and Close").clicked();}
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center),|ui|{
+                        if !self.journal.busy&&!self.squidy_busy()&&self.journal.dirty(){copy=design::dialog_primary(ui,"Save Copy and Close").clicked();}
+                        cancel|=design::button(ui,"Return to Editor").clicked();
+                    });
                 });
             });
             if cancel || design::dialog_should_close(&response) {
@@ -404,6 +495,7 @@ impl Amigo {
                 self.journal_io.pending.push_back(Action::SaveCopy);
             }
             if discard {
+                self.squidy.board = self.squidy_io.saved.clone();
                 if let Some(editor) = &mut self.journal.editor {
                     editor.document.text = editor.saved_text.clone();
                 }
@@ -420,8 +512,11 @@ impl Amigo {
                     close = design::dialog_heading(ui, "Reload Note").clicked();
                     ui.label("Discard your editor changes and reload the file from disk?");
                     design::dialog_footer(ui, |ui| {
-                        close |= design::button(ui, "Cancel").clicked();
-                        reload = design::button(ui, "Discard Changes and Reload").clicked();
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            reload = design::dialog_destructive(ui, "Discard Changes and Reload")
+                                .clicked();
+                            close |= design::button(ui, "Cancel").clicked();
+                        });
                     });
                 });
             if close || design::dialog_should_close(&modal) {
@@ -439,7 +534,7 @@ impl Amigo {
                 .receiver
                 .recv()
                 .unwrap_or_else(|_| Err("The Journal worker stopped.".into()));
-            self.journal_result(result);
+            self.journal_result(result, None);
         }
         let Some(editor) = self.journal.editor.as_mut().filter(|e| e.dirty()) else {
             return true;
@@ -468,6 +563,78 @@ impl Amigo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn media_picker_results_insert_portable_markdown_preserve_undo_and_ignore_closed_notes() {
+        use amigo_core::{
+            attachments::{self, Batch},
+            media,
+        };
+        let (mut app, ctx) = crate::app::tests::harness();
+        let journal = Journal::open(&app.data_path).unwrap();
+        journal.create_folder("Research").unwrap();
+        let document = journal.create("Research/Note", "# Original\n").unwrap();
+        app.journal.open(document.clone());
+        let source = app.data_path.join("Photo ✓ (1).png");
+        std::fs::write(&source, b"image data").unwrap();
+        let folder = journal.media_folder().unwrap();
+        let batch = Batch::import(folder.clone(), std::slice::from_ref(&source)).unwrap();
+        let file = batch.files[0].clone();
+        app.journal_result(
+            Ok(Outcome::MediaAttached {
+                path: document.path.clone(),
+                batch,
+            }),
+            Some(&ctx),
+        );
+        let editor = app.journal.editor.as_ref().unwrap();
+        let expected = format!("../.media/{}", media::target(&file, 0));
+        assert!(
+            editor
+                .document
+                .text
+                .contains(&media::embed(&file.name, &expected))
+        );
+        assert!(editor.dirty());
+        let mut history =
+            egui::TextEdit::load_state(&ctx, egui::Id::new(("journal-editor", &document.path)))
+                .unwrap()
+                .undoer();
+        let range = egui::text::CCursorRange::one(egui::text::CCursor::new(
+            editor.document.text.chars().count(),
+        ));
+        assert_eq!(
+            history
+                .undo(&(range, editor.document.text.clone()))
+                .unwrap()
+                .1,
+            document.text
+        );
+        let saved = editor.document.text.clone();
+        assert!(app.finish_journal());
+        assert_eq!(journal.read(&document.path).unwrap().text, saved);
+        assert_eq!(
+            media::resolve(
+                &app.data_path.join("journal"),
+                &app.data_path.join("journal/Research"),
+                &expected
+            )
+            .unwrap(),
+            attachments::resolve(&folder, &file).unwrap()
+        );
+        app.journal.close_note();
+        let batch = Batch::import(folder.clone(), &[source]).unwrap();
+        let cancelled = batch.files[0].clone();
+        app.journal_result(
+            Ok(Outcome::MediaAttached {
+                path: document.path,
+                batch,
+            }),
+            Some(&ctx),
+        );
+        assert!(attachments::resolve(&folder, &cancelled).is_err());
+        assert!(attachments::resolve(&folder, &file).is_ok());
+        std::fs::remove_dir_all(app.data_path).unwrap();
+    }
     fn wait(app: &mut Amigo, ctx: &egui::Context) {
         let until = Instant::now() + Duration::from_secs(10);
         loop {
@@ -546,7 +713,16 @@ mod tests {
                 output = render(&mut app, &ctx, vec![]);
             }
             assert!(text_rect_optional(&output, parent.unwrap_or("Journal Root")).is_some());
-            let save = text_rect_optional(&output, "Save").unwrap().center();
+            let confirm = if id.contains("folder") {
+                "journal-folder-confirm"
+            } else {
+                "journal-note-confirm"
+            };
+            let save = ctx
+                .read_response(egui::Id::new(confirm))
+                .unwrap()
+                .rect
+                .center();
             click(&mut app, &ctx, save);
             wait(&mut app, &ctx);
             assert!(app.journal.error.is_empty(), "{}", app.journal.error);
@@ -560,6 +736,7 @@ mod tests {
             for _ in 0..5 {
                 render(&mut app, &ctx, vec![]);
             }
+            assert!(ctx.read_response(egui::Id::new(confirm)).is_none());
             assert!(
                 ctx.read_response(egui::Id::new(("journal-entry", expected)))
                     .is_some()
@@ -1159,6 +1336,124 @@ mod tests {
             amigo_core::backup::Archive::capture(&app.library, amigo_core::backup::Scope::Setup)
                 .unwrap();
         assert!(archive.review(&app.library).is_ok());
+        std::fs::remove_dir_all(app.data_path).unwrap();
+    }
+    #[test]
+    fn folder_rename_moves_the_subtree_preserves_saved_edits_and_retries_disk_validation() {
+        use crate::app::tests::{click, render};
+        let (mut app, ctx) = crate::app::tests::harness();
+        app.section = Section::Journal;
+        let journal = Journal::open(&app.data_path).unwrap();
+        journal.create_folder("Work").unwrap();
+        journal.create_folder("Work/Deep").unwrap();
+        journal.create_folder("Work/Other").unwrap();
+        journal.create("Work/Deep/Current", "Original").unwrap();
+        journal
+            .create("Work/Other/Reference", "Keep reference")
+            .unwrap();
+        app.journal_action(Action::Open("Work/Deep/Current.md".into()), &ctx);
+        wait(&mut app, &ctx);
+        app.journal.expand_folder("Work/Other");
+        app.journal.editor.as_mut().unwrap().document.text = "Unsaved research 🌍".into();
+        for _ in 0..5 {
+            render(&mut app, &ctx, vec![]);
+        }
+        let rename = ctx
+            .read_response(egui::Id::new(("journal-folder-rename", "Work")))
+            .unwrap()
+            .rect
+            .center();
+        click(&mut app, &ctx, rename);
+        for _ in 0..5 {
+            render(&mut app, &ctx, vec![]);
+        }
+        render(
+            &mut app,
+            &ctx,
+            vec![egui::Event::Text("Research 🌍".into())],
+        );
+        let confirm = ctx
+            .read_response(egui::Id::new("journal-folder-confirm"))
+            .unwrap()
+            .rect
+            .center();
+        click(&mut app, &ctx, confirm);
+        wait(&mut app, &ctx);
+        assert!(app.journal.error.is_empty(), "{}", app.journal.error);
+        assert_eq!(
+            app.journal.editor.as_ref().unwrap().document.path,
+            "Research 🌍/Deep/Current.md"
+        );
+        let reopened = Journal::open(&app.data_path).unwrap();
+        assert!(reopened.read("Work/Deep/Current.md").is_err());
+        assert_eq!(
+            reopened.read("Research 🌍/Deep/Current.md").unwrap().text,
+            "Unsaved research 🌍"
+        );
+        assert_eq!(
+            reopened
+                .read("Research 🌍/Other/Reference.md")
+                .unwrap()
+                .text,
+            "Keep reference"
+        );
+        for _ in 0..5 {
+            render(&mut app, &ctx, vec![]);
+        }
+        assert!(
+            ctx.read_response(egui::Id::new((
+                "journal-entry",
+                "Research 🌍/Other/Reference.md"
+            )))
+            .is_some()
+        );
+        // A backend name rejection retains the input and can be corrected in place.
+        let rename = ctx
+            .read_response(egui::Id::new(("journal-folder-rename", "Research 🌍")))
+            .unwrap()
+            .rect
+            .center();
+        click(&mut app, &ctx, rename);
+        for _ in 0..5 {
+            render(&mut app, &ctx, vec![]);
+        }
+        render(&mut app, &ctx, vec![egui::Event::Text("NUL".into())]);
+        let confirm = ctx
+            .read_response(egui::Id::new("journal-folder-confirm"))
+            .unwrap()
+            .rect
+            .center();
+        click(&mut app, &ctx, confirm);
+        wait(&mut app, &ctx);
+        assert!(!app.journal.error.is_empty());
+        for _ in 0..5 {
+            render(&mut app, &ctx, vec![]);
+        }
+        assert!(ctx.memory(|m| m.has_focus(egui::Id::new("journal-note-name"))));
+        render(
+            &mut app,
+            &ctx,
+            vec![egui::Event::Text("Final research".into())],
+        );
+        click(&mut app, &ctx, confirm);
+        wait(&mut app, &ctx);
+        assert!(app.journal.error.is_empty(), "{}", app.journal.error);
+        assert_eq!(
+            reopened
+                .read("Final research/Deep/Current.md")
+                .unwrap()
+                .text,
+            "Unsaved research 🌍"
+        );
+        assert!(
+            app.journal
+                .editor
+                .as_ref()
+                .unwrap()
+                .document
+                .path
+                .starts_with("Final research/")
+        );
         std::fs::remove_dir_all(app.data_path).unwrap();
     }
 }

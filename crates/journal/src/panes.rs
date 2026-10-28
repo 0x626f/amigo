@@ -146,7 +146,7 @@ fn source(editor: &mut Editor, prefs: &Preferences, ui: &mut egui::Ui, width: f3
                     editor.selection = range.start.0..range.end.0;
                 }
                 source_enter(editor, ui, id);
-                output.response.context_menu(|ui| {
+                design::context_menu(&output.response).show(|ui| {
                     format = toolbar::context_menu(editor, ui).or(format);
                 });
                 if !output.response.context_menu_opened()

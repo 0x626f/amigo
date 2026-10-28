@@ -77,7 +77,7 @@ impl FinanceUi<'_> {
                         )
                         .inner;
                     if self.state.view == FinanceView::Wallet {
-                        egui::Popup::menu(&create).show(|ui| {
+                        design::menu(&create).show(|ui| {
                             for (index, name) in
                                 ["Income", "Expense", "Saving", "Budget"].iter().enumerate()
                             {

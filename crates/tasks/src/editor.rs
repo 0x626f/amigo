@@ -72,22 +72,13 @@ impl TasksUi<'_> {
                                 }
                                 ui.add_space(8.0);
                                 field_label(ui, "Description");
-                                ui.add(
-                                    egui::TextEdit::multiline(&mut editor.draft.description)
-                                        .id(egui::Id::new("task-description"))
-                                        .hint_text("Add details, context, or a checklist…")
-                                        .desired_rows(
-                                            if editor.draft.attachments.is_empty()
-                                                && editor.pending_attachments.is_empty()
-                                            {
-                                                6
-                                            } else {
-                                                3
-                                            },
-                                        )
-                                        .margin(egui::Margin::same(12))
-                                        .desired_width(f32::INFINITY),
-                                );
+                                let location = self.state.board_folder.as_ref().map(|root| {
+                                    amigo_ui::media::Location {
+                                        root: root.clone(),
+                                        base: root.clone(),
+                                    }
+                                });
+                                task_description(ui, &mut editor, location.as_ref());
                                 attachments::show(self.state, &mut editor, ui);
                             },
                         );
@@ -96,90 +87,91 @@ impl TasksUi<'_> {
                             egui::Layout::top_down(egui::Align::LEFT),
                             |ui| {
                                 let control_width = 160.0;
-                                design::dialog_section(ui, "Details");
-                                design::property_row(ui, "Status", |ui| {
-                                    egui::ComboBox::from_id_salt("task-status")
-                                        .width(control_width)
-                                        .truncate()
-                                        .selected_text(
-                                            self.workspace
-                                                .task_statuses
-                                                .iter()
-                                                .find(|s| s.id == editor.draft.status)
-                                                .map(|s| s.name.as_str())
-                                                .unwrap_or("Choose Status"),
-                                        )
-                                        .show_ui(ui, |ui| {
-                                            for status in &self.workspace.task_statuses {
-                                                ui.selectable_value(
-                                                    &mut editor.draft.status,
-                                                    status.id.clone(),
-                                                    &status.name,
-                                                );
-                                            }
-                                        });
-                                });
-                                design::property_row(ui, "Priority", |ui| {
-                                    egui::ComboBox::from_id_salt("task-priority")
-                                        .width(control_width)
-                                        .selected_text(&editor.draft.priority)
-                                        .show_ui(ui, |ui| {
-                                            for priority in ["High", "Medium", "Low"] {
-                                                ui.selectable_value(
-                                                    &mut editor.draft.priority,
-                                                    priority.to_owned(),
-                                                    priority,
-                                                );
-                                            }
-                                        });
-                                });
-                                design::property_row(ui, "Category", |ui| {
-                                    egui::ComboBox::from_id_salt("task-category")
-                                        .width(control_width)
-                                        .truncate()
-                                        .selected_text(
-                                            self.workspace
-                                                .task_categories
-                                                .iter()
-                                                .find(|c| c.id == editor.draft.category_id)
-                                                .map(|c| c.name.as_str())
-                                                .unwrap_or("Uncategorized"),
-                                        )
-                                        .show_ui(ui, |ui| {
-                                            ui.selectable_value(
-                                                &mut editor.draft.category_id,
-                                                String::new(),
-                                                "Uncategorized",
-                                            );
-                                            for category in &self.workspace.task_categories {
+                                design::settings_group(ui, "Details", |ui| {
+                                    design::property_row(ui, "Status", |ui| {
+                                        egui::ComboBox::from_id_salt("task-status")
+                                            .width(control_width)
+                                            .truncate()
+                                            .selected_text(
+                                                self.workspace
+                                                    .task_statuses
+                                                    .iter()
+                                                    .find(|s| s.id == editor.draft.status)
+                                                    .map(|s| s.name.as_str())
+                                                    .unwrap_or("Choose Status"),
+                                            )
+                                            .show_ui(ui, |ui| {
+                                                for status in &self.workspace.task_statuses {
+                                                    ui.selectable_value(
+                                                        &mut editor.draft.status,
+                                                        status.id.clone(),
+                                                        &status.name,
+                                                    );
+                                                }
+                                            });
+                                    });
+                                    design::property_row(ui, "Priority", |ui| {
+                                        egui::ComboBox::from_id_salt("task-priority")
+                                            .width(control_width)
+                                            .selected_text(&editor.draft.priority)
+                                            .show_ui(ui, |ui| {
+                                                for priority in ["High", "Medium", "Low"] {
+                                                    ui.selectable_value(
+                                                        &mut editor.draft.priority,
+                                                        priority.to_owned(),
+                                                        priority,
+                                                    );
+                                                }
+                                            });
+                                    });
+                                    design::property_row(ui, "Category", |ui| {
+                                        egui::ComboBox::from_id_salt("task-category")
+                                            .width(control_width)
+                                            .truncate()
+                                            .selected_text(
+                                                self.workspace
+                                                    .task_categories
+                                                    .iter()
+                                                    .find(|c| c.id == editor.draft.category_id)
+                                                    .map(|c| c.name.as_str())
+                                                    .unwrap_or("Uncategorized"),
+                                            )
+                                            .show_ui(ui, |ui| {
                                                 ui.selectable_value(
                                                     &mut editor.draft.category_id,
-                                                    category.id.clone(),
-                                                    &category.name,
+                                                    String::new(),
+                                                    "Uncategorized",
                                                 );
-                                            }
-                                        });
+                                                for category in &self.workspace.task_categories {
+                                                    ui.selectable_value(
+                                                        &mut editor.draft.category_id,
+                                                        category.id.clone(),
+                                                        &category.name,
+                                                    );
+                                                }
+                                            });
+                                    });
+                                    design::property_row(ui, "Due Date", |ui| {
+                                        ui.allocate_ui_with_layout(
+                                            Vec2::new(control_width, design::CONTROL_HEIGHT),
+                                            egui::Layout::left_to_right(egui::Align::Center),
+                                            |ui| {
+                                                date_input(
+                                                    ui,
+                                                    "task-due-date",
+                                                    &mut editor.draft.due_date,
+                                                    true,
+                                                );
+                                            },
+                                        );
+                                    });
+                                    if !valid_date {
+                                        ui.colored_label(
+                                            colors(ui).red,
+                                            "Use YYYY-MM-DD for the due date.",
+                                        );
+                                    }
                                 });
-                                design::property_row(ui, "Due Date", |ui| {
-                                    ui.allocate_ui_with_layout(
-                                        Vec2::new(control_width, design::CONTROL_HEIGHT),
-                                        egui::Layout::left_to_right(egui::Align::Center),
-                                        |ui| {
-                                            date_input(
-                                                ui,
-                                                "task-due-date",
-                                                &mut editor.draft.due_date,
-                                                true,
-                                            );
-                                        },
-                                    );
-                                });
-                                if !valid_date {
-                                    ui.colored_label(
-                                        colors(ui).red,
-                                        "Use YYYY-MM-DD for the due date.",
-                                    );
-                                }
                             },
                         );
                     });
@@ -256,17 +248,7 @@ impl TasksUi<'_> {
                 ui.add(egui::Label::new(RichText::new(&editor.draft.title).strong()).truncate());
                 design::dialog_footer(ui, |ui| {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        remove = ui
-                            .add(
-                                design::Button::new(
-                                    RichText::new("Delete Task")
-                                        .color(egui::Color32::WHITE)
-                                        .strong(),
-                                )
-                                .fill(colors(ui).red)
-                                .min_size(Vec2::new(110.0, design::CONTROL_HEIGHT)),
-                            )
-                            .clicked();
+                        remove = design::dialog_destructive(ui, "Delete Task").clicked();
                         keep |= design::button(ui, "Cancel").clicked();
                     });
                 });
@@ -333,4 +315,28 @@ impl TasksUi<'_> {
             self.state.editor = Some(editor);
         }
     }
+}
+
+fn task_description(
+    ui: &mut egui::Ui,
+    editor: &mut TaskEditor,
+    location: Option<&amigo_ui::media::Location>,
+) {
+    let rows = if editor.draft.attachments.is_empty() && editor.pending_attachments.is_empty() {
+        6
+    } else {
+        3
+    };
+    let response = editor.description_editor.show(
+        ui,
+        egui::Id::new("task-description"),
+        &mut editor.draft.description,
+        location,
+        rows,
+    );
+    ui.interact(
+        response.rect,
+        egui::Id::new("task-description-preview"),
+        egui::Sense::hover(),
+    );
 }

@@ -72,9 +72,6 @@ impl Amigo {
                 ui.colored_label(colors(ui).red, &settings.error);
             }
             design::dialog_footer(ui, |ui| {
-                if design::button(ui, "Cancel").clicked() {
-                    close = true;
-                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
                         .add_enabled_ui(available, |ui| design::dialog_primary(ui, "Save Settings"))
@@ -83,6 +80,7 @@ impl Amigo {
                     {
                         save = true;
                     }
+                    close |= design::button(ui, "Cancel").clicked();
                 });
             });
         };

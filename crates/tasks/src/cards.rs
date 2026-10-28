@@ -7,6 +7,7 @@ struct PendingClick {
     task: String,
     position: egui::Pos2,
     released_at: f64,
+    immediate: bool,
 }
 struct Press {
     task: String,
@@ -130,15 +131,14 @@ impl CardInteraction {
                             && pos.distance(press.origin) <= distance
                             && now - press.started_at <= click_duration
                         {
-                            if press.second_click {
-                                self.armed = Some(press.task);
-                            } else {
-                                self.pending = Some(PendingClick {
-                                    task: press.task,
-                                    position: pos,
-                                    released_at: now,
-                                });
-                            }
+                            // Releasing the second click opens details. Holding
+                            // and moving it is handled as a drag above.
+                            self.pending = Some(PendingClick {
+                                task: press.task,
+                                position: pos,
+                                released_at: now,
+                                immediate: press.second_click,
+                            });
                         }
                     }
                 }
@@ -167,11 +167,11 @@ impl CardInteraction {
         // Retain keyboard/accessibility activation without interpreting pointer
         // clicks again after they have been handled in event order above.
         if response.clicked() && !ui.input(|i| i.pointer.any_click()) {
-            let delay = ui.ctx().options(|o| o.input_options.max_double_click_delay);
             self.pending = Some(PendingClick {
                 task: task.id.clone(),
                 position: response.rect.center(),
-                released_at: ui.input(|i| i.time) - delay,
+                released_at: ui.input(|i| i.time),
+                immediate: true,
             });
         }
     }
@@ -183,7 +183,7 @@ impl CardInteraction {
         if let Some(click) = &self.pending {
             let delay = ui.ctx().options(|o| o.input_options.max_double_click_delay);
             let remaining = click.released_at + delay - now;
-            if remaining <= 0.0 && !down {
+            if (click.immediate || remaining <= 0.0) && !down {
                 let task = workspace.tasks.iter().find(|t| t.id == click.task).cloned();
                 self.clear();
                 return task;

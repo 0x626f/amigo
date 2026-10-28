@@ -4,4 +4,6 @@ pub mod design;
 mod dialogs;
 pub mod forms;
 mod keyboard;
+pub mod markdown;
+pub mod media;
 mod search;

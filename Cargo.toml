@@ -1,6 +1,6 @@
 [workspace]
-members = [".", "crates/core", "crates/ui", "crates/tasks", "crates/finance", "crates/calendar", "crates/connect", "crates/journal"]
-default-members = [".", "crates/core", "crates/ui", "crates/tasks", "crates/finance", "crates/calendar", "crates/connect", "crates/journal"]
+members = [".", "crates/core", "crates/ui", "crates/tasks", "crates/finance", "crates/calendar", "crates/connect", "crates/journal", "crates/squidy"]
+default-members = [".", "crates/core", "crates/ui", "crates/tasks", "crates/finance", "crates/calendar", "crates/connect", "crates/journal", "crates/squidy"]
 resolver = "3"
 
 [workspace.package]
@@ -25,6 +25,8 @@ rand = "0.8"
 zeroize = "1.9"
 egui = "0.36.2"
 pulldown-cmark = { version = "0.13", default-features = false }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
+amigo-squidy = { path = "crates/squidy" }
 amigo-core = { path = "crates/core" }
 amigo-ui = { path = "crates/ui" }
 amigo-tasks = { path = "crates/tasks" }
@@ -50,6 +52,7 @@ amigo-finance.workspace = true
 amigo-calendar.workspace = true
 amigo-connect.workspace = true
 amigo-journal.workspace = true
+amigo-squidy.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

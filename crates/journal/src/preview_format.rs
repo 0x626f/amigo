@@ -148,7 +148,7 @@ impl Tools {
             set_cursor(ui.ctx(), id, range);
         }
         let mut action = None;
-        input.output.response.context_menu(|ui| {
+        design::context_menu(&input.output.response).show(|ui| {
             action = toolbar::format_menu(ui, &c.state, c.inline_only);
             ui.separator();
             if ui
@@ -570,7 +570,7 @@ pub(super) fn link_dialog(editor: &mut Editor, ui: &egui::Ui) {
             design::dialog_footer(ui, |ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     save = ui
-                        .add_enabled_ui(valid, |ui| design::primary(ui, "Apply Link"))
+                        .add_enabled_ui(valid, |ui| design::dialog_primary(ui, "Apply Link"))
                         .inner
                         .clicked();
                     cancel |= design::button(ui, "Cancel").clicked();

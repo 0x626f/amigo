@@ -416,13 +416,19 @@ impl Amigo {
         ui: &mut egui::Ui,
         next: &mut Option<SettingsPage>,
     ) -> (bool, bool) {
-        match state.page.clone() {
+        let close = match state.page.clone() {
             SettingsPage::Tasks => {
                 ui.heading("Tasks");
                 design::hint(
                     ui,
                     "Choose a board in the list to configure its statuses and categories.",
                 );
+                design::dialog_footer(ui, |ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        design::dialog_primary(ui, "Done").clicked()
+                    })
+                    .inner
+                })
             }
             SettingsPage::Board(_) => {
                 if !self.tasks.settings_open() {
@@ -643,8 +649,8 @@ impl Amigo {
                 let result = preferences_footer(ui);
                 return result;
             }
-        }
-        (false, false)
+        };
+        (false, close)
     }
     fn save_app_preferences(&mut self, state: &AppSettings) {
         let result = match state.page {

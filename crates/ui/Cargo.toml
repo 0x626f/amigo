@@ -8,3 +8,7 @@ authors.workspace = true
 [dependencies]
 egui.workspace = true
 chrono.workspace = true
+amigo-core.workspace = true
+image.workspace = true
+pulldown-cmark.workspace = true
+serde_json.workspace = true

@@ -807,3 +807,88 @@ fn global_finance_pages_preserve_vault_sidebar_expansion() {
         }
     }
 }
+
+#[test]
+fn account_client_and_chain_lists_match_currency_alignment() {
+    for dark in [false, true] {
+        for size in [egui::vec2(980., 640.), egui::vec2(1440., 900.)] {
+            let (mut app, ctx) = harness();
+            app.workspace.dark_mode = dark;
+            app.workspace.finance.accounts.push(Account {
+                id: "aligned-account".into(),
+                label: "Daily Account".into(),
+                ..Default::default()
+            });
+            app.workspace.finance.clients.push(StoredValue {
+                id: "aligned-client".into(),
+                name: "Studio Client".into(),
+            });
+            app.workspace.finance.normalize();
+            let shared = app.library.finance_settings().unwrap().plan();
+            let currency = shared
+                .currencies
+                .iter()
+                .find(|c| c.name == "EUR" && c.chain_id.is_empty())
+                .unwrap();
+            let chain = &shared.chains[0];
+            let vault = app.library.settings.vault.clone();
+            app.open_settings(SettingsPage::FinanceReference(FinanceReference::Currencies));
+            let output = settle(&mut app, &ctx, size);
+            let currency_row = ctx
+                .read_response(egui::Id::new(("stored-value-currency", &currency.id)))
+                .unwrap()
+                .rect;
+            let currency_text = text_rect(&output, "EUR");
+            let inset = currency_text.left() - currency_row.left();
+            for (page, id, name) in [
+                (
+                    SettingsPage::FinanceReference(FinanceReference::Chains),
+                    chain.id.as_str(),
+                    chain.name.as_str(),
+                ),
+                (
+                    SettingsPage::Reference(vault.clone(), FinanceReference::Clients),
+                    "aligned-client",
+                    "Studio Client",
+                ),
+                (
+                    SettingsPage::Reference(vault.clone(), FinanceReference::Accounts),
+                    "aligned-account",
+                    "Daily Account",
+                ),
+            ] {
+                app.open_settings(page);
+                let output = settle(&mut app, &ctx, size);
+                let row = ctx
+                    .read_response(egui::Id::new(("stored-value-row", id)))
+                    .unwrap()
+                    .rect;
+                let text = text_rect(&output, name);
+                assert!((row.left() - currency_row.left()).abs() < 1.);
+                assert!((row.width() - currency_row.width()).abs() < 1.);
+                assert!((row.height() - currency_row.height()).abs() < 1.);
+                assert!(
+                    (text.left() - row.left() - inset).abs() < 2.,
+                    "{name}: {text:?} {row:?}, inset {inset}"
+                );
+                assert!(
+                    ctx.read_response(egui::Id::new((
+                        "finance-table-cell",
+                        "stored-values-headers",
+                        0
+                    )))
+                    .is_none()
+                );
+                let delete = ctx
+                    .read_response(egui::Id::new(("finance-row-delete", id)))
+                    .unwrap()
+                    .rect;
+                assert!(row.contains_rect(delete));
+                let done = text_rect(&output, "Done");
+                assert!(row.bottom() < done.top());
+            }
+            app.close_settings();
+            std::fs::remove_dir_all(app.data_path).unwrap();
+        }
+    }
+}

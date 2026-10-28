@@ -42,6 +42,21 @@ impl Amigo {
                 "A task file operation is still running. Try again when it finishes.".into();
             return;
         }
+        if self.squidy.has_draft() {
+            self.error =
+                "Save or cancel the Squidy card or connection before transferring the setup."
+                    .into();
+            return;
+        }
+        if self.squidy_io.blocked && self.squidy_dirty() {
+            self.error = self.squidy.error.clone();
+            return;
+        }
+        if self.squidy_dirty() || self.squidy_busy() {
+            self.squidy_io.pending_setup = Some(action);
+            self.squidy.changed_at = Instant::now() - Duration::from_secs(1);
+            return;
+        }
         if self.journal.dirty() || self.journal.busy {
             self.journal_io.pending_setup = Some(action);
             return;
@@ -255,6 +270,7 @@ impl Amigo {
         let modal = design::modal(ctx, egui::Id::new("data-transfer-dialog")).show(ctx, |ui| {
             ui.set_width(design::dialog_width(ctx, 640.0));
             close = design::settings_heading(ui, &format!("{verb} {}", dialog.scope.label())).clicked();
+            design::dialog_body(ui, "data-transfer-body", |ui| {
             ui.label(RichText::new(&dialog.name).strong());
             match dialog.action {
                 DataAction::Import => {
@@ -285,15 +301,27 @@ impl Amigo {
                 });
             }
             if !dialog.error.is_empty() { ui.colored_label(colors(ui).red, &dialog.error); }
+            });
             design::dialog_footer(ui, |ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    submit = ui.add_enabled_ui(valid, |ui| design::dialog_primary(ui, &submit_label)).inner.clicked();
+                    submit = ui.add_enabled_ui(valid, |ui| {
+                        if dialog.action == DataAction::Delete || (dialog.action == DataAction::Import && ready) {
+                            design::dialog_destructive(ui, &submit_label)
+                        } else {
+                            design::dialog_primary(ui, &submit_label)
+                        }
+                    }).inner.clicked();
                     close |= design::button(ui, "Cancel").clicked();
                 });
             });
         });
         // Destructive confirmation requires clicking its explicit button; Enter cannot replace data.
-        close |= keys.dialog(&modal, false).cancel;
+        let shortcut = keys.dialog(
+            &modal,
+            valid && (dialog.action == DataAction::Export || !ready),
+        );
+        close |= shortcut.cancel;
+        submit |= shortcut.confirm;
         if close {
             return;
         }

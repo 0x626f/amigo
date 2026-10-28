@@ -145,6 +145,7 @@ fn contents(app: &mut FinanceUi<'_>, ui: &mut egui::Ui) {
                 .cloned()
                 .collect();
             if rows.is_empty()
+                && !app.reference_settings
                 && !app
                     .state
                     .drafts

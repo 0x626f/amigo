@@ -125,6 +125,7 @@ class ReleaseTests(unittest.TestCase):
         self.assertIn("Architecture: amd64\n", control)
         self.assertIn("libc6 (>= 2.34)", control)
         self.assertIn("libxkbcommon-x11-0", control)
+        self.assertIn("Recommends: ffmpeg\n", control)
         self.assertIn("--root-owner-group", builder.call_args.args)
 
     def test_staged_amigo_contains_launchers_and_icons_without_personal_data(self):

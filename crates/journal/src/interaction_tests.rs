@@ -88,6 +88,51 @@ fn tree_entries() -> Vec<Entry> {
     ]
 }
 
+#[test]
+fn notebook_rows_show_one_name_tooltip_without_the_markdown_extension() {
+    fn text_count(shape: &egui::Shape, expected: &str) -> usize {
+        match shape {
+            egui::Shape::Text(text) => usize::from(text.galley.text() == expected),
+            egui::Shape::Vec(shapes) => shapes.iter().map(|s| text_count(s, expected)).sum(),
+            _ => 0,
+        }
+    }
+    for dark in [false, true] {
+        let ctx = egui::Context::default();
+        design::install(&ctx);
+        design::apply_theme(&ctx, dark);
+        ctx.style_mut_of(
+            if dark {
+                egui::Theme::Dark
+            } else {
+                egui::Theme::Light
+            },
+            |style| {
+                style.interaction.tooltip_delay = 0.;
+                style.interaction.show_tooltips_only_when_still = false;
+            },
+        );
+        let size = egui::vec2(980., 640.);
+        let mut app = notebook(String::new());
+        app.tab.entries = tree_entries();
+        for (path, name) in [("Root.md", "Root"), ("Work", "Work")] {
+            settle_workspace(&mut app, &ctx, size);
+            let pos = rect(&ctx, ("journal-entry", path)).center();
+            workspace_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(pos)], size);
+            let output = settle_workspace(&mut app, &ctx, size);
+            let count = |expected| {
+                output
+                    .shapes
+                    .iter()
+                    .map(|s| text_count(&s.shape, expected))
+                    .sum::<usize>()
+            };
+            assert_eq!(count(name), 2, "one row label and one tooltip for {path}");
+            assert_eq!(count(&format!("{name}.md")), 0);
+        }
+    }
+}
+
 fn enter_creation_name(app: &mut Harness, ctx: &egui::Context, size: egui::Vec2, name: &str) {
     click_workspace(app, ctx, size, rect(ctx, "journal-note-name").center());
     workspace_frame(
@@ -335,6 +380,8 @@ fn tree_menus_create_in_their_folder_and_header_buttons_stay_at_root() {
                         "unexpected action: {:?}",
                         app.action
                     );
+                    assert!(app.tab.dialog.as_ref().unwrap().pending);
+                    app.tab.folder_edit_result(None);
                     assert!(app.tab.dialog.is_none());
                     assert_eq!(
                         app.tab.editor.as_ref().unwrap().document.text,
@@ -352,6 +399,17 @@ fn tree_menus_create_in_their_folder_and_header_buttons_stay_at_root() {
                 click_workspace(&mut app, &ctx, size, rect(&ctx, id).center());
                 let output = settle_workspace(&mut app, &ctx, size);
                 assert!(label_optional(&output, "Journal Root").is_some());
+                let kind = if is_folder { "folder" } else { "note" };
+                let area = ctx
+                    .memory(|m| m.area_rect(egui::Id::new("journal-name-dialog")))
+                    .unwrap();
+                assert!(area.height() <= 80. && area.width() < size.x);
+                assert!(ctx.memory(|m| m.has_focus(egui::Id::new("journal-note-name"))));
+                let input = rect(&ctx, "journal-note-name");
+                let confirm = rect(&ctx, format!("journal-{kind}-confirm"));
+                let cancel = rect(&ctx, format!("journal-{kind}-cancel"));
+                assert!(input.right() < confirm.left() && confirm.right() < cancel.left());
+                assert!((input.center().y - confirm.center().y).abs() < 1.);
                 enter_creation_name(&mut app, &ctx, size, "Root item");
                 press(&mut app, &ctx, size, egui::Key::Enter);
                 assert!(match &app.action {
@@ -359,6 +417,14 @@ fn tree_menus_create_in_their_folder_and_header_buttons_stay_at_root() {
                     Some(Action::NewFolder(path)) if is_folder => path == "Root item",
                     _ => false,
                 });
+                assert!(app.tab.dialog.as_ref().unwrap().pending);
+                app.tab
+                    .folder_edit_result(Some("Could not create item; retry."));
+                assert_eq!(app.tab.dialog.as_ref().unwrap().value, "Root item");
+                settle_workspace(&mut app, &ctx, size);
+                click_workspace(&mut app, &ctx, size, confirm.center());
+                assert!(app.tab.dialog.as_ref().unwrap().pending);
+                app.tab.folder_edit_result(None);
             }
         }
     }
@@ -390,6 +456,7 @@ fn three_dot_and_context_menus_share_actions_without_navigating_and_spaces_targe
                         open_tree_menu(&mut app, &ctx, size, path);
                     }
                     assert!(egui::Popup::is_any_open(&ctx));
+                    assert!(rect(&ctx, ("journal-entry-delete", path)).height() <= 28.);
                     assert!(app.action.is_none());
                     assert!(app.tab.expanded.contains("Work"));
                     click_workspace(
@@ -836,6 +903,110 @@ fn trash_menus_restore_items_and_disable_actions_while_loading() {
                 );
                 assert!(app.tab.expanded.contains("Trash/Folder"));
             }
+        }
+    }
+}
+
+#[test]
+fn compact_folder_editor_owns_focus_validates_and_recovers_failed_renames() {
+    for dark in [false, true] {
+        for size in [egui::vec2(980., 640.), egui::vec2(1440., 900.)] {
+            let ctx = egui::Context::default();
+            design::install(&ctx);
+            design::apply_theme(&ctx, dark);
+            let mut app = notebook("Keep the current note".into());
+            app.tab.entries = tree_entries();
+            app.tab.entries.push(Entry {
+                path: TRASH_FOLDER.into(),
+                folder: true,
+            });
+            settle_workspace(&mut app, &ctx, size);
+            assert!(
+                ctx.read_response(egui::Id::new(("journal-folder-rename", TRASH_FOLDER)))
+                    .is_none()
+            );
+            assert!(
+                ctx.read_response(egui::Id::new(("journal-folder-rename", "Root.md")))
+                    .is_none()
+            );
+            click_workspace(
+                &mut app,
+                &ctx,
+                size,
+                rect(&ctx, ("journal-folder-rename", "Work")).center(),
+            );
+            settle_workspace(&mut app, &ctx, size);
+            assert!(ctx.memory(|m| m.has_focus(egui::Id::new("journal-note-name"))));
+            let area = ctx
+                .memory(|m| m.area_rect(egui::Id::new("journal-name-dialog")))
+                .unwrap();
+            assert!(area.height() <= 80. && area.width() < size.x);
+            let input = rect(&ctx, "journal-note-name");
+            let confirm = rect(&ctx, "journal-folder-confirm");
+            let cancel = rect(&ctx, "journal-folder-cancel");
+            assert!(input.right() < confirm.left() && confirm.right() < cancel.left());
+            assert!((input.center().y - confirm.center().y).abs() < 1.);
+            // The selected folder name is ready to replace without an extra click.
+            workspace_frame(
+                &mut app,
+                &ctx,
+                vec![egui::Event::Text("Renamed 🌍".into())],
+                size,
+            );
+            press(&mut app, &ctx, size, egui::Key::Enter);
+            assert!(matches!(&app.action, Some(Action::Rename { old, name })
+                if old == "Work" && name == "Renamed 🌍"));
+            assert!(app.tab.dialog.as_ref().unwrap().pending);
+            app.tab.folder_edit_result(Some("A disk error; try again."));
+            settle_workspace(&mut app, &ctx, size);
+            let draft = app.tab.dialog.as_ref().unwrap();
+            assert_eq!(draft.value, "Renamed 🌍");
+            assert!(!draft.pending && draft.error.contains("disk error"));
+            click_workspace(
+                &mut app,
+                &ctx,
+                size,
+                rect(&ctx, "journal-folder-confirm").center(),
+            );
+            assert!(matches!(&app.action, Some(Action::Rename { old, name })
+                if old == "Work" && name == "Renamed 🌍"));
+            app.tab.folder_edit_result(None);
+            settle_workspace(&mut app, &ctx, size);
+            click_workspace(
+                &mut app,
+                &ctx,
+                size,
+                rect(&ctx, "journal-new-folder").center(),
+            );
+            settle_workspace(&mut app, &ctx, size);
+            enter_creation_name(&mut app, &ctx, size, "Work");
+            press(&mut app, &ctx, size, egui::Key::Enter);
+            assert!(app.action.is_none());
+            assert!(
+                app.tab
+                    .dialog
+                    .as_ref()
+                    .unwrap()
+                    .error
+                    .contains("already exists")
+            );
+            enter_creation_name(&mut app, &ctx, size, "../Elsewhere");
+            press(&mut app, &ctx, size, egui::Key::Enter);
+            assert!(app.action.is_none());
+            assert!(
+                app.tab
+                    .dialog
+                    .as_ref()
+                    .unwrap()
+                    .error
+                    .contains("without a path")
+            );
+            press(&mut app, &ctx, size, egui::Key::Escape);
+            assert!(app.tab.dialog.is_none());
+            assert_eq!(
+                app.tab.editor.as_ref().unwrap().document.text,
+                "Keep the current note"
+            );
         }
     }
 }

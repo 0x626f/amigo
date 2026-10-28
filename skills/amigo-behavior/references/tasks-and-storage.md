@@ -6,7 +6,9 @@ Read this when a change touches gestures, attachments, board/vault lifecycle, or
 
 Task statuses determine Kanban columns and their order; categories are a separate filterable catalogue. Default statuses are starting values, not a hardcoded set of columns. Stable status/category IDs preserve assignments through renames. Removing a used status requires reassignment; removing a task category leaves its tasks Uncategorized.
 
-Click/tap opens the task dialog after the system double-click interval. Keep existing mouse dragging, double-click-and-hold dragging, and touchpad tap-and-drag support in `crates/tasks/src/cards.rs`. Touchpads may produce one synthesized primary-button hold followed by movement rather than two complete mouse clicks. Process pointer events in order, including press/release/press/move sequences batched in one frame. Hold the task until release; Escape cancels the gesture. Preserve reordering within a column and movement between columns.
+Click/tap opens the task dialog after the system double-click interval; releasing a completed double-click opens details immediately. A completed double-click must not merely arm a future drag. Keep existing mouse dragging, double-click-and-hold dragging, and touchpad tap-and-drag support in `crates/tasks/src/cards.rs`. Touchpads may produce one synthesized primary-button hold followed by movement rather than two complete mouse clicks. Process pointer events in order, including press/release/press/move sequences batched in one frame. Hold the task until release; Escape cancels the gesture. Preserve reordering within a column and movement between columns.
+
+Descriptions start in Markdown preview. A single click activates editing, with “Add a description…” for an empty field. Clicking elsewhere retains the text in the task draft and returns to preview. Escape restores the description from before that edit and returns to preview before a second Escape can close the task dialog. Save Task commits the task draft.
 
 ## Attachments
 

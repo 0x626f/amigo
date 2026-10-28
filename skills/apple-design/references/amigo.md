@@ -62,3 +62,26 @@ application against every platform requirement.
 Verification: workspace tests and Clippy; native Journal, settings, Tasks, and
 Finance previews in both themes and window sizes. The palette regression test
 checks normal interface text and semantic colors against a 4.5:1 contrast target.
+
+## Dialog review
+
+This review covers the shared dialog shell and the Tasks, Calendar, Finance,
+Journal, Squidy, library/password, transfer, settings, and update dialogs.
+The compact Journal name editor retains its established one-line layout.
+Native operating-system file pickers retain their platform presentation.
+
+| Principle | Verdict | Evidence |
+| --- | --- | --- |
+| Purpose | Conforms | Dialogs lead with the operation and keep the relevant fields and actions together. |
+| Agency | Conforms | Cancel preserves stored data; Escape leaves Calendar and currency deletion prompts before closing the draft. |
+| Responsibility | Conforms | Destructive actions have a distinct red treatment and explicit consequences; replacement imports still require an explicit confirmation. |
+| Familiarity | Conforms | Shared headings, spacing, surfaces, and trailing Cancel/confirmation actions cover every feature. |
+| Flexibility | Conforms | Long bodies scroll independently of the heading/footer; light/dark themes and both supported window sizes are exercised. |
+| Simplicity | Conforms | Whitespace replaces repeated header/footer rules, and related form fields share quiet groups. |
+| Craft | Conforms | Name/password/event fields receive initial focus; opening a delete prompt cannot confirm it with the same Enter press. |
+| Delight | Conforms | Existing hover/focus feedback remains, with no decorative animation added to interrupt form entry. |
+
+Verification uses headless interaction/geometry tests and the isolated native
+Journal/settings, Calendar, Squidy, Task, and vault previews in both themes at
+980 × 640 and 1440 × 900. This records project choices informed by the linked HIG
+references; it does not claim native Apple platform certification.

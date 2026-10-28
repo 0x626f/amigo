@@ -150,8 +150,7 @@ fn task_keyboard_confirms_valid_edits_cancels_and_preserves_multiline_entry() {
     for _ in 0..3 {
         let _ = render(&mut app, &ctx, vec![]);
     }
-    ctx.memory_mut(|m| m.request_focus(egui::Id::new("task-description")));
-    let _ = render(&mut app, &ctx, vec![]);
+    click_description(&mut app, &ctx, Vec2::new(1440., 900.), None);
     keyboard(&mut app, &ctx, egui::Key::Enter, egui::Modifiers::NONE);
     assert!(
         app.state
@@ -262,6 +261,175 @@ fn click(app: &mut Harness, ctx: &egui::Context, pos: egui::Pos2) {
         vec![egui::Event::PointerMoved(pos), pointer_button(pos, true)],
     );
     let _ = render(app, ctx, vec![pointer_button(pos, false)]);
+}
+
+fn click_description(app: &mut Harness, ctx: &egui::Context, size: Vec2, text: Option<&str>) {
+    let mut output = render_at(app, ctx, vec![], size);
+    for _ in 0..3 {
+        output = render_at(app, ctx, vec![], size);
+    }
+    let pos = text
+        .map(|text| text_rect(&output, text).center())
+        .unwrap_or_else(|| {
+            ctx.read_response(egui::Id::new("task-description-preview"))
+                .unwrap()
+                .rect
+                .center()
+        });
+    for pressed in [true, false] {
+        render_at(
+            app,
+            ctx,
+            vec![egui::Event::PointerMoved(pos), pointer_button(pos, pressed)],
+            size,
+        );
+    }
+    render_at(app, ctx, vec![], size);
+}
+
+#[test]
+fn descriptions_open_in_preview_single_click_edits_and_blur_preserves_the_draft() {
+    for size in [Vec2::new(1440., 900.), Vec2::new(980., 640.)] {
+        let (mut app, ctx) = harness();
+        let mut task = Task::new(1, app.workspace.default_task_status());
+        task.title = "Research".into();
+        task.description = "# Field notes\n\n**Original** evidence.".into();
+        app.workspace.tasks.push(task.clone());
+        app.state.edit_task(task.clone());
+        let mut output = render_at(&mut app, &ctx, vec![], size);
+        for _ in 0..3 {
+            output = render_at(&mut app, &ctx, vec![], size);
+        }
+        assert!(text_rect_optional(&output, "Field notes").is_some());
+        for label in ["Preview", "Edit Markdown", task.description.as_str()] {
+            assert!(text_rect_optional(&output, label).is_none());
+        }
+        assert!(
+            !app.state
+                .editor
+                .as_ref()
+                .unwrap()
+                .description_editor
+                .editing
+        );
+        click_description(&mut app, &ctx, size, Some("Field notes"));
+        assert!(
+            app.state
+                .editor
+                .as_ref()
+                .unwrap()
+                .description_editor
+                .editing
+        );
+        assert!(ctx.memory(|m| m.has_focus(egui::Id::new("task-description"))));
+        render_at(
+            &mut app,
+            &ctx,
+            vec![egui::Event::Text(" Added evidence.".into())],
+            size,
+        );
+        let edited = app.state.editor.as_ref().unwrap().draft.description.clone();
+        assert!(edited.contains("Added evidence."));
+        let summary = ctx
+            .read_response(egui::Id::new("task-summary"))
+            .unwrap()
+            .rect
+            .center();
+        for pressed in [true, false] {
+            render_at(
+                &mut app,
+                &ctx,
+                vec![
+                    egui::Event::PointerMoved(summary),
+                    pointer_button(summary, pressed),
+                ],
+                size,
+            );
+        }
+        assert!(
+            !app.state
+                .editor
+                .as_ref()
+                .unwrap()
+                .description_editor
+                .editing
+        );
+        assert_eq!(app.state.editor.as_ref().unwrap().draft.description, edited);
+        assert_eq!(app.workspace.tasks[0].description, task.description);
+        let output = render_at(&mut app, &ctx, vec![], size);
+        let save = text_rect(&output, "Save Task").center();
+        for pressed in [true, false] {
+            render_at(
+                &mut app,
+                &ctx,
+                vec![
+                    egui::Event::PointerMoved(save),
+                    pointer_button(save, pressed),
+                ],
+                size,
+            );
+        }
+        assert!(app.state.editor.is_none());
+        assert_eq!(app.workspace.tasks[0].description, edited);
+        app.state.edit_task(app.workspace.tasks[0].clone());
+        render_at(&mut app, &ctx, vec![], size);
+        assert!(
+            !app.state
+                .editor
+                .as_ref()
+                .unwrap()
+                .description_editor
+                .editing
+        );
+        click_description(&mut app, &ctx, size, None);
+        assert!(
+            app.state
+                .editor
+                .as_ref()
+                .unwrap()
+                .description_editor
+                .editing
+        );
+        assert!(ctx.memory(|m| m.has_focus(egui::Id::new("task-description"))));
+        render_at(
+            &mut app,
+            &ctx,
+            vec![egui::Event::Text(" Discard this.".into())],
+            size,
+        );
+        assert!(ctx.memory(|m| m.has_focus(egui::Id::new("task-description"))));
+        render_at(
+            &mut app,
+            &ctx,
+            vec![egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            size,
+        );
+        let editor = app.state.editor.as_ref().unwrap();
+        assert!(!editor.description_editor.editing);
+        assert_eq!(editor.draft.description, edited);
+        assert_eq!(app.workspace.tasks[0].description, edited);
+        for pressed in [false, true] {
+            render_at(
+                &mut app,
+                &ctx,
+                vec![egui::Event::Key {
+                    key: egui::Key::Escape,
+                    physical_key: None,
+                    pressed,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                size,
+            );
+        }
+        assert!(app.state.editor.is_none());
+    }
 }
 
 #[test]
@@ -490,7 +658,72 @@ fn task_card_hover_keeps_arrow_and_single_click_opens_the_dialog() {
     assert_eq!(app.state.editor.as_ref().unwrap().draft.id, id);
 }
 #[test]
-fn double_click_arms_the_next_drag_and_escape_cancels_without_opening_a_dialog() {
+fn completed_double_click_opens_details_for_separate_and_batched_pointer_events() {
+    for dark in [false, true] {
+        for size in [Vec2::new(980., 640.), Vec2::new(1440., 900.)] {
+            for sequence in 0..4 {
+                let (mut app, ctx) = harness();
+                design::apply_theme(&ctx, dark);
+                let mut task = Task::new(1, "todo");
+                task.title = "Open on a completed double-click".into();
+                let id = task.id.clone();
+                app.workspace.tasks.push(task);
+                for _ in 0..4 {
+                    render_at(&mut app, &ctx, vec![], size);
+                }
+                let rect = ctx.read_response(egui::Id::new(&id)).unwrap().rect;
+                let pos = if sequence % 2 == 0 {
+                    rect.center()
+                } else {
+                    rect.left_top() + Vec2::splat(6.)
+                };
+                let events = [
+                    egui::Event::PointerMoved(pos),
+                    pointer_button(pos, true),
+                    pointer_button(pos, false),
+                    pointer_button(pos, true),
+                    pointer_button(pos, false),
+                ];
+                let groups: Vec<Vec<egui::Event>> = match sequence {
+                    0 => events.into_iter().map(|e| vec![e]).collect(),
+                    1 => vec![events[..3].to_vec(), events[3..].to_vec()],
+                    2 => vec![events.to_vec()],
+                    _ => vec![
+                        events[..2].to_vec(),
+                        events[2..4].to_vec(),
+                        events[4..].to_vec(),
+                    ],
+                };
+                for events in groups {
+                    render_at(&mut app, &ctx, events, size);
+                }
+                assert_eq!(
+                    app.state.editor.as_ref().unwrap().draft.id,
+                    id,
+                    "sequence {sequence}"
+                );
+                assert!(!egui::DragAndDrop::has_any_payload(&ctx));
+                let output = render_at(&mut app, &ctx, vec![], size);
+                assert!(text_rect_optional(&output, "Add a description…").is_some());
+                assert!(text_rect_optional(&output, "Double-click to add text.").is_none());
+                assert!(text_rect_optional(&output, "Save Task").is_some());
+                click_description(&mut app, &ctx, size, Some("Add a description…"));
+                assert!(
+                    app.state
+                        .editor
+                        .as_ref()
+                        .unwrap()
+                        .description_editor
+                        .editing
+                );
+                assert!(ctx.memory(|m| m.has_focus(egui::Id::new("task-description"))));
+            }
+        }
+    }
+}
+
+#[test]
+fn double_click_hold_drag_and_escape_cancel_without_opening_a_dialog() {
     let (mut app, ctx) = harness();
     let mut task = Task::new(1, "todo");
     task.title = "Move deliberately".into();
@@ -501,7 +734,7 @@ fn double_click_arms_the_next_drag_and_escape_cancels_without_opening_a_dialog()
     }
     let pos = ctx.read_response(egui::Id::new(&id)).unwrap().rect.center();
     click(&mut app, &ctx, pos);
-    click(&mut app, &ctx, pos);
+    let _ = render(&mut app, &ctx, vec![pointer_button(pos, true)]);
     for _ in 0..25 {
         let output = render(&mut app, &ctx, vec![]);
         assert_eq!(
@@ -510,7 +743,6 @@ fn double_click_arms_the_next_drag_and_escape_cancels_without_opening_a_dialog()
         );
     }
     assert!(app.state.editor.is_none());
-    let _ = render(&mut app, &ctx, vec![pointer_button(pos, true)]);
     let target = pos + Vec2::new(60.0, 70.0);
     let _ = render(&mut app, &ctx, vec![egui::Event::PointerMoved(target)]);
     assert!(egui::DragAndDrop::has_payload_of_type::<cards::TaskDrag>(
@@ -553,7 +785,6 @@ fn double_click_drag_reorders_cards_within_a_column() {
         .unwrap()
         .rect
         .center();
-    click(&mut app, &ctx, start);
     click(&mut app, &ctx, start);
     let _ = render(&mut app, &ctx, vec![pointer_button(start, true)]);
     let _ = render(
@@ -623,12 +854,7 @@ fn fast_double_click_drag_handles_multiple_pointer_events_in_one_frame() {
             }
             1 => {
                 let _ = render(&mut app, &ctx, vec![pointer_button(start, false)]);
-                // A complete second click is followed by a fast drag press.
-                let _ = render(
-                    &mut app,
-                    &ctx,
-                    vec![pointer_button(start, true), pointer_button(start, false)],
-                );
+                // The second press and movement arrive together.
                 let _ = render(
                     &mut app,
                     &ctx,
@@ -640,12 +866,6 @@ fn fast_double_click_drag_handles_multiple_pointer_events_in_one_frame() {
             }
             _ => {
                 let _ = render(&mut app, &ctx, vec![pointer_button(start, false)]);
-                // Both events in the second click share a frame.
-                let _ = render(
-                    &mut app,
-                    &ctx,
-                    vec![pointer_button(start, true), pointer_button(start, false)],
-                );
                 let _ = render(&mut app, &ctx, vec![pointer_button(start, true)]);
                 let _ = render(&mut app, &ctx, vec![egui::Event::PointerMoved(target)]);
             }

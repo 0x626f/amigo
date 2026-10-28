@@ -237,6 +237,7 @@ def package_deb(work, root):
         f"Depends: libc6 (>= {minimum}), libgcc-s1, libx11-6, libxcursor1, libxi6, libxrandr2, "
         "libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libwayland-cursor0, "
         "libwayland-egl1, libgl1, libegl1, libdbus-1-3, xdg-utils, xdg-desktop-portal\n"
+        "Recommends: ffmpeg\n"
         "Description: Personal tasks, calendars, and finances\n"
         " A native desktop workspace for personal Kanban boards, calendars, and finance vaults.\n"
     )

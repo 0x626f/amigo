@@ -37,6 +37,7 @@ pub enum Action {
     Restore(String),
     DeletePermanently(String),
     OpenExternal,
+    AttachMedia,
     StoreExternal {
         source: std::path::PathBuf,
         folder: String,
@@ -105,9 +106,24 @@ impl Editor {
     pub fn dirty(&self) -> bool {
         self.document.text != self.saved_text
     }
+    pub fn append_markdown(&mut self, ctx: &egui::Context, text: &str) {
+        let id = egui::Id::new(("journal-editor", &self.document.path));
+        let mut state = egui::TextEdit::load_state(ctx, id).unwrap_or_default();
+        let mut undoer = state.undoer();
+        let range = egui::text::CCursorRange::one(egui::text::CCursor::new(
+            self.document.text.chars().count(),
+        ));
+        undoer.add_undo(&(range, self.document.text.clone()));
+        state.set_undoer(undoer);
+        state.store(ctx, id);
+        self.document.text.push_str(text);
+        self.revision = self.revision.wrapping_add(1);
+        self.changed_at = Instant::now();
+    }
 }
 #[derive(Default)]
 pub struct JournalTab {
+    pub media_root: Option<std::path::PathBuf>,
     pub entries: Vec<Entry>,
     pub editor: Option<Editor>,
     pub busy: bool,
@@ -129,10 +145,24 @@ struct NameDialog {
     kind: NameKind,
     value: String,
     error: String,
+    focus: bool,
+    pending: bool,
+}
+impl NameDialog {
+    fn new(kind: NameKind, value: impl Into<String>) -> Self {
+        Self {
+            kind,
+            value: value.into(),
+            error: String::new(),
+            focus: true,
+            pending: false,
+        }
+    }
 }
 enum NameKind {
     Note(String),
     Folder(String),
+    RenameFolder(String),
     Delete(String),
 }
 impl JournalTab {
@@ -145,6 +175,35 @@ impl JournalTab {
         self.title_edit = None;
         self.editor = Some(Editor::new(document));
         self.error.clear();
+    }
+    pub fn folder_edit_result(&mut self, error: Option<&str>) {
+        if let Some(dialog) = &mut self.dialog
+            && dialog.pending
+        {
+            if let Some(error) = error {
+                dialog.pending = false;
+                dialog.focus = true;
+                dialog.error = error.into();
+            } else {
+                self.dialog = None;
+            }
+        }
+    }
+    pub fn renamed_folder(&mut self, old: &str, new: &str) {
+        let prefix = format!("{old}/");
+        self.expanded = self
+            .expanded
+            .iter()
+            .map(|path| {
+                if path == old {
+                    new.into()
+                } else if let Some(suffix) = path.strip_prefix(&prefix) {
+                    format!("{new}/{suffix}")
+                } else {
+                    path.clone()
+                }
+            })
+            .collect();
     }
     pub fn expand_folder(&mut self, folder: &str) {
         let mut parent = String::new();
@@ -174,6 +233,19 @@ impl JournalTab {
         self.expanded.retain(|path| folders.contains(path.as_str()));
     }
     pub fn show(&mut self, ui: &mut egui::Ui, preferences: &mut Preferences) -> Option<Action> {
+        let location = self.media_root.as_ref().and_then(|root| {
+            self.editor
+                .as_ref()
+                .map(|editor| amigo_ui::media::Location {
+                    root: root.clone(),
+                    base: root.join(
+                        std::path::Path::new(&editor.document.path)
+                            .parent()
+                            .unwrap_or(std::path::Path::new("")),
+                    ),
+                })
+        });
+        amigo_ui::media::set_location(ui.ctx(), location);
         let mut action = None;
         if !self.error.is_empty() {
             ui.colored_label(colors(ui).red, &self.error);
@@ -304,6 +376,25 @@ impl JournalTab {
                 }
             },
         );
+        let attach =
+            egui::Rect::from_min_size(rect.min + egui::vec2(48., 7.), egui::vec2(32., 32.));
+        ui.scope_builder(egui::UiBuilder::new().max_rect(attach), |ui| {
+            if ui
+                .add_enabled_ui(has_note && !self.busy && !is_in_trash(&path), |ui| {
+                    design::icon_button(
+                        ui,
+                        egui::Id::new("journal-attach-media"),
+                        Icon::Plus,
+                        "Attach Photo or Video",
+                        32.,
+                    )
+                })
+                .inner
+                .clicked()
+            {
+                action = Some(Action::AttachMedia);
+            }
+        });
         if let Some(edit) = &mut self.title_edit {
             let id = egui::Id::new("journal-title-edit");
             if edit.focus {
@@ -454,7 +545,7 @@ impl JournalTab {
                     "Editor and Preview Options",
                     32.,
                 );
-                egui::Popup::menu(&menu).show(|ui| {
+                design::menu(&menu).show(|ui| {
                     ui.set_min_width(220.);
                     design::eyebrow(ui, "PREVIEW LAYOUT");
                     let side = ui.radio_value(

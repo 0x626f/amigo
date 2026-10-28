@@ -65,6 +65,7 @@ struct Cells<'a> {
     left: f32,
     height: f32,
     active: bool,
+    reference_list: bool,
 }
 impl<'a> Cells<'a> {
     fn new(ui: &'a mut egui::Ui, widths: &'a [f32], row: &'a str) -> Self {
@@ -78,6 +79,7 @@ impl<'a> Cells<'a> {
             left: origin.x,
             height: design::CONTROL_HEIGHT,
             active: false,
+            reference_list: false,
         }
     }
     fn cell<R>(&mut self, field: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
@@ -132,10 +134,10 @@ impl<'a> Cells<'a> {
         visuals.widgets.inactive.weak_bg_fill = egui::Color32::TRANSPARENT;
         visuals.widgets.inactive.bg_stroke = egui::Stroke::NONE;
         child.style_mut().wrap_mode = Some(egui::TextWrapMode::Truncate);
-        child
-            .style_mut()
-            .text_styles
-            .insert(egui::TextStyle::Body, egui::FontId::proportional(13.0));
+        child.style_mut().text_styles.insert(
+            egui::TextStyle::Body,
+            egui::FontId::proportional(if self.reference_list { 15. } else { 13. }),
+        );
         child
             .style_mut()
             .text_styles
@@ -264,14 +266,30 @@ fn column_widths(available: f32, columns: &[&str]) -> Vec<f32> {
 }
 
 fn text(ui: &mut Cells<'_>, row: &str, field: &str, value: &mut String) -> egui::Response {
+    let reference_list = ui.reference_list;
     ui.cell(field, |ui| {
         let full = value.clone();
         ui.add(
             design::input(value)
                 .id(egui::Id::new(("finance-cell", row, field)))
                 .desired_width(ui.available_width())
-                .horizontal_align(egui::Align::Center)
-                .margin(egui::Margin::symmetric(4, 9))
+                .horizontal_align(if reference_list {
+                    egui::Align::Min
+                } else {
+                    egui::Align::Center
+                })
+                .min_size(egui::vec2(
+                    0.,
+                    if reference_list {
+                        44.
+                    } else {
+                        design::CONTROL_HEIGHT
+                    },
+                ))
+                .margin(egui::Margin::symmetric(
+                    if reference_list { 0 } else { 4 },
+                    9,
+                ))
                 .hint_text(title_case(field)),
         )
         .on_hover_text(full)
@@ -896,6 +914,10 @@ fn table_contents(
         .map(|d| d.record.clone())
         .collect();
     visible.extend(rows);
+    if is_reference_list(app) {
+        reference_list(app, ui, visible);
+        return;
+    }
     let grouped = matches!(app.state.view, FinanceView::Income | FinanceView::Expenses);
     let items = table_items(&visible, grouped);
     let columns: Vec<_> = columns.iter().copied().chain(std::iter::once("")).collect();
@@ -1076,6 +1098,46 @@ fn table_contents(
     }
 }
 
+fn is_reference_list(app: &FinanceUi<'_>) -> bool {
+    app.reference_settings && matches!(app.state.storage_unit, 1 | 3 | 4)
+}
+
+/// Configuration catalogues share the currency list's alignment and row rhythm.
+fn reference_list(app: &mut FinanceUi<'_>, ui: &mut egui::Ui, rows: Vec<Record>) {
+    ui.spacing_mut().item_spacing.y = 4.;
+    let width = ui.available_width();
+    let widths = [(width - COLUMN_GAP - 60.).max(0.), 60.];
+    if rows.is_empty() {
+        hint(
+            ui,
+            &format!(
+                "No {} found.",
+                super::references::unit_name(app.state.storage_unit).to_lowercase()
+            ),
+        );
+    }
+    for (index, record) in rows.into_iter().enumerate() {
+        if index > 0 {
+            design::settings_separator(ui);
+        }
+        let rect = egui::Rect::from_min_size(ui.next_widget_position(), egui::vec2(width, 44.));
+        let response = ui.interact(
+            rect,
+            egui::Id::new(("stored-value-row", record.id())),
+            egui::Sense::hover(),
+        );
+        let hover = design::animate_toggle(
+            ui.ctx(),
+            response.id.with("hover"),
+            response.hovered(),
+            0.14,
+        );
+        ui.painter()
+            .rect_filled(rect, 8, colors(ui).hover.gamma_multiply(hover));
+        row(app, ui, record, &widths);
+    }
+}
+
 fn painted_row(
     app: &mut FinanceUi<'_>,
     ui: &mut egui::Ui,
@@ -1154,6 +1216,10 @@ fn row(app: &mut FinanceUi<'_>, ui: &mut egui::Ui, record: Record, widths: &[f32
     let expense = matches!(&draft.record, Record::Expense(_));
     let regular_expense = matches!(&draft.record, Record::Expense(r) if r.regular);
     let mut cells = Cells::new(ui, widths, &key);
+    cells.reference_list = is_reference_list(app);
+    if cells.reference_list {
+        cells.height = 44.;
+    }
     let first = record_cells(app, &mut cells, &mut draft.record);
     if before != draft.record {
         draft.dirty = true;

@@ -20,6 +20,7 @@ struct TaskEditor {
     is_new: bool,
     delete_confirm: bool,
     focus_requested: bool,
+    description_editor: amigo_ui::markdown::InlineEditor,
     pending_attachments: Vec<std::path::PathBuf>,
     attachment_error: String,
     imported_attachments: Vec<attachments::AttachmentBatch>,
@@ -49,6 +50,8 @@ pub enum TasksAction {
     ExportBoard,
     DeleteBoard,
 }
+/// Open a resolved attachment through the native file association from a background job.
+pub use attachments::open_default as open_attachment;
 impl TasksTab {
     pub fn file_operation_in_progress(&mut self) -> bool {
         attachments::busy(self)
@@ -125,6 +128,8 @@ impl TasksTab {
             is_new: true,
             delete_confirm: false,
             focus_requested: true,
+            description_editor: amigo_ui::markdown::InlineEditor::default()
+                .single_click("Add a description…"),
             pending_attachments: vec![],
             attachment_error: String::new(),
             imported_attachments: vec![],
@@ -137,6 +142,8 @@ impl TasksTab {
             is_new: false,
             delete_confirm: false,
             focus_requested: true,
+            description_editor: amigo_ui::markdown::InlineEditor::default()
+                .single_click("Add a description…"),
             pending_attachments: vec![],
             attachment_error: String::new(),
             imported_attachments: vec![],

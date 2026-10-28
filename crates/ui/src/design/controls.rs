@@ -281,13 +281,34 @@ fn checkbox_sized<'a>(
     }
     painted.response
 }
+/// Compact command menus share spacing, including inherited submenu styles.
+pub fn menu_style(style: &mut egui::Style) {
+    egui::containers::menu::menu_style(style);
+    style.spacing.item_spacing = Vec2::new(8., 2.);
+    style.spacing.button_padding = Vec2::new(8., 3.);
+    style.spacing.interact_size = Vec2::new(24., 24.);
+    style.spacing.icon_spacing = 6.;
+    style.spacing.menu_margin = egui::Margin::same(5);
+    style.spacing.menu_width = 240.;
+    style.override_font_id = Some(egui::FontId::proportional(13.));
+    style.visuals.menu_corner_radius = 8.into();
+    style.visuals.widgets.hovered.weak_bg_fill = style.visuals.selection.bg_fill;
+    style.visuals.widgets.active.weak_bg_fill = style.visuals.selection.bg_fill;
+}
+pub fn menu(response: &Response) -> egui::Popup<'_> {
+    egui::Popup::menu(response).style(menu_style)
+}
+pub fn context_menu(response: &Response) -> egui::Popup<'_> {
+    egui::Popup::context_menu(response).style(menu_style)
+}
+
 pub fn menu_button<'a, R>(
     ui: &mut Ui,
     text: impl IntoAtoms<'a>,
     contents: impl FnOnce(&mut Ui) -> R,
 ) -> egui::InnerResponse<Option<R>> {
     let response = button(ui, text);
-    let inner = egui::Popup::menu(&response).show(contents).map(|r| r.inner);
+    let inner = menu(&response).show(contents).map(|r| r.inner);
     egui::InnerResponse::new(inner, response)
 }
 pub fn icon_button(ui: &mut Ui, id: egui::Id, kind: Icon, label: &str, size: f32) -> Response {

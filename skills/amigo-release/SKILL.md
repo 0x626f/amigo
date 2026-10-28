@@ -1,6 +1,6 @@
 ---
 name: amigo-release
-description: "Prepare, validate, and publish Amigo desktop releases using the existing native CI matrix, package checks, and GitHub assets. Use when releasing an Amigo version or validating its distribution packages."
+description: "Prepare, validate, and publish Amigo desktop releases from main using the existing native CI matrix, package checks, and GitHub assets. Use when releasing an Amigo version or validating its distribution packages."
 ---
 
 # Release Amigo
@@ -15,6 +15,10 @@ given for the requested release.
 
 ## Source and builds
 
+- **Create releases only from `main`.** Integrate the intended `develop` changes
+  into `main` before release preparation or package builds. Fast-forward when
+  possible to preserve existing commit hashes; preserve history when a merge is
+  needed. Use a clean, up-to-date `main` checkout for release preparation.
 - Inspect the working tree, staged changes, branch, origin, and existing local and
   remote tags. Include completed work in the requested release deliberately;
   preserve unrelated changes. Never reuse old temporary release artifacts.
@@ -24,11 +28,10 @@ given for the requested release.
 - Run `python3 -B scripts/dev.py check`, `cargo check --locked --examples`, and
   `git diff --check`. Commit the complete release source before packaging so
   `SOURCE-*.json` records a clean, reproducible commit.
-- Push the release source to the intended branch. The native workflow runs on
-  `main`/`develop` pushes and supports manual dispatch. Follow the run for that
-  **exact commit**, not the latest run by timestamp. A run on `develop` is a valid
-  release source; do not move `main` unless the requested release workflow calls
-  for that branch change.
+- Push the release source to `origin/main`. The native workflow also runs on
+  `develop`, but release artifacts must come from a successful run on `main`
+  for the **exact release commit**, not the latest run by timestamp. For manual
+  dispatch, select `main`. Builds from `develop` are development validation only.
 - The matrix covers Linux/macOS/Windows × x86_64/aarch64. Build natively; reject
   `CARGO_BUILD_TARGET` and mismatched executable headers. Linux CI uses Ubuntu
   22.04 for its glibc baseline. Local Fedora packages may require newer glibc and
@@ -40,8 +43,8 @@ checks, native distribution build, preparation, and container validation.
 
 ## Validate the actual packages
 
-Download artifacts only from the successful run for the release commit into a
-new temporary directory. Expect six platform/architecture sets: Linux has RPM,
+Download artifacts only from the successful `main` run for the release commit
+into a new temporary directory. Expect six platform/architecture sets: Linux has RPM,
 DEB, AppImage; macOS has app ZIP and DMG; Windows has portable ZIP and setup EXE.
 That is **14 packages**, six source manifests, and six checksum files: **26
 release assets**. `RELEASE_NOTES.md` from each job is not an upload asset.
@@ -66,7 +69,10 @@ macOS signatures or a Windows install check do not establish GUI behavior.
 
 ## Tag, upload, and publish
 
-Create/push one annotated `vX.Y.Z` tag pointing to the verified source commit.
+Create/push one annotated `vX.Y.Z` tag pointing to the verified source commit on
+`origin/main`. Before tagging and publishing, verify that the release commit
+belongs to `origin/main` and matches the successful `main` workflow run and all
+package source manifests.
 If the tag or release already exists, inspect it; do not force-move tags, delete
 releases, overwrite assets, or retry publication blindly.
 

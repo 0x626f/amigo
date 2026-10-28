@@ -130,6 +130,18 @@ impl Amigo {
             self.updates.status = "Saving Journal notes before updating…".into();
             return;
         }
+        if self.squidy.has_draft() || self.squidy_io.blocked && self.squidy_dirty() {
+            self.updates.error =
+                "Save or cancel Squidy drafts and resolve any board save conflict before updating."
+                    .into();
+            return;
+        }
+        if self.squidy_busy() || self.squidy_dirty() {
+            self.updates.pending_install = true;
+            self.updates.status = "Saving Squidy boards before updating…".into();
+            self.squidy.changed_at = Instant::now() - Duration::from_secs(1);
+            return;
+        }
         if !self.finance.drafts.is_empty() {
             self.updates.error =
                 "Save or cancel your unfinished finance edits before restarting to update.".into();
@@ -200,6 +212,8 @@ impl Amigo {
         }
         if self.updates.pending_install
             && !self.journal.busy
+            && !self.squidy_busy()
+            && (!self.squidy_dirty() || self.squidy_io.blocked)
             && (!self.journal.dirty() || self.journal.editor.as_ref().is_some_and(|e| e.conflict))
         {
             self.install_update(ctx);
@@ -323,14 +337,18 @@ impl Amigo {
             .anchor(egui::Align2::RIGHT_BOTTOM, [-20., -20.])
             .resizable(false)
             .collapsible(false)
+            .frame(design::dialog(ctx))
             .open(&mut open)
             .show(ctx, |ui| {
+                ui.set_width(design::dialog_width(ctx, 340.));
                 ui.label(format!("Amigo {version} is ready to download."));
-                ui.horizontal(|ui| {
-                    view = design::primary(ui, "View Update").clicked();
-                    if design::button(ui, "Later").clicked() {
-                        self.updates.notice = false;
-                    }
+                design::dialog_footer(ui, |ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        view = design::dialog_primary(ui, "View Update").clicked();
+                        if design::button(ui, "Later").clicked() {
+                            self.updates.notice = false;
+                        }
+                    });
                 });
             });
         if !open {

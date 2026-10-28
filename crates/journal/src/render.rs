@@ -40,6 +40,7 @@ enum Kind {
     Code(String, String),
     Table(Vec<Alignment>, Vec<Vec<Inline>>),
     Rule,
+    Media(String, Inline),
 }
 #[derive(Debug)]
 struct Block {
@@ -198,8 +199,42 @@ impl Preview {
                     b.style.wrappers.pop();
                 }
                 Event::Start(Tag::Image { dest_url, .. }) => {
-                    b.style.link = Some(dest_url.into_string());
-                    b.style.wrappers.push(span.clone());
+                    if !b.inline.atoms.is_empty() {
+                        b.flush(&mut result.blocks, &starts, base_line);
+                    }
+                    let mut alt = Inline::default();
+                    let mut end = span.end;
+                    for (event, range) in events.by_ref() {
+                        end = range.end;
+                        match event {
+                            Event::End(TagEnd::Image) => break,
+                            Event::Text(text) | Event::Code(text) => {
+                                alt.value.push_str(&text);
+                                alt.atoms.push(Atom {
+                                    text: text.into_string(),
+                                    span: range,
+                                    wrappers: vec![span.clone()],
+                                    ..Default::default()
+                                });
+                            }
+                            _ => (),
+                        }
+                    }
+                    result.blocks.push(Block {
+                        extra_inset: 0.,
+                        span: span.start..end,
+                        code_original: String::new(),
+                        task: b.task.take(),
+                        removed: false,
+                        edit_ids: vec![],
+                        restore: None,
+                        kind: Kind::Media(dest_url.into_string(), alt),
+                        lines: base_line + line_at(span.start)..base_line + line_at(end) + 1,
+                        indent: b.lists.len().saturating_sub(1),
+                        marker: b.marker.take(),
+                        quote: b.quote,
+                        anchor: None,
+                    });
                 }
                 Event::End(TagEnd::Image) => {
                     b.style.link = None;
@@ -413,7 +448,7 @@ impl Preview {
         b.flush(&mut result.blocks, &starts, base_line);
         for block in &mut result.blocks {
             match &mut block.kind {
-                Kind::Text(_, inline) => {
+                Kind::Text(_, inline) | Kind::Media(_, inline) => {
                     for atom in &mut inline.atoms {
                         atom.original = atom.text.clone();
                     }
@@ -469,7 +504,9 @@ impl Preview {
                 });
             }
             match &block.kind {
-                Kind::Text(_, inline) => patches.extend(self.inline_patches(inline)),
+                Kind::Text(_, inline) | Kind::Media(_, inline) => {
+                    patches.extend(self.inline_patches(inline))
+                }
                 Kind::Table(_, rows) => {
                     for row in rows {
                         for inline in row {
@@ -497,7 +534,7 @@ impl Preview {
         let source = source.start.max(body)..source.end.max(body);
         for block in &mut self.blocks {
             match &mut block.kind {
-                Kind::Text(_, inline) => {
+                Kind::Text(_, inline) | Kind::Media(_, inline) => {
                     if let Some(range) = restore_inline(&self.prepared, inline, &source) {
                         inline.restore = Some(range);
                         return;
@@ -796,6 +833,7 @@ fn estimated_height(block: &Block, width: f32, size: f32) -> f32 {
         Kind::Code(_, text) => text.lines().count().max(1) as f32 * size * 1.5 + 56.,
         Kind::Table(_, rows) => rows.len().max(1) as f32 * (size * 1.65 + 10.) + 16.,
         Kind::Rule => 32.,
+        Kind::Media(_, _) => 280.,
     }
 }
 fn render_block(
@@ -1017,10 +1055,32 @@ fn render_block(
                             });
                         ui.add_space(16.);
                     }
+                    Kind::Media(target, alt) => {
+                        amigo_ui::media::show_current(ui, target);
+                        if !alt.value.is_empty() || editable {
+                            let result = inline_label(
+                                ui,
+                                alt,
+                                width,
+                                InlineStyle {
+                                    size: (size - 2.).max(11.),
+                                    bold: false,
+                                    quote: false,
+                                    multiline: false,
+                                    list: false,
+                                },
+                                editable,
+                                inputs,
+                            );
+                            changed |= result.1;
+                            focused.push(result.2);
+                        }
+                        ui.add_space(10.);
+                    }
                     Kind::Rule => {
                         ui.add_space(8.);
                         let rule = ui.separator();
-                        rule.context_menu(|ui| {
+                        design::context_menu(&rule).show(|ui| {
                             if ui
                                 .add_enabled(editable, design::Button::new("Remove Divider"))
                                 .clicked()

@@ -20,7 +20,7 @@ fn change(inline: &mut Inline, value: &str) {
     inline.value = value.into();
 }
 fn text(preview: &mut Preview, index: usize, value: &str) {
-    let Kind::Text(_, inline) = &mut preview.blocks[index].kind else {
+    let (Kind::Text(_, inline) | Kind::Media(_, inline)) = &mut preview.blocks[index].kind else {
         panic!()
     };
     change(inline, value);

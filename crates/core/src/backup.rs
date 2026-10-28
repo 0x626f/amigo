@@ -409,6 +409,22 @@ fn validate_library(root: &Path) -> Result<Library> {
         }
     }
     Organizer::load(root)?;
+    if root.join("squidy").exists() {
+        let store = crate::squidy::Store {
+            root: root.join("squidy"),
+        };
+        for entry in store.entries()? {
+            let (board, _) = store.load(&entry.id)?;
+            for card in board.cards {
+                for file in card.attachments {
+                    let path = attachments::resolve(&store.folder(&entry.id)?, &file)?;
+                    if fs::metadata(path).map_err(|e| e.to_string())?.len() != file.size {
+                        return Err("A Squidy attachment is incomplete.".into());
+                    }
+                }
+            }
+        }
+    }
     Credentials::load(root)?;
     Ok(library)
 }

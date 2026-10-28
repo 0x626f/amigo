@@ -23,11 +23,7 @@ impl JournalTab {
             )
             .clicked()
             {
-                self.dialog = Some(NameDialog {
-                    kind: NameKind::Note(String::new()),
-                    value: "Untitled".into(),
-                    error: String::new(),
-                });
+                self.dialog = Some(NameDialog::new(NameKind::Note(String::new()), "Untitled"));
             }
             if design::icon_button(
                 ui,
@@ -38,11 +34,10 @@ impl JournalTab {
             )
             .clicked()
             {
-                self.dialog = Some(NameDialog {
-                    kind: NameKind::Folder(String::new()),
-                    value: "New folder".into(),
-                    error: String::new(),
-                });
+                self.dialog = Some(NameDialog::new(
+                    NameKind::Folder(String::new()),
+                    "New folder",
+                ));
             }
             if design::icon_button(
                 ui,
@@ -86,7 +81,9 @@ impl JournalTab {
             let depth = entry.path.matches('/').count();
             let row = ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.;
-                let width = (ui.available_width() - 26.).max(0.);
+                let can_rename = entry.folder && !is_in_trash(&entry.path);
+                let actions_width = if can_rename { 52. } else { 26. };
+                let width = (ui.available_width() - actions_width).max(0.);
                 let name = amigo_core::journal::entry_name(&entry.path);
                 let label = name.strip_suffix(".md").unwrap_or(name);
                 let selected = self
@@ -120,8 +117,7 @@ impl JournalTab {
                             )
                         },
                     )
-                    .inner
-                    .on_hover_text(name);
+                    .inner;
                 ui.interact(
                     row.rect,
                     egui::Id::new(("journal-entry", &entry.path)),
@@ -136,7 +132,7 @@ impl JournalTab {
                         action = Some(Action::Open(entry.path.clone()));
                     }
                 }
-                row.context_menu(|ui| {
+                design::context_menu(&row).show(|ui| {
                     action = self.tree_menu(ui, Some(&entry)).or(action.take());
                 });
                 if !entry.folder
@@ -157,11 +153,26 @@ impl JournalTab {
                         .inner
                         .clicked()
                 {
-                    self.dialog = Some(NameDialog {
-                        kind: NameKind::Delete(entry.path.clone()),
-                        value: String::new(),
-                        error: String::new(),
-                    });
+                    self.dialog = Some(NameDialog::new(
+                        NameKind::Delete(entry.path.clone()),
+                        String::new(),
+                    ));
+                }
+                if can_rename
+                    && ui
+                        .add_enabled_ui(!self.loading, |ui| {
+                            design::icon_button(
+                                ui,
+                                egui::Id::new(("journal-folder-rename", &entry.path)),
+                                Icon::Edit,
+                                "Rename Folder",
+                                22.,
+                            )
+                        })
+                        .inner
+                        .clicked()
+                {
+                    self.rename_folder(&entry.path);
                 }
                 if entry.folder {
                     let menu = ui
@@ -175,7 +186,7 @@ impl JournalTab {
                             )
                         })
                         .inner;
-                    egui::Popup::menu(&menu).show(|ui| {
+                    design::menu(&menu).show(|ui| {
                         action = self.tree_menu(ui, Some(&entry)).or(action.take());
                     });
                 }
@@ -198,7 +209,7 @@ impl JournalTab {
                 egui::Id::new(("journal-entry-space", &entry.path)),
                 egui::Sense::click(),
             );
-            space.context_menu(|ui| {
+            design::context_menu(&space).show(|ui| {
                 action = self.tree_menu(ui, related.as_ref()).or(action.take());
             });
         }
@@ -212,15 +223,22 @@ impl JournalTab {
                 ui.clip_rect().bottom().max(ui.cursor().top()),
             ),
         );
-        ui.interact(
+        let root_space = ui.interact(
             blank,
             egui::Id::new("journal-root-space"),
             egui::Sense::click(),
-        )
-        .context_menu(|ui| {
+        );
+        design::context_menu(&root_space).show(|ui| {
             action = self.tree_menu(ui, None).or(action.take());
         });
         action
+    }
+
+    fn rename_folder(&mut self, path: &str) {
+        self.dialog = Some(NameDialog::new(
+            NameKind::RenameFolder(path.into()),
+            amigo_core::journal::entry_name(path),
+        ));
     }
 
     fn tree_menu(&mut self, ui: &mut egui::Ui, entry: Option<&Entry>) -> Option<Action> {
@@ -233,23 +251,22 @@ impl JournalTab {
         ui.add_enabled_ui(!self.loading, |ui| {
             if folder && !in_trash {
                 if tree_item(ui, path, "new-note", "New Note", false) {
-                    self.dialog = Some(NameDialog {
-                        kind: NameKind::Note(path.into()),
-                        value: "Untitled".into(),
-                        error: String::new(),
-                    });
+                    self.dialog = Some(NameDialog::new(NameKind::Note(path.into()), "Untitled"));
                 }
                 if tree_item(ui, path, "new-folder", "New Folder", false) {
-                    self.dialog = Some(NameDialog {
-                        kind: NameKind::Folder(path.into()),
-                        value: "New folder".into(),
-                        error: String::new(),
-                    });
+                    self.dialog =
+                        Some(NameDialog::new(NameKind::Folder(path.into()), "New folder"));
                 }
                 ui.separator();
             } else if !folder && !in_trash {
                 if tree_item(ui, path, "open", "Open Note", false) {
                     action = Some(Action::Open(path.into()));
+                }
+                ui.separator();
+            }
+            if entry.is_some() && folder && !in_trash {
+                if tree_item(ui, path, "rename", "Rename Folder…", false) {
+                    self.rename_folder(path);
                 }
                 ui.separator();
             }
@@ -275,11 +292,10 @@ impl JournalTab {
                     },
                     true,
                 ) {
-                    self.dialog = Some(NameDialog {
-                        kind: NameKind::Delete(path.into()),
-                        value: String::new(),
-                        error: String::new(),
-                    });
+                    self.dialog = Some(NameDialog::new(
+                        NameKind::Delete(path.into()),
+                        String::new(),
+                    ));
                 }
             }
         });

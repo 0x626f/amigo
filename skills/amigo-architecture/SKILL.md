@@ -1,6 +1,6 @@
 ---
 name: amigo-architecture
-description: "Organize changes in Amigo’s Rust workspace across its desktop shell, Tasks, Calendar, Finance, and Journal tab crates, shared UI, and core model/storage. Use for Amigo refactors, new record types, persistence changes, or deciding where functionality belongs."
+description: "Organize changes in Amigo’s Rust workspace across its desktop shell, Tasks, Calendar, Finance, Journal, and Squidy tab crates, shared UI, and core model/storage. Use for Amigo refactors, new record types, persistence changes, or deciding where functionality belongs."
 ---
 
 # Amigo code organization
@@ -18,11 +18,14 @@ Resolve any skill-directory symlink first. The repository root is two directorie
 | `src/app/library_ui.rs` | Board/vault switching, library dialogs, password jobs, lock/encrypt actions |
 | `src/app/sync.rs`, `src/app/organizer/` | Exchange refresh clock, Calendar subscription/notification workers, tab settings coordination; periodic directory polling is disabled |
 | `crates/tasks/src/` | Kanban views, gestures, task drafts, board settings, attachment UI/jobs |
+| `crates/squidy/src/`, `src/app/squidy.rs` | Graph canvas and dialogs; shell serializes board and attachment jobs |
+| `crates/core/src/squidy.rs`, `media.rs` | Named multigraphs, path filters, Markdown/.link snapshots, safe relative media references |
 | `crates/calendar/src/` | Calendar views, event drafts, recurrence and reminder UI |
 | `crates/connect/src/` | Calendar URL downloads, iCalendar parsing and Telegram transport; no GUI or persistence |
 | `crates/core/src/organizer.rs`, `credentials.rs` | Calendar records, subscriptions, reminder receipts and encrypted URL/Telegram settings |
 | `crates/finance/src/` | Finance views, inline drafts/validation/commit, categories, references, rate requests |
 | `crates/ui/src/` | Shared visual primitives, keyboard routing, search, calendars, form/dialog layout |
+| `crates/ui/src/markdown.rs`, `media.rs` | Description previews, asynchronous image decoding, inline FFmpeg playback and process lifecycle |
 | `crates/core/src/model.rs` | Serializable workspace/records, IDs, normalization, domain calculations |
 | `crates/core/src/finance_settings.rs` | Library-wide currencies/chains/countries, reference migrations and cross-vault usage |
 | `crates/core/src/audit.rs` | Creation metadata and frozen dated FX snapshots |
@@ -33,11 +36,13 @@ Resolve any skill-directory symlink first. The repository root is two directorie
 ## Dependency direction
 
 ```text
-amigo (shell) -> amigo-tasks, amigo-calendar, amigo-finance, amigo-journal, amigo-connect, amigo-ui, amigo-core
+amigo (shell) -> amigo-tasks, amigo-calendar, amigo-finance, amigo-journal, amigo-squidy, amigo-connect, amigo-ui, amigo-core
 amigo-tasks   -> amigo-ui, amigo-core
 amigo-finance -> amigo-ui, amigo-core
 amigo-calendar -> amigo-ui, amigo-core
 amigo-journal -> amigo-ui, amigo-core
+amigo-squidy -> amigo-ui, amigo-core
+amigo-ui -> amigo-core
 amigo-connect -> amigo-core
 ```
 
@@ -81,3 +86,9 @@ The shell owns one app settings window in `src/app/settings.rs`. Tasks, Calendar
 `amigo-journal` owns Markdown editor/preview state; `amigo-core::journal` owns safe relative file operations under `<library>/journal`; `src/app/journal.rs` serializes background I/O. Save before navigation, setup backup, restart, and close. Never overwrite external modifications on conflict; preserve draft text and offer recovery. Preview rendering leaves stored Markdown unchanged; intentional preview edits project back into the original source spans and share source-mode Undo, autosave, and conflict handling. Preserve front matter, Markdown formatting, code fences/languages, link destinations, Unicode, and line endings. Freeze the parsed snapshot while a preview input owns focus, and give each table cell its own stable input ID. Ordinary link clicks edit their label; Ctrl/Command-click follows the link. Search is a read-only background action and must not save or discard a conflicting editor draft. External-file picking returns to a destination dialog; only Save and Open copies the source into Journal root or a chosen folder. Copy failures retain the source, current note, and destination choice. Notebook header creation targets root, while each regular folder’s menu actions target that folder. Three-dot and right-click menus share one implementation; blank space between children targets their folder and empty root space targets root. Keep the destination separate from the name draft, preserve current edits until confirmation, and reveal newly created children. Tree trash actions require confirmation and clear stale folder expansions after deletion. Journal always creates a visible `Trash` folder and migrates legacy `.trash` contents without overwriting existing items. Protect the default folder from rename/deletion and reject re-trashing its contents. Trash descendant menus offer permanent deletion with explicit irreversible-deletion confirmation; delete through the background core file boundary, recursively for folders, and clear an affected open editor only after success. Folder trash moves preserve the complete subtree. Restore menu actions return notes or whole folder trees to their saved original location, recreating missing parents and keeping both items on name conflicts; older entries without origin metadata restore at Journal root. Persist origin records before trash moves and include them in setup backups. Update affected open-note paths and reveal restored parents after success. Keep deleted notes out of ordinary searches, link fallback, and new-note/import destinations.
 
 `amigo-connect::updates` fetches stable GitHub release metadata and verifies streamed downloads. The shell owns update preferences, popups, and native installer helpers in `src/app/updates/`. Keep installers outside core/connect, verify digest/size/platform before execution, and preserve the library across application replacement. Develop CI checks all six native targets without publishing a release.
+
+## Squidy and shared media
+
+Squidy links refer to unique card **names**; stable internal IDs identify files and UI state. Renaming a card rewrites every incident edge, including parallel edges. Each edge persists its `directed` flag: new edges are bidirectional, while legacy `.link` entries without the flag retain their directed behavior. Render arrows at both ends for bidirectional edges and from `from` to `to` for directed edges. The connection editor owns direction and endpoint swapping as draft edits; path search respects each edge unless its direction override is disabled. Keep graph data in Markdown bodies, card properties in front matter, connections in `.link`, and view state in board metadata. Preserve saved manual positions when computing unpositioned cards. Serialize snapshot writes through the shell and check fingerprints before replacing content; conflicts retain both local state and external files. Setup transfer/update/close coordination includes pending graph saves.
+
+Tasks, Journal, and Squidy share inline media in `amigo-ui`. Keep decoding and FFmpeg work off the UI thread, media resolution scoped to the owning notebook/board, and player processes stopped when hidden or on exit. Journal's shared `.media/attachments` references remain rooted in the notebook across Trash/restore moves. Provisional attachment batches roll back on cancellation or stale results. The README documents file formats and runtime requirements; `examples/squidy_preview.rs` verifies synthetic graph/media scenes without touching an existing library.
