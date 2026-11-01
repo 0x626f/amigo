@@ -94,6 +94,11 @@ impl Amigo {
     }
     fn activate_settings(&mut self, state: &mut AppSettings) {
         state.reveal_page = true;
+        if state.page == SettingsPage::Tasks {
+            if let Some(board) = self.library.boards.first() {
+                state.page = SettingsPage::Board(board.id.clone());
+            }
+        }
         let result = (|| -> Result<(), String> {
             match &state.page {
                 SettingsPage::Board(id) => {
@@ -262,7 +267,11 @@ impl Amigo {
                                                         ));
                                                     }
                                                     if response.clicked() {
-                                                        next = Some(page.clone());
+                                                        if page != SettingsPage::Tasks
+                                                            || !self.library.boards.is_empty()
+                                                        {
+                                                            next = Some(page.clone());
+                                                        }
                                                     }
                                                 });
                                             });
@@ -417,19 +426,7 @@ impl Amigo {
         next: &mut Option<SettingsPage>,
     ) -> (bool, bool) {
         let close = match state.page.clone() {
-            SettingsPage::Tasks => {
-                ui.heading("Tasks");
-                design::hint(
-                    ui,
-                    "Choose a board in the list to configure its statuses and categories.",
-                );
-                design::dialog_footer(ui, |ui| {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        design::dialog_primary(ui, "Done").clicked()
-                    })
-                    .inner
-                })
-            }
+            SettingsPage::Tasks => false,
             SettingsPage::Board(_) => {
                 if !self.tasks.settings_open() {
                     self.tasks.configure_in_app(&self.workspace);

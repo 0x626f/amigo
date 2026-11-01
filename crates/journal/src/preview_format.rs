@@ -151,6 +151,8 @@ impl Tools {
         design::context_menu(&input.output.response).show(|ui| {
             action = toolbar::format_menu(ui, &c.state, c.inline_only);
             ui.separator();
+            amigo_ui::text_input::menu(ui, &input.output);
+            ui.separator();
             if ui
                 .add_enabled(!c.local.is_empty(), design::Button::new("Copy"))
                 .clicked()
@@ -420,6 +422,33 @@ pub(super) fn enter_key(ui: &egui::Ui) -> Option<bool> {
         None
     }
 }
+pub(super) fn backspace(editor: &mut Editor, ui: &egui::Ui) {
+    if !ui.is_enabled() || egui::Popup::is_any_open(ui.ctx()) {
+        return;
+    }
+    let Some(input) =
+        editor.preview.inputs.iter().find(|i| {
+            i.list && i.text.is_empty() && ui.memory(|m| m.has_focus(i.output.response.id))
+        })
+    else {
+        return;
+    };
+    if !ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Backspace)) {
+        return;
+    }
+    let (mut document, range) = editor.preview.project_input(input);
+    let mut fragment = document[range.clone()].to_owned();
+    let state = formatting::SelectionState::new(&fragment, 0..fragment.chars().count());
+    let kind = [Format::Task, Format::Numbered, Format::Bullet]
+        .into_iter()
+        .find(|kind| state.is_active(*kind));
+    if let Some(kind) = kind {
+        let selection = formatting::apply(&mut fragment, 0..0, kind);
+        document.replace_range(range.clone(), &fragment);
+        let caret = range.start + byte(&fragment, selection.start);
+        commit(editor, document, caret..caret, ui);
+    }
+}
 pub(super) fn enter(editor: &mut Editor, ui: &egui::Ui) {
     let Some(c) = editor
         .preview_tools
@@ -593,5 +622,14 @@ pub(super) fn link_dialog(editor: &mut Editor, ui: &egui::Ui) {
         if let Some(c) = &editor.preview_tools.context {
             restore(ui, c.id, Some(c.local.clone()));
         }
+    }
+}
+
+pub(super) fn update_selection(editor: &mut Editor) {
+    if let Some(c) = &editor.preview_tools.context {
+        let fragment = &c.document[c.fragment.clone()];
+        let start = c.fragment.start + byte(fragment, c.selection.start);
+        let end = c.fragment.start + byte(fragment, c.selection.end);
+        editor.selection = c.document[..start].chars().count()..c.document[..end].chars().count();
     }
 }

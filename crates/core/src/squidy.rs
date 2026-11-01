@@ -22,10 +22,15 @@ pub struct Card {
     pub data: String,
     #[serde(default)]
     pub position: Option<[f32; 2]>,
+    #[serde(default = "card_size")]
+    pub size: [f32; 2],
     #[serde(default = "card_color")]
     pub color: [u8; 3],
     #[serde(default)]
     pub attachments: Vec<TaskAttachment>,
+}
+pub fn card_size() -> [f32; 2] {
+    [250., 125.]
 }
 pub fn card_color() -> [u8; 3] {
     [88, 142, 208]
@@ -41,9 +46,44 @@ impl Card {
             brief: String::new(),
             data: String::new(),
             position: None,
+            size: card_size(),
             color: card_color(),
             attachments: vec![],
         }
+    }
+}
+/// A named visual container drawn behind cards, without changing card ownership.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Background {
+    pub id: String,
+    pub title: String,
+    pub position: [f32; 2],
+    pub size: [f32; 2],
+}
+impl Background {
+    pub fn new(title: &str, position: [f32; 2], size: [f32; 2]) -> Self {
+        Self {
+            id: id(),
+            title: title.into(),
+            position,
+            size,
+        }
+    }
+    pub fn validate(&self) -> Result<()> {
+        valid_id(&self.id)?;
+        valid_name(&self.title)?;
+        if self
+            .position
+            .iter()
+            .any(|v| !v.is_finite() || v.abs() > 10_000_000.)
+            || !self.size[0].is_finite()
+            || !self.size[1].is_finite()
+            || !(120.0..=100_000.0).contains(&self.size[0])
+            || !(80.0..=100_000.0).contains(&self.size[1])
+        {
+            return Err("Invalid background position or size.".into());
+        }
+        Ok(())
     }
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -85,6 +125,8 @@ pub struct Board {
     pub cards: Vec<Card>,
     #[serde(default)]
     pub links: Vec<Link>,
+    #[serde(default)]
+    pub backgrounds: Vec<Background>,
 }
 fn unit_zoom() -> f32 {
     1.
@@ -98,6 +140,7 @@ impl Board {
             zoom: 1.,
             cards: vec![],
             links: vec![],
+            backgrounds: vec![],
         }
     }
     pub fn card(&self, name: &str) -> Option<&Card> {
@@ -165,11 +208,25 @@ impl Board {
         {
             return Err("Invalid board view position.".into());
         }
+        let mut background_ids = BTreeSet::new();
+        for background in &self.backgrounds {
+            background.validate()?;
+            if !background_ids.insert(&background.id) {
+                return Err("Background IDs must be unique.".into());
+            }
+        }
         let mut names = BTreeSet::new();
         let mut ids = BTreeSet::new();
         for card in &self.cards {
             valid_id(&card.id)?;
             valid_name(&card.name)?;
+            if !card.size[0].is_finite()
+                || !card.size[1].is_finite()
+                || !(160.0..=4000.0).contains(&card.size[0])
+                || !(90.0..=4000.0).contains(&card.size[1])
+            {
+                return Err("Invalid card size.".into());
+            }
             if !names.insert(key(&card.name)) || !ids.insert(&card.id) {
                 return Err("Card names and file IDs must be unique within a board.".into());
             }
@@ -292,10 +349,17 @@ impl Board {
             };
             let row = rows.entry(column).or_default();
             let mut candidate = [column as f32 * 330., *row as f32 * 180.];
-            while result
-                .values()
-                .any(|p| (p[0] - candidate[0]).abs() < 290. && (p[1] - candidate[1]).abs() < 150.)
-            {
+            while result.iter().any(|(id, p)| {
+                let size = self
+                    .cards
+                    .iter()
+                    .find(|c| &c.id == id)
+                    .map_or(card_size(), |c| c.size);
+                p[0] < candidate[0] + card.size[0] + 40.
+                    && candidate[0] < p[0] + size[0] + 40.
+                    && p[1] < candidate[1] + card.size[1] + 30.
+                    && candidate[1] < p[1] + size[1] + 30.
+            }) {
                 *row += 1;
                 candidate[1] = *row as f32 * 180.;
             }
@@ -376,6 +440,8 @@ struct Metadata {
     pan: [f32; 2],
     zoom: f32,
     order: Vec<String>,
+    #[serde(default)]
+    backgrounds: Vec<Background>,
 }
 #[derive(Serialize, Deserialize)]
 struct Connections {
@@ -463,6 +529,7 @@ impl Store {
             zoom: meta.zoom,
             cards: vec![],
             links: links.links,
+            backgrounds: meta.backgrounds,
         };
         let mut files = BTreeMap::new();
         for item in card_files(&content)? {
@@ -564,6 +631,7 @@ impl Store {
                     pan: board.pan,
                     zoom: board.zoom,
                     order: board.cards.iter().map(|c| c.id.clone()).collect(),
+                    backgrounds: board.backgrounds.clone(),
                 },
             )?;
             write(

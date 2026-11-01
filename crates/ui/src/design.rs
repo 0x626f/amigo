@@ -251,8 +251,8 @@ pub const CONTROL_HEIGHT: f32 = 38.0;
 pub const PAGE_TITLE_SIZE: f32 = 28.0;
 
 /// Keep hints, entered text, and adjacent selectors on the same baseline.
-pub fn input(text: &mut dyn egui::TextBuffer) -> egui::TextEdit<'_> {
-    egui::TextEdit::singleline(text)
+pub fn input(text: &mut dyn egui::TextBuffer) -> crate::text_input::TextEdit<'_> {
+    crate::text_input::TextEdit::singleline(text)
         .margin(egui::Margin::symmetric(12, 9))
         .min_size(Vec2::new(0.0, CONTROL_HEIGHT))
         .vertical_align(egui::Align::Center)

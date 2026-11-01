@@ -328,7 +328,7 @@ fn event_details(ed: &mut Editor, ui: &mut egui::Ui, description_id: egui::Id) {
     field_label(ui, "Description");
     ui.add_enabled(
         ed.event.description_editable,
-        egui::TextEdit::multiline(&mut ed.event.description)
+        amigo_ui::text_input::TextEdit::multiline(&mut ed.event.description)
             .id(description_id)
             .desired_width(f32::INFINITY)
             .desired_rows(4)

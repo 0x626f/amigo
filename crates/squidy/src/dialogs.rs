@@ -50,7 +50,7 @@ impl SquidyTab {
                         ui.add_space(10.);
                         field_label(ui, "Brief");
                         ui.add(
-                            egui::TextEdit::multiline(&mut editor.card.brief)
+                            amigo_ui::text_input::TextEdit::multiline(&mut editor.card.brief)
                                 .id(brief_id)
                                 .desired_rows(2)
                                 .desired_width(f32::INFINITY),
@@ -543,6 +543,7 @@ impl SquidyTab {
         let mut cancel = false;
         let title = match &delete {
             Delete::Card(_) => "Delete Card?",
+            Delete::Background(_) => "Delete File Border?",
             Delete::Link(_) => "Delete Connection?",
             Delete::Board(_) => "Delete Squidy Board?",
         };
@@ -552,6 +553,9 @@ impl SquidyTab {
                 cancel = design::dialog_heading(ui, title).clicked();
                 ui.label(match &delete {
                     Delete::Card(_) => "Delete this card and all its connections?",
+                    Delete::Background(_) => {
+                        "Delete this file border? Its cards and connections will stay on the board."
+                    }
                     Delete::Link(_) => {
                         "Delete this connection? Other parallel connections will be kept."
                     }
@@ -577,6 +581,7 @@ impl SquidyTab {
             match delete {
                 Delete::Card(id) => {
                     self.board.as_mut().unwrap().remove_card(&id);
+                    self.selected.remove(&id);
                     self.editor = None;
                     self.contents_changed();
                 }
@@ -584,6 +589,16 @@ impl SquidyTab {
                     self.board.as_mut().unwrap().links.retain(|e| e.id != id);
                     self.link = None;
                     self.contents_changed();
+                }
+                Delete::Background(id) => {
+                    self.board
+                        .as_mut()
+                        .unwrap()
+                        .backgrounds
+                        .retain(|b| b.id != id);
+                    self.selected_background = None;
+                    self.background_draft = None;
+                    self.changed();
                 }
                 Delete::Board(id) => self.action = Some(Action::Delete(id)),
             }

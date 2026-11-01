@@ -618,8 +618,10 @@ impl Preview {
         else {
             return;
         };
+        let caret = range.start + 1;
         if index + 1 == self.inputs.len() {
             replace_chars(&mut self.append, range);
+            self.append_restore = Some(caret..caret);
         } else {
             let span = self.inputs[index].span.clone();
             for block in &mut self.blocks {
@@ -627,6 +629,7 @@ impl Preview {
                     && inline_span(inline) == span
                 {
                     replace_chars(&mut inline.value, range);
+                    inline.restore = Some(caret..caret);
                     update_atoms(inline);
                     break;
                 }
@@ -727,7 +730,14 @@ impl Preview {
                 self.heights[i] = estimated_height(block, width, size);
             }
             let known = self.heights[i];
+            let restoring = block.restore.is_some()
+                || match &block.kind {
+                    Kind::Text(_, inline) | Kind::Media(_, inline) => inline.restore.is_some(),
+                    Kind::Table(_, rows) => rows.iter().flatten().any(|i| i.restore.is_some()),
+                    _ => false,
+                };
             if known > 0.
+                && !restoring
                 && !block
                     .edit_ids
                     .iter()
@@ -752,8 +762,10 @@ impl Preview {
         }
         let id = ui.make_persistent_id("preview-append");
         if editable {
+            let restoring = self.append_restore.is_some();
             super::preview_format::restore(ui, id, self.append_restore.take());
-            let output = egui::TextEdit::multiline(&mut self.append)
+            let output = amigo_ui::text_input::TextEdit::multiline(&mut self.append)
+                .custom_menu()
                 .id(id)
                 .frame(egui::Frame::NONE)
                 .desired_width(width)
@@ -766,6 +778,17 @@ impl Preview {
                 .interactive(ui.is_enabled())
                 .return_key(None)
                 .show(ui);
+            if output.response.has_focus() && (restoring || output.response.changed()) {
+                if let Some(range) = output.cursor_range {
+                    ui.scroll_to_rect(
+                        output
+                            .galley
+                            .pos_from_cursor(range.primary)
+                            .translate(output.galley_pos.to_vec2()),
+                        None,
+                    );
+                }
+            }
             self.changed |= output.response.changed();
             self.focused.push(id);
             self.inputs.push(super::preview_format::Input {
@@ -919,7 +942,45 @@ fn render_block(
                         link = result.0;
                         changed |= result.1;
                         focused.push(result.2);
-                        ui.add_space(if *level > 0 { 10. } else { 12. });
+                        ui.add_space(if *level > 0 {
+                            10.
+                        } else if block.marker.is_some() {
+                            2.
+                        } else {
+                            12.
+                        });
+                    }
+                    Kind::Code(language, text) if amigo_core::mermaid::is_mermaid(language) => {
+                        amigo_ui::flowchart::show(ui, text);
+                        if editable {
+                            egui::CollapsingHeader::new("Edit Mermaid source")
+                                .id_salt("mermaid-source-editor")
+                                .open(block.restore.as_ref().map(|_| true))
+                                .show(ui, |ui| {
+                                    let id = ui.make_persistent_id("preview-code");
+                                    focused.push(id);
+                                    super::preview_format::restore(ui, id, block.restore.take());
+                                    let output = amigo_ui::text_input::TextEdit::multiline(text)
+                                        .id(id)
+                                        .spellcheck(false)
+                                        .custom_menu()
+                                        .code_editor()
+                                        .desired_width(ui.available_width())
+                                        .desired_rows(4)
+                                        .show(ui);
+                                    changed |= output.response.changed();
+                                    inputs.push(super::preview_format::Input {
+                                        output,
+                                        span: block.span.clone(),
+                                        text: text.clone(),
+                                        whole_lines: true,
+                                        inline_only: false,
+                                        accepts_enter: false,
+                                        list: false,
+                                    });
+                                });
+                        }
+                        ui.add_space(14.);
                     }
                     Kind::Code(language, text) => {
                         egui::Frame::new()
@@ -976,15 +1037,18 @@ fn render_block(
                                         let mut readonly = text.as_str();
                                         let buffer: &mut dyn egui::TextBuffer =
                                             if editable { text } else { &mut readonly };
-                                        let output = egui::TextEdit::multiline(buffer)
-                                            .id(id)
-                                            .interactive(ui.is_enabled())
-                                            .font(FontId::monospace(size * 0.9))
-                                            .frame(egui::Frame::NONE)
-                                            .desired_width(f32::INFINITY)
-                                            .desired_rows(1)
-                                            .layouter(&mut layout)
-                                            .show(ui);
+                                        let output =
+                                            amigo_ui::text_input::TextEdit::multiline(buffer)
+                                                .spellcheck(false)
+                                                .custom_menu()
+                                                .id(id)
+                                                .interactive(ui.is_enabled())
+                                                .font(FontId::monospace(size * 0.9))
+                                                .frame(egui::Frame::NONE)
+                                                .desired_width(f32::INFINITY)
+                                                .desired_rows(1)
+                                                .layouter(&mut layout)
+                                                .show(ui);
                                         changed |= output.response.changed();
                                         inputs.push(super::preview_format::Input {
                                             output,
@@ -1123,6 +1187,7 @@ fn inline_label(
         list,
     } = style;
     let id = ui.make_persistent_id("preview-text");
+    let restoring = inline.restore.is_some();
     super::preview_format::restore(ui, id, inline.restore.take());
     let atoms = &inline.atoms;
     let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap: f32| {
@@ -1137,11 +1202,12 @@ fn inline_label(
         &mut readonly
     };
     let edit = if multiline {
-        egui::TextEdit::multiline(buffer)
+        amigo_ui::text_input::TextEdit::multiline(buffer)
     } else {
-        egui::TextEdit::singleline(buffer)
+        amigo_ui::text_input::TextEdit::singleline(buffer)
     };
     let output = edit
+        .custom_menu()
         .id(id)
         .frame(egui::Frame::NONE)
         .margin(egui::Margin::ZERO)
@@ -1192,6 +1258,15 @@ fn inline_label(
         }
     }
     let changed = output.response.changed();
+    if output.response.has_focus() && (changed || restoring) {
+        if let Some(range) = output.cursor_range {
+            let caret = output
+                .galley
+                .pos_from_cursor(range.primary)
+                .translate(output.galley_pos.to_vec2());
+            ui.scroll_to_rect(caret, None);
+        }
+    }
     if changed {
         update_atoms(inline);
     }

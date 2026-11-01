@@ -4,7 +4,7 @@ use crate::{
     media::{self, Location},
 };
 use egui::{FontId, TextFormat, text::LayoutJob};
-use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 
 fn flush(ui: &mut egui::Ui, job: &mut LayoutJob) {
     if !job.text.is_empty() {
@@ -58,6 +58,20 @@ pub fn show(ui: &mut egui::Ui, text: &str, location: Option<&Location>) {
             Event::End(TagEnd::Emphasis) => italic = false,
             Event::Start(Tag::Strikethrough) => strike = true,
             Event::End(TagEnd::Strikethrough) => strike = false,
+            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(language)))
+                if amigo_core::mermaid::is_mermaid(&language) =>
+            {
+                flush(ui, &mut job);
+                let mut source = String::new();
+                for event in parser.by_ref() {
+                    match event {
+                        Event::End(TagEnd::CodeBlock) => break,
+                        Event::Text(t) => source.push_str(&t),
+                        _ => (),
+                    }
+                }
+                crate::flowchart::show(ui, &source);
+            }
             Event::Start(Tag::CodeBlock(_)) => {
                 flush(ui, &mut job);
                 code = true;
@@ -176,7 +190,7 @@ impl InlineEditor {
                 && !egui::Popup::is_any_open(ui.ctx())
                 && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
             let response = ui.add(
-                egui::TextEdit::multiline(text)
+                crate::text_input::TextEdit::multiline(text)
                     .id(id)
                     .desired_rows(rows)
                     .desired_width(f32::INFINITY)
@@ -237,5 +251,80 @@ impl InlineEditor {
             }
             response
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn frame(
+        ctx: &egui::Context,
+        editor: &mut InlineEditor,
+        text: &mut String,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1000., 800.),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    editor.show(ui, egui::Id::new("flowchart-description"), text, None, 8);
+                });
+            },
+        );
+        output.textures_delta.clear();
+        output
+    }
+    #[test]
+    fn descriptions_render_mermaid_and_keep_double_click_source_editing() {
+        let ctx = egui::Context::default();
+        design::install(&ctx);
+        let mut editor = InlineEditor::default();
+        let source = "```mermaid\nflowchart LR\nA[Начало] --> B[Конец]\n```";
+        let mut text = source.to_owned();
+        let mut output = frame(&ctx, &mut editor, &mut text, vec![]);
+        for _ in 0..3 {
+            output = frame(&ctx, &mut editor, &mut text, vec![]);
+        }
+        let node = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(t)
+                    if t.galley.text() == "Начало" && shape.clip_rect.contains(t.pos) =>
+                {
+                    Some(t.pos + t.galley.size() * 0.5)
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(text, source);
+        assert!(!editor.editing);
+        for _ in 0..2 {
+            for pressed in [true, false] {
+                frame(
+                    &ctx,
+                    &mut editor,
+                    &mut text,
+                    vec![
+                        egui::Event::PointerMoved(node),
+                        egui::Event::PointerButton {
+                            pos: node,
+                            button: egui::PointerButton::Primary,
+                            pressed,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                );
+            }
+        }
+        assert!(editor.editing);
+        assert_eq!(text, source);
     }
 }

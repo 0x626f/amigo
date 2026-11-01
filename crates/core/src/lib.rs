@@ -7,6 +7,7 @@ pub mod finance_settings;
 pub mod journal;
 pub mod library;
 pub mod media;
+pub mod mermaid;
 pub mod model;
 #[cfg(test)]
 mod model_tests;

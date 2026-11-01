@@ -50,7 +50,7 @@ pub(super) fn edge_filter(ui: &mut Ui, id: Id, value: &mut String, values: &[Str
     ui.horizontal(|ui| {
         let width = (ui.available_width() - 32. - ui.spacing().item_spacing.x).max(60.);
         ui.add(
-            egui::TextEdit::multiline(value)
+            amigo_ui::text_input::TextEdit::multiline(value)
                 .id(id)
                 .desired_rows(2)
                 .desired_width(width),

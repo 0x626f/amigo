@@ -108,7 +108,12 @@ fn single_settings_entry_navigates_all_pages_and_fits_both_themes_and_sizes() {
                 assert!(nav.bottom() < size.y && nav.left() > 0.);
                 click(&mut app, &ctx, size, nav.center());
                 settle(&mut app, &ctx, size);
-                assert_eq!(app.app_settings.as_ref().unwrap().page, page);
+                let expected = if page == SettingsPage::Tasks {
+                    SettingsPage::Board(app.library.boards.first().unwrap().id.clone())
+                } else {
+                    page.clone()
+                };
+                assert_eq!(app.app_settings.as_ref().unwrap().page, expected);
                 let rect = ctx
                     .memory(|m| m.area_rect(egui::Id::new("app-settings")))
                     .unwrap();
@@ -891,4 +896,20 @@ fn account_client_and_chain_lists_match_currency_alignment() {
             std::fs::remove_dir_all(app.data_path).unwrap();
         }
     }
+}
+
+#[test]
+fn tasks_settings_without_boards_keeps_current_page() {
+    let (mut app, ctx) = harness();
+    let size = egui::vec2(980., 640.);
+    app.library.boards.clear();
+    app.open_settings(SettingsPage::Journal);
+    settle(&mut app, &ctx, size);
+    let row = scroll_settings_page(&mut app, &ctx, size, &SettingsPage::Tasks);
+    click(&mut app, &ctx, size, row.center());
+    settle(&mut app, &ctx, size);
+    assert_eq!(
+        app.app_settings.as_ref().unwrap().page,
+        SettingsPage::Journal
+    );
 }

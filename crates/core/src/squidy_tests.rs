@@ -9,7 +9,10 @@ fn empty_and_populated_boards_survive_setup_restore_and_remain_editable() {
     let library = Library::open(source.0.clone(), None).unwrap();
     let store = Store::open(&library.root).unwrap();
     let empty = store.create("Empty research").unwrap();
-    let populated = graph();
+    let mut populated = graph();
+    populated
+        .backgrounds
+        .push(Background::new("Sources", [-24., -48.], [700., 350.]));
     store.save(&populated, None).unwrap();
     let archive = Archive::capture(&library, Scope::Setup).unwrap();
     assert!(archive.review(&library).is_ok());
@@ -264,4 +267,57 @@ fn legacy_connections_keep_their_direction_and_save_an_explicit_setting() {
             .iter()
             .all(|link| link["directed"].is_boolean())
     );
+}
+
+#[test]
+fn resized_cards_roundtrip_and_legacy_cards_keep_default_size() {
+    let temp = Temp::new();
+    let store = Store::open(&temp.0).unwrap();
+    let mut board = store.create("Resizable").unwrap();
+    let mut card = Card::new("Large card");
+    card.size = [520., 360.];
+    card.position = Some([-120., 75.]);
+    board.put_card(card.clone()).unwrap();
+    store.save(&board, None).unwrap();
+    assert_eq!(store.load(&board.id).unwrap().0.cards[0], card);
+    let mut legacy = serde_json::to_value(&card).unwrap();
+    legacy.as_object_mut().unwrap().remove("size");
+    assert_eq!(
+        serde_json::from_value::<Card>(legacy).unwrap().size,
+        [250., 125.]
+    );
+    for size in [
+        [f32::NAN, 125.],
+        [20., 125.],
+        [250., f32::INFINITY],
+        [250., 8000.],
+    ] {
+        board.cards[0].size = size;
+        assert!(board.validate().is_err());
+    }
+}
+
+#[test]
+fn named_backgrounds_persist_and_legacy_boards_load_without_them() {
+    let temp = Temp::new();
+    let store = Store::open(&temp.0).unwrap();
+    let mut board = store.create("Visual folders").unwrap();
+    board.cards.push(Card::new("Evidence"));
+    board.backgrounds.push(Background::new(
+        "Sources español Привет",
+        [-24., -48.],
+        [700., 350.],
+    ));
+    store.save(&board, None).unwrap();
+    assert_eq!(store.load(&board.id).unwrap().0, board);
+    let file = store.folder(&board.id).unwrap().join("content/board.json");
+    let mut metadata: serde_json::Value =
+        serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+    metadata.as_object_mut().unwrap().remove("backgrounds");
+    fs::write(&file, serde_json::to_vec(&metadata).unwrap()).unwrap();
+    let legacy = store.load(&board.id).unwrap().0;
+    assert!(legacy.backgrounds.is_empty());
+    assert_eq!(legacy.cards, board.cards);
+    board.backgrounds[0].size[0] = f32::NAN;
+    assert!(store.save(&board, None).is_err());
 }

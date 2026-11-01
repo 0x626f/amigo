@@ -7,6 +7,7 @@ use amigo_core::journal::{
 use amigo_ui::design::{self, Icon, colors};
 use egui::{self, RichText};
 mod dialogs;
+mod document_tools;
 mod editing;
 mod highlight;
 mod panes;
@@ -64,6 +65,7 @@ pub struct Editor {
     format_state: Option<(u64, std::ops::Range<usize>, formatting::SelectionState)>,
     preview_editing: Option<bool>,
     preview_tools: preview_format::Tools,
+    document_tools: document_tools::DocumentTools,
 }
 impl Editor {
     pub fn new(document: Document) -> Self {
@@ -85,6 +87,7 @@ impl Editor {
             format_state: None,
             preview_editing: None,
             preview_tools: Default::default(),
+            document_tools: Default::default(),
         }
     }
     fn formatting_state(&mut self) -> formatting::SelectionState {
@@ -116,7 +119,9 @@ impl Editor {
         undoer.add_undo(&(range, self.document.text.clone()));
         state.set_undoer(undoer);
         state.store(ctx, id);
+        let before = (self.document.text.clone(), self.selection.clone());
         self.document.text.push_str(text);
+        document_tools::record(self, before);
         self.revision = self.revision.wrapping_add(1);
         self.changed_at = Instant::now();
     }
@@ -393,6 +398,27 @@ impl JournalTab {
                 .clicked()
             {
                 action = Some(Action::AttachMedia);
+            }
+        });
+        let spelling =
+            egui::Rect::from_min_size(rect.min + egui::vec2(84., 7.), egui::vec2(32., 32.));
+        ui.scope_builder(egui::UiBuilder::new().max_rect(spelling), |ui| {
+            if ui
+                .add_enabled_ui(has_note && !self.loading, |ui| {
+                    design::icon_button(
+                        ui,
+                        egui::Id::new("journal-check-spelling"),
+                        Icon::Check,
+                        "Check spelling",
+                        32.,
+                    )
+                })
+                .inner
+                .clicked()
+            {
+                if let Some(editor) = &mut self.editor {
+                    document_tools::start_spelling(editor, ui.ctx());
+                }
             }
         });
         if let Some(edit) = &mut self.title_edit {

@@ -2,15 +2,22 @@
 use amigo_core::{
     attachments::Batch,
     model::TaskAttachment,
-    squidy::{Board, Card, Entry, GraphPath, Link},
+    squidy::{Background, Board, Card, Entry, GraphPath, Link},
 };
 use amigo_ui::design::{self, Icon};
 use egui::{self, RichText};
-use std::{collections::BTreeMap, path::PathBuf, time::Instant};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::PathBuf,
+    time::Instant,
+};
+mod backgrounds;
 mod canvas;
+mod capture;
 mod controls;
 mod dialogs;
 mod path_result;
+pub mod pdf;
 #[cfg(test)]
 mod tests;
 
@@ -23,6 +30,7 @@ pub enum Action {
     Refresh,
     Attach(String),
     OpenFile(TaskAttachment),
+    Export { area: [f32; 4], include_text: bool },
 }
 pub struct CardDraft {
     pub card: Card,
@@ -44,6 +52,7 @@ enum NameDialog {
 }
 enum Delete {
     Card(String),
+    Background(String),
     Link(String),
     Board(String),
 }
@@ -87,9 +96,18 @@ pub struct SquidyTab {
     pub path_message: String,
     positions: BTreeMap<String, [f32; 2]>,
     layout_dirty: bool,
-    selected: Option<String>,
+    selected: BTreeSet<String>,
     drag: Option<(String, egui::Vec2)>,
     viewport: egui::Rect,
+    resize: Option<(String, usize, egui::Rect, egui::Pos2)>,
+    capture: Option<capture::Capture>,
+    background_drawing: bool,
+    background_start: Option<egui::Pos2>,
+    background_drag: Option<(String, usize, egui::Rect, egui::Pos2)>,
+    selected_background: Option<String>,
+    background_draft: Option<backgrounds::Draft>,
+    title_edit: Option<String>,
+    title_focus: bool,
     action: Option<Action>,
 }
 impl Default for SquidyTab {
@@ -116,22 +134,39 @@ impl Default for SquidyTab {
             path_message: String::new(),
             positions: BTreeMap::new(),
             layout_dirty: true,
-            selected: None,
+            selected: BTreeSet::new(),
             drag: None,
             viewport: egui::Rect::NOTHING,
+            resize: None,
+            capture: None,
+            background_drawing: false,
+            background_start: None,
+            background_drag: None,
+            selected_background: None,
+            background_draft: None,
+            title_edit: None,
+            title_focus: false,
             action: None,
         }
     }
 }
 impl SquidyTab {
     pub fn loaded(&mut self, board: Board, boards: Vec<Entry>, root: PathBuf) {
+        self.resize = None;
+        self.background_drawing = false;
+        self.background_start = None;
+        self.background_drag = None;
+        self.selected_background = None;
+        self.background_draft = None;
+        self.capture = None;
+        self.title_edit = None;
         self.board = Some(board);
         self.boards = boards;
         self.root = Some(root);
         self.editor = None;
         self.link = None;
         self.layout_dirty = true;
-        self.selected = None;
+        self.selected.clear();
         self.picking = None;
         self.path_open = false;
         self.path = None;
@@ -139,10 +174,14 @@ impl SquidyTab {
         self.error.clear();
     }
     pub fn has_draft(&self) -> bool {
-        self.editor.is_some() || self.link.is_some()
+        self.editor.is_some() || self.link.is_some() || self.background_draft.is_some()
     }
     fn modal_open(&self) -> bool {
-        self.has_draft() || self.name_dialog.is_some() || self.delete.is_some() || self.path_open
+        self.has_draft()
+            || self.name_dialog.is_some()
+            || self.delete.is_some()
+            || self.path_open
+            || self.capture.is_some()
     }
     fn changed(&mut self) {
         self.changed_at = Instant::now();
@@ -266,10 +305,19 @@ impl SquidyTab {
             {
                 self.begin_path_selection();
             }
-            if self.picking.is_some()
+            if self.title_edit.is_none()
+                && !ui.ctx().text_edit_focused()
                 && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
             {
+                self.selected.clear();
+                self.selected_background = None;
+                self.background_drawing = false;
+                self.background_start = None;
+                self.background_drag = None;
                 self.picking = None;
+                self.drag = None;
+                self.resize = None;
+                self.capture = None;
             }
         }
         let blocked = self.modal_open() || self.loading;
@@ -295,18 +343,51 @@ impl SquidyTab {
             {
                 self.new_card(None);
             }
+            if design::selected_icon_button(
+                ui,
+                egui::Id::new("squidy-new-background"),
+                Icon::Folder,
+                "File Border",
+                32.,
+                self.background_drawing,
+            )
+            .clicked()
+            {
+                self.begin_background();
+            }
             ui.add_enabled_ui(!self.board.as_ref().unwrap().cards.is_empty(), |ui| {
+                if design::icon_button(
+                    ui,
+                    egui::Id::new("squidy-export"),
+                    Icon::Export,
+                    "Export PDF",
+                    32.,
+                )
+                .clicked()
+                {
+                    self.background_drawing = false;
+                    self.background_start = None;
+                    self.capture = Some(capture::Capture::new(
+                        self.board.as_ref().unwrap(),
+                        &self.selected,
+                    ));
+                    self.picking = None;
+                    self.drag = None;
+                }
+
                 let connecting = matches!(self.picking, Some(Picking::Connection(_)));
                 if design::selected_icon_button(
                     ui,
                     egui::Id::new("squidy-link-cards"),
                     Icon::Link,
-                    "Link Cards: select two cards (Esc to cancel)",
+                    "Link Cards",
                     32.,
                     connecting,
                 )
                 .clicked()
                 {
+                    self.background_drawing = false;
+                    self.background_start = None;
                     self.picking = if connecting {
                         None
                     } else {
@@ -320,7 +401,7 @@ impl SquidyTab {
                     ui,
                     egui::Id::new("squidy-find-path-open"),
                     Icon::Route,
-                    "Find Path (Alt+F): select two cards (Esc to cancel)",
+                    "Find Path",
                     32.,
                     finding,
                 )
@@ -338,15 +419,61 @@ impl SquidyTab {
     fn board_header(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             let width = (ui.available_width() - 180.).max(0.);
-            ui.add_sized(
-                [width, 32.],
-                egui::Label::new(
-                    RichText::new(&self.board.as_ref().unwrap().name)
-                        .size(design::PAGE_TITLE_SIZE)
-                        .strong(),
-                )
-                .truncate(),
-            );
+            if let Some(name) = &mut self.title_edit {
+                let input = ui.add(
+                    design::input(name)
+                        .frame(egui::Frame::NONE)
+                        .margin(egui::Margin::ZERO)
+                        .min_size(egui::vec2(0., 32.))
+                        .font(egui::FontId::proportional(design::PAGE_TITLE_SIZE))
+                        .id(egui::Id::new("squidy-board-title-edit"))
+                        .desired_width((width - 70.).max(40.)),
+                );
+                if std::mem::take(&mut self.title_focus) {
+                    input.request_focus();
+                }
+                let cancel =
+                    ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+                let save = ui.button("Save").clicked()
+                    || (input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
+                if cancel {
+                    self.title_edit = None;
+                } else if save {
+                    let name = self.title_edit.as_ref().unwrap().trim().to_owned();
+                    if let Err(error) = amigo_core::library::name(&name) {
+                        self.error = error;
+                    } else if self.boards.iter().any(|b| {
+                        b.id != self.board.as_ref().unwrap().id
+                            && b.name.to_lowercase() == name.to_lowercase()
+                    }) {
+                        self.error = "A board with this name already exists.".into();
+                    } else {
+                        self.action = Some(Action::Rename(name));
+                        self.title_edit = None;
+                        self.error.clear();
+                    }
+                }
+            } else {
+                let title = ui.add_sized(
+                    [width, 32.],
+                    egui::Label::new(
+                        RichText::new(&self.board.as_ref().unwrap().name)
+                            .size(design::PAGE_TITLE_SIZE)
+                            .strong(),
+                    )
+                    .truncate()
+                    .sense(egui::Sense::click()),
+                );
+                ui.interact(
+                    title.rect,
+                    egui::Id::new("squidy-board-title"),
+                    egui::Sense::hover(),
+                );
+                if title.double_clicked() {
+                    self.title_edit = Some(self.board.as_ref().unwrap().name.clone());
+                    self.title_focus = true;
+                }
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if design::icon_button(
                     ui,
@@ -377,18 +504,30 @@ impl SquidyTab {
     }
     pub fn dialogs(&mut self, ctx: &egui::Context) -> Option<Action> {
         if self.delete.is_none() {
+            self.background_dialog(ctx);
             self.card_dialog(ctx);
             self.link_dialog(ctx);
             self.name_dialog(ctx);
             self.path_dialog(ctx);
+            self.capture_dialog(ctx);
         }
         self.delete_dialog(ctx);
         self.action.take()
     }
     pub fn new_card(&mut self, position: Option<[f32; 2]>) {
         self.picking = None;
+        self.background_drawing = false;
+        self.background_start = None;
+        self.capture = None;
         let mut card = Card::new("");
-        card.position = position;
+        card.position = position.or_else(|| {
+            let board = self.board.as_ref()?;
+            self.viewport.is_positive().then(|| {
+                let center = (self.viewport.size() * 0.5 - egui::vec2(board.pan[0], board.pan[1]))
+                    / board.zoom;
+                [center.x - card.size[0] * 0.5, center.y - card.size[1] * 0.5]
+            })
+        });
         self.editor = Some(CardDraft {
             card,
             original: None,
@@ -399,6 +538,7 @@ impl SquidyTab {
         });
     }
     pub fn edit_card(&mut self, id: &str) {
+        self.capture = None;
         if let Some(card) = self
             .board
             .as_ref()
@@ -421,6 +561,8 @@ impl SquidyTab {
         self.link = Some(Link::new(from, to, ""));
     }
     fn begin_path_selection(&mut self) {
+        self.background_drawing = false;
+        self.background_start = None;
         self.picking = Some(Picking::Path(None));
         self.drag = None;
         self.error.clear();

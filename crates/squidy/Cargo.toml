@@ -9,3 +9,4 @@ authors.workspace = true
 amigo-core.workspace = true
 amigo-ui.workspace = true
 egui.workspace = true
+flate2 = "1"

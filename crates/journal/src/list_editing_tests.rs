@@ -401,3 +401,265 @@ fn undo_and_redo_restore_the_list_caret_when_the_empty_item_appears_or_disappear
     );
     assert_eq!(text(&app), "- One\n- Two\n- Three");
 }
+
+#[test]
+fn rapid_list_enter_and_backspace_need_one_keypress() {
+    let size = egui::vec2(980., 640.);
+    for prefix in ["- ", "1. ", "- [ ] "] {
+        let initial = format!("{prefix}One");
+        let (mut app, ctx) = start(
+            &initial,
+            Mode::Preview,
+            PreviewLayout::SideBySide,
+            false,
+            size,
+        );
+        preview_key(
+            &mut app,
+            &ctx,
+            size,
+            egui::Key::Enter,
+            egui::Modifiers::NONE,
+        );
+        preview_key(
+            &mut app,
+            &ctx,
+            size,
+            egui::Key::Enter,
+            egui::Modifiers::NONE,
+        );
+        assert_eq!(text(&app), format!("{initial}\n\n"));
+        frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::Text("Plain".into())],
+            size,
+        );
+        assert_eq!(text(&app), format!("{initial}\n\nPlain"));
+
+        let (mut app, ctx) = start(
+            prefix,
+            Mode::Preview,
+            PreviewLayout::SideBySide,
+            false,
+            size,
+        );
+        preview_key(
+            &mut app,
+            &ctx,
+            size,
+            egui::Key::Backspace,
+            egui::Modifiers::NONE,
+        );
+        assert_eq!(text(&app), "", "{prefix}");
+    }
+}
+#[test]
+fn document_shortcuts_and_undo_work_in_both_views() {
+    let size = egui::vec2(980., 640.);
+    for mode in [Mode::Source, Mode::Preview] {
+        let (mut app, ctx) = start(
+            "First\n\nSecond",
+            mode,
+            PreviewLayout::SideBySide,
+            false,
+            size,
+        );
+        preview_key(&mut app, &ctx, size, egui::Key::A, egui::Modifiers::ALT);
+        frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::Text("Replacement".into())],
+            size,
+        );
+        assert_eq!(text(&app), "Replacement", "{mode:?}");
+        preview_key(&mut app, &ctx, size, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert_eq!(text(&app), "First\n\nSecond", "{mode:?}");
+        preview_key(
+            &mut app,
+            &ctx,
+            size,
+            egui::Key::Z,
+            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+        );
+        assert_eq!(text(&app), "Replacement", "{mode:?}");
+        preview_key(&mut app, &ctx, size, egui::Key::F, egui::Modifiers::ALT);
+        assert!(ctx.read_response(egui::Id::new("journal-find")).is_some());
+    }
+}
+
+#[test]
+fn find_selects_unicode_matches_in_both_views() {
+    let size = egui::vec2(980., 640.);
+    for mode in [Mode::Source, Mode::Preview] {
+        let (mut app, ctx) = start(
+            "Hello 🌍\n\nFind 🌍 again",
+            mode,
+            PreviewLayout::SideBySide,
+            false,
+            size,
+        );
+        preview_key(&mut app, &ctx, size, egui::Key::F, egui::Modifiers::ALT);
+        frame(&mut app, &ctx, vec![egui::Event::Text("🌍".into())], size);
+        preview_key(
+            &mut app,
+            &ctx,
+            size,
+            egui::Key::Enter,
+            egui::Modifiers::NONE,
+        );
+        assert_eq!(app.tab.editor.as_ref().unwrap().selection, 6..7, "{mode:?}");
+    }
+}
+#[test]
+fn preview_enter_keeps_new_list_item_visible_below_viewport() {
+    let size = egui::vec2(980., 400.);
+    let source = (0..30).map(|n| format!("- Item {n}\n")).collect::<String>();
+    let (mut app, ctx) = start(
+        &source,
+        Mode::Preview,
+        PreviewLayout::SideBySide,
+        false,
+        size,
+    );
+    let editor = app.tab.editor.as_mut().unwrap();
+    let end = source.trim_end().len();
+    editor.preview.focus_source(end..end);
+    settle(&mut app, &ctx, size, 3);
+    preview_key(
+        &mut app,
+        &ctx,
+        size,
+        egui::Key::Enter,
+        egui::Modifiers::NONE,
+    );
+    settle(&mut app, &ctx, size, 3);
+    let editor = app.tab.editor.as_ref().unwrap();
+    let input = editor
+        .preview
+        .inputs
+        .iter()
+        .find(|i| i.output.response.has_focus())
+        .unwrap();
+    assert!(input.list);
+    let caret = input
+        .output
+        .galley
+        .pos_from_cursor(input.output.cursor_range.unwrap().primary)
+        .translate(input.output.galley_pos.to_vec2());
+    assert!(
+        caret.bottom() <= size.y && caret.top() >= 46.,
+        "{caret:?} offset {}",
+        editor.scroll.preview_offset
+    );
+}
+
+#[test]
+fn preview_emoji_context_action_preserves_markdown_and_undo() {
+    let size = egui::vec2(980., 640.);
+    let (mut app, ctx) = start(
+        "**word**",
+        Mode::Preview,
+        PreviewLayout::SideBySide,
+        false,
+        size,
+    );
+    let input = &app.tab.editor.as_ref().unwrap().preview.inputs[0];
+    let id = input.output.response.id;
+    let rect = input.output.response.rect;
+    let mut state = egui::TextEdit::load_state(&ctx, id).unwrap();
+    state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::two(
+            egui::text::CCursor::new(0),
+            egui::text::CCursor::new(4),
+        )));
+    state.store(&ctx, id);
+    settle(&mut app, &ctx, size, 2);
+    for pressed in [true, false] {
+        frame(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(rect.center()),
+                egui::Event::PointerButton {
+                    pos: rect.center(),
+                    button: egui::PointerButton::Secondary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+            size,
+        );
+    }
+    let output = frame(&mut app, &ctx, vec![], size);
+    click(
+        &mut app,
+        &ctx,
+        label(&output, "Insert emoji").center(),
+        size,
+    );
+    let output = frame(&mut app, &ctx, vec![], size);
+    click(&mut app, &ctx, label(&output, "😀").center(), size);
+    settle(&mut app, &ctx, size, 3);
+    assert_eq!(text(&app), "**😀**");
+    preview_key(&mut app, &ctx, size, egui::Key::Z, egui::Modifiers::COMMAND);
+    assert_eq!(text(&app), "**word**");
+}
+
+#[test]
+fn mermaid_preview_renders_and_source_edits_keep_the_fence_and_undo() {
+    let size = egui::vec2(1440., 900.);
+    let source = "```mermaid\nflowchart TD\nA[Начало] --> B[Конец]\n```";
+    let (mut app, ctx) = start(
+        source,
+        Mode::Preview,
+        PreviewLayout::SideBySide,
+        false,
+        size,
+    );
+    let output = frame(&mut app, &ctx, vec![], size);
+    assert!(label_optional(&output, "Начало").is_some());
+    assert!(label_optional(&output, "Конец").is_some());
+    assert_eq!(text(&app), source);
+    click(
+        &mut app,
+        &ctx,
+        label(&output, "Edit Mermaid source").center(),
+        size,
+    );
+    settle(&mut app, &ctx, size, 4);
+    let input = app
+        .tab
+        .editor
+        .as_ref()
+        .unwrap()
+        .preview
+        .inputs
+        .iter()
+        .find(|i| i.text.starts_with("flowchart TD"))
+        .unwrap();
+    let id = input.output.response.id;
+    let end = input.text.chars().count();
+    ctx.memory_mut(|m| m.request_focus(id));
+    let mut state = egui::TextEdit::load_state(&ctx, id).unwrap();
+    state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::two(
+            egui::text::CCursor::new(0),
+            egui::text::CCursor::new(end),
+        )));
+    state.store(&ctx, id);
+    frame(
+        &mut app,
+        &ctx,
+        vec![egui::Event::Text(
+            "flowchart LR\nA[Updated] --> B[End]".into(),
+        )],
+        size,
+    );
+    assert!(text(&app).starts_with("```mermaid\nflowchart LR\n"));
+    assert!(text(&app).ends_with("```"));
+    preview_key(&mut app, &ctx, size, egui::Key::Z, egui::Modifiers::COMMAND);
+    assert_eq!(text(&app), source);
+}

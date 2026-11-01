@@ -168,6 +168,7 @@ dependencies = [
  "amigo-core",
  "amigo-ui",
  "egui",
+ "flate2",
 ]
 
 [[package]]

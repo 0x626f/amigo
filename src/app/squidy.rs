@@ -146,6 +146,24 @@ impl Amigo {
             }
             return;
         };
+        if let Action::Export { area, include_text } = action {
+            let Some(board) = self.squidy.board.clone() else {
+                return;
+            };
+            self.squidy_job(ctx, true, move |_| {
+                let path = rfd::FileDialog::new()
+                    .set_title("Export Squidy PDF")
+                    .add_filter("PDF document", &["pdf"])
+                    .set_file_name("squidy.pdf")
+                    .save_file();
+                if let Some(path) = path {
+                    let bytes = amigo_squidy::pdf::export(&board, area, include_text)?;
+                    amigo_core::storage::atomic_write(&path, &bytes)?;
+                }
+                Ok(Outcome::Done)
+            });
+            return;
+        }
         if matches!(&action, Action::Rename(_)) {
             if let Action::Rename(name) = action {
                 match amigo_core::library::name(&name) {

@@ -128,6 +128,7 @@ fn language_items(ui: &mut egui::Ui, current: Option<&str>, action: &mut Option<
                 ("Markdown", "markdown"),
                 ("Python", "python"),
                 ("Rust", "rust"),
+                ("Mermaid flowchart", "mermaid"),
                 ("SQL", "sql"),
                 ("TypeScript", "typescript"),
                 ("YAML", "yaml"),

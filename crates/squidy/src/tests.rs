@@ -588,7 +588,7 @@ fn alt_f_handles_physical_keys_and_card_focus_but_preserves_dialog_input() {
         let (mut tab, ctx) = setup();
         let size = egui::vec2(980., 640.);
         click_card(&mut tab, &ctx, "Alpha", size, false);
-        assert!(tab.selected.is_some() && tab.picking.is_none());
+        assert!(!tab.selected.is_empty() && tab.picking.is_none());
         let shortcut = || egui::Event::Key {
             key: logical,
             physical_key: physical,
@@ -973,4 +973,594 @@ fn path_result_wraps_card_chips_keeps_direction_icons_and_clears_the_highlight()
             );
         }
     }
+}
+
+fn pointer(
+    tab: &mut SquidyTab,
+    ctx: &egui::Context,
+    size: egui::Vec2,
+    pos: egui::Pos2,
+    pressed: bool,
+) {
+    frame(
+        tab,
+        ctx,
+        vec![
+            egui::Event::PointerMoved(pos),
+            egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            },
+        ],
+        size,
+    );
+}
+#[test]
+fn resized_cards_keep_opposite_corner_fixed_at_every_zoom() {
+    for zoom in [0.5, 1., 2.] {
+        for corner in 0..4 {
+            let (mut tab, ctx) = setup();
+            let size = egui::vec2(1440., 900.);
+            {
+                let b = tab.board.as_mut().unwrap();
+                b.zoom = zoom;
+                b.cards.truncate(1);
+                b.links.clear();
+                b.pan = [200., 200.];
+            }
+            for _ in 0..4 {
+                frame(&mut tab, &ctx, vec![], size);
+            }
+            let id = tab.board.as_ref().unwrap().cards[0].id.clone();
+            let rect = ctx
+                .read_response(egui::Id::new(("squidy-card", &id)))
+                .unwrap()
+                .rect;
+            let pos = [
+                rect.left_top(),
+                rect.right_top(),
+                rect.left_bottom(),
+                rect.right_bottom(),
+            ][corner];
+            let before_pan = tab.board.as_ref().unwrap().pan;
+            pointer(&mut tab, &ctx, size, pos, true);
+            let delta = egui::vec2(
+                if corner % 2 == 0 { -70. } else { 70. },
+                if corner / 2 == 0 { -40. } else { 40. },
+            ) * zoom;
+            frame(
+                &mut tab,
+                &ctx,
+                vec![egui::Event::PointerMoved(pos + delta)],
+                size,
+            );
+            pointer(&mut tab, &ctx, size, pos + delta, false);
+            frame(&mut tab, &ctx, vec![], size);
+            let board = tab.board.as_ref().unwrap();
+            let card = &board.cards[0];
+            assert!(
+                (card.size[0] - 320.).abs() < 1. && (card.size[1] - 165.).abs() < 1.,
+                "zoom {zoom} corner {corner}: {:?}",
+                card.size
+            );
+            assert_eq!(board.pan, before_pan);
+            let after = ctx
+                .read_response(egui::Id::new(("squidy-card", &id)))
+                .unwrap()
+                .rect;
+            let opposite = [
+                after.right_bottom(),
+                after.left_bottom(),
+                after.right_top(),
+                after.left_top(),
+            ][corner];
+            let expected = [
+                rect.right_bottom(),
+                rect.left_bottom(),
+                rect.right_top(),
+                rect.left_top(),
+            ][corner];
+            assert!((opposite - expected).length() < 1.);
+        }
+    }
+}
+#[test]
+fn new_card_is_centered_in_panned_zoomed_viewport() {
+    let (mut tab, ctx) = setup();
+    let size = egui::vec2(980., 640.);
+    {
+        let b = tab.board.as_mut().unwrap();
+        b.pan = [-2400., 700.];
+        b.zoom = 0.5;
+    }
+    for _ in 0..4 {
+        frame(&mut tab, &ctx, vec![], size);
+    }
+    tab.new_card(None);
+    let card = &tab.editor.as_ref().unwrap().card;
+    let board = tab.board.as_ref().unwrap();
+    let p = card.position.unwrap();
+    let center = tab.viewport.min
+        + egui::vec2(board.pan[0], board.pan[1])
+        + egui::vec2(p[0] + card.size[0] / 2., p[1] + card.size[1] / 2.) * board.zoom;
+    assert!((center - tab.viewport.center()).length() < 1.);
+}
+
+#[test]
+fn escape_and_empty_canvas_click_clear_card_selection() {
+    for escape in [true, false] {
+        let (mut tab, ctx) = setup();
+        let size = egui::vec2(980., 640.);
+        for _ in 0..4 {
+            frame(&mut tab, &ctx, vec![], size);
+        }
+        let id = tab.board.as_ref().unwrap().cards[0].id.clone();
+        let card = ctx
+            .read_response(egui::Id::new(("squidy-card", &id)))
+            .unwrap()
+            .rect
+            .center();
+        pointer(&mut tab, &ctx, size, card, true);
+        pointer(&mut tab, &ctx, size, card, false);
+        assert!(tab.selected.contains(&id));
+        if escape {
+            frame(&mut tab, &ctx, vec![key(egui::Key::Escape)], size);
+        } else {
+            let empty = tab.viewport.right_bottom() - egui::vec2(20., 20.);
+            pointer(&mut tab, &ctx, size, empty, true);
+            pointer(&mut tab, &ctx, size, empty, false);
+        }
+        assert!(tab.selected.is_empty());
+    }
+}
+
+#[test]
+fn double_click_board_title_starts_inline_rename() {
+    let (mut tab, ctx) = setup();
+    let size = egui::vec2(980., 640.);
+    for _ in 0..4 {
+        frame(&mut tab, &ctx, vec![], size);
+    }
+    let rect = ctx
+        .read_response(egui::Id::new("squidy-board-title"))
+        .unwrap()
+        .rect;
+    for _ in 0..2 {
+        pointer(&mut tab, &ctx, size, rect.center(), true);
+        pointer(&mut tab, &ctx, size, rect.center(), false);
+    }
+    frame(&mut tab, &ctx, vec![], size);
+    assert_eq!(tab.title_edit.as_deref(), Some("Research"));
+    assert!(
+        ctx.read_response(egui::Id::new("squidy-board-title-edit"))
+            .is_some()
+    );
+    frame(&mut tab, &ctx, vec![key(egui::Key::Escape)], size);
+    assert!(tab.title_edit.is_none());
+    assert_eq!(tab.board.as_ref().unwrap().name, "Research");
+}
+#[test]
+fn export_button_opens_resizable_capture_and_waits_for_confirmation() {
+    let (mut tab, ctx) = setup();
+    let size = egui::vec2(980., 640.);
+    for _ in 0..4 {
+        frame(&mut tab, &ctx, vec![], size);
+    }
+    let pan = tab.board.as_ref().unwrap().pan;
+    let button = ctx
+        .read_response(egui::Id::new("squidy-export"))
+        .unwrap()
+        .rect
+        .center();
+    pointer(&mut tab, &ctx, size, button, true);
+    pointer(&mut tab, &ctx, size, button, false);
+    for _ in 0..4 {
+        frame(&mut tab, &ctx, vec![], size);
+    }
+    assert!(tab.capture.is_some());
+    assert!(!tab.capture.as_ref().unwrap().include_text);
+    let output = frame(&mut tab, &ctx, vec![], size);
+    click(&mut tab, &ctx, &output, "Include card text", size);
+    assert!(tab.capture.as_ref().unwrap().include_text);
+    let window = ctx
+        .memory(|m| m.area_rect(egui::Id::new("squidy-export-dialog")))
+        .unwrap();
+    assert!(
+        window.left() >= 0.
+            && window.top() >= 0.
+            && window.right() <= size.x
+            && window.bottom() <= size.y,
+        "{window:?}"
+    );
+    assert!(!egui::Popup::is_any_open(&ctx));
+    let before = tab.capture.as_ref().unwrap().area;
+    for rect in capture::card_rects(tab.board.as_ref().unwrap()).values() {
+        assert!(before.contains_rect(*rect));
+    }
+    let corner = ctx
+        .read_response(egui::Id::new(("squidy-capture-handle", 4usize)))
+        .unwrap()
+        .rect
+        .center();
+    pointer(&mut tab, &ctx, size, corner, true);
+    frame(
+        &mut tab,
+        &ctx,
+        vec![egui::Event::PointerMoved(corner + egui::vec2(25., 20.))],
+        size,
+    );
+    pointer(&mut tab, &ctx, size, corner + egui::vec2(25., 20.), false);
+    assert!(tab.capture.as_ref().unwrap().area.width() > before.width());
+    assert!(tab.capture.as_ref().unwrap().area.height() > before.height());
+    assert_eq!(tab.board.as_ref().unwrap().pan, pan);
+    let preview = ctx
+        .read_response(egui::Id::new("squidy-export-preview"))
+        .unwrap()
+        .rect;
+    let grip = ctx
+        .read_response(egui::Id::new("squidy-export-preview-size").with("__resize_corner"))
+        .unwrap()
+        .rect
+        .center();
+    pointer(&mut tab, &ctx, size, grip, true);
+    frame(
+        &mut tab,
+        &ctx,
+        vec![egui::Event::PointerMoved(grip - egui::vec2(60., 40.))],
+        size,
+    );
+    pointer(&mut tab, &ctx, size, grip - egui::vec2(60., 40.), false);
+    for _ in 0..3 {
+        frame(&mut tab, &ctx, vec![], size);
+    }
+    let resized = ctx
+        .read_response(egui::Id::new("squidy-export-preview"))
+        .unwrap()
+        .rect;
+    assert!(
+        resized.width() < preview.width() && resized.height() < preview.height(),
+        "{preview:?} -> {resized:?}"
+    );
+    frame(&mut tab, &ctx, vec![key(egui::Key::Escape)], size);
+    assert!(tab.capture.is_none());
+}
+
+fn ctrl_click_card(tab: &mut SquidyTab, ctx: &egui::Context, size: egui::Vec2, index: usize) {
+    let id = tab.board.as_ref().unwrap().cards[index].id.clone();
+    let pos = ctx
+        .read_response(egui::Id::new(("squidy-card", &id)))
+        .unwrap()
+        .rect
+        .center();
+    for pressed in [true, false] {
+        frame(
+            tab,
+            ctx,
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::CTRL,
+                },
+            ],
+            size,
+        );
+    }
+}
+#[test]
+fn ctrl_click_toggles_cards_and_plain_click_replaces_selection() {
+    let (mut tab, ctx) = setup();
+    let size = egui::vec2(1440., 900.);
+    for _ in 0..4 {
+        frame(&mut tab, &ctx, vec![], size);
+    }
+    let ids = tab
+        .board
+        .as_ref()
+        .unwrap()
+        .cards
+        .iter()
+        .map(|c| c.id.clone())
+        .collect::<Vec<_>>();
+    ctrl_click_card(&mut tab, &ctx, size, 0);
+    ctrl_click_card(&mut tab, &ctx, size, 1);
+    assert_eq!(
+        tab.selected,
+        BTreeSet::from([ids[0].clone(), ids[1].clone()])
+    );
+    ctrl_click_card(&mut tab, &ctx, size, 0);
+    assert_eq!(tab.selected, BTreeSet::from([ids[1].clone()]));
+    assert!(tab.editor.is_none());
+    let pos = ctx
+        .read_response(egui::Id::new(("squidy-card", &ids[2])))
+        .unwrap()
+        .rect
+        .center();
+    pointer(&mut tab, &ctx, size, pos, true);
+    pointer(&mut tab, &ctx, size, pos, false);
+    assert_eq!(tab.selected, BTreeSet::from([ids[2].clone()]));
+    ctrl_click_card(&mut tab, &ctx, size, 0);
+    frame(&mut tab, &ctx, vec![key(egui::Key::Escape)], size);
+    assert!(tab.selected.is_empty());
+}
+#[test]
+fn dragging_selected_card_moves_selection_together() {
+    let (mut tab, ctx) = setup();
+    let size = egui::vec2(1440., 900.);
+    tab.board.as_mut().unwrap().zoom = 0.75;
+    for _ in 0..4 {
+        frame(&mut tab, &ctx, vec![], size);
+    }
+    ctrl_click_card(&mut tab, &ctx, size, 0);
+    ctrl_click_card(&mut tab, &ctx, size, 1);
+    let ids = tab
+        .board
+        .as_ref()
+        .unwrap()
+        .cards
+        .iter()
+        .map(|c| c.id.clone())
+        .collect::<Vec<_>>();
+    let before = tab.positions.clone();
+    let pos = ctx
+        .read_response(egui::Id::new(("squidy-card", &ids[0])))
+        .unwrap()
+        .rect
+        .center();
+    pointer(&mut tab, &ctx, size, pos, true);
+    let destination = pos + egui::vec2(90., 45.);
+    frame(
+        &mut tab,
+        &ctx,
+        vec![egui::Event::PointerMoved(destination)],
+        size,
+    );
+    pointer(&mut tab, &ctx, size, destination, false);
+    for id in &ids[..2] {
+        let after = tab.positions[id];
+        let before = before[id];
+        assert!((after[0] - before[0] - 120.).abs() < 1.);
+        assert!((after[1] - before[1] - 60.).abs() < 1.);
+    }
+    assert_eq!(tab.positions[&ids[2]], before[&ids[2]]);
+    assert_eq!(tab.selected.len(), 2);
+}
+
+#[test]
+fn draw_named_background_over_cards_without_moving_them() {
+    let (mut tab, ctx) = setup();
+    let size = egui::vec2(980., 640.);
+    for _ in 0..4 {
+        frame(&mut tab, &ctx, vec![], size);
+    }
+    let original = tab.board.as_ref().unwrap().clone();
+    let positions = tab.positions.clone();
+    click_id(
+        &mut tab,
+        &ctx,
+        egui::Id::new("squidy-new-background"),
+        size,
+        egui::Modifiers::NONE,
+    );
+    assert!(tab.background_drawing);
+    frame(&mut tab, &ctx, vec![], size);
+    let start = tab.viewport.min + egui::vec2(60., 60.);
+    pointer(&mut tab, &ctx, size, start, true);
+    frame(
+        &mut tab,
+        &ctx,
+        vec![egui::Event::PointerMoved(start + egui::vec2(400., 230.))],
+        size,
+    );
+    pointer(&mut tab, &ctx, size, start + egui::vec2(400., 230.), false);
+    assert!(tab.background_draft.is_some());
+    assert!(tab.board.as_ref().unwrap().backgrounds.is_empty());
+    assert_eq!(tab.board.as_ref().unwrap().cards, original.cards);
+    assert_eq!(tab.positions, positions);
+    assert_eq!(tab.board.as_ref().unwrap().pan, original.pan);
+    frame(
+        &mut tab,
+        &ctx,
+        vec![egui::Event::Text("Research sources".into())],
+        size,
+    );
+    let output = frame(&mut tab, &ctx, vec![], size);
+    click(&mut tab, &ctx, &output, "Save File Border", size);
+    let background = &tab.board.as_ref().unwrap().backgrounds[0];
+    assert_eq!(background.title, "Research sources");
+    assert_eq!(background.size, [400., 230.]);
+    let output = frame(&mut tab, &ctx, vec![], size);
+    assert!(text_rect(&output, "Research sources").top() < text_rect(&output, "Beta").bottom());
+}
+#[test]
+fn named_background_fits_selected_cards_and_cancels_cleanly() {
+    let (mut tab, ctx) = setup();
+    let size = egui::vec2(980., 640.);
+    for _ in 0..4 {
+        frame(&mut tab, &ctx, vec![], size);
+    }
+    ctrl_click_card(&mut tab, &ctx, size, 0);
+    ctrl_click_card(&mut tab, &ctx, size, 1);
+    click_id(
+        &mut tab,
+        &ctx,
+        egui::Id::new("squidy-new-background"),
+        size,
+        egui::Modifiers::NONE,
+    );
+    assert!(tab.background_draft.is_some());
+    assert!(!tab.background_drawing);
+    frame(
+        &mut tab,
+        &ctx,
+        vec![egui::Event::Text("Folder".into())],
+        size,
+    );
+    let output = frame(&mut tab, &ctx, vec![], size);
+    click(&mut tab, &ctx, &output, "Save File Border", size);
+    let background = &tab.board.as_ref().unwrap().backgrounds[0];
+    let area = egui::Rect::from_min_size(
+        egui::pos2(background.position[0], background.position[1]),
+        egui::vec2(background.size[0], background.size[1]),
+    );
+    let bounds = capture::card_rects(tab.board.as_ref().unwrap());
+    for id in &tab.selected {
+        assert!(area.contains_rect(bounds[id]));
+    }
+    assert!(area.top() + 36. <= bounds[&tab.board.as_ref().unwrap().cards[0].id].top());
+    tab.selected.clear();
+    click_id(
+        &mut tab,
+        &ctx,
+        egui::Id::new("squidy-new-background"),
+        size,
+        egui::Modifiers::NONE,
+    );
+    assert!(tab.background_drawing);
+    frame(&mut tab, &ctx, vec![key(egui::Key::Escape)], size);
+    assert!(!tab.background_drawing);
+    assert_eq!(tab.board.as_ref().unwrap().backgrounds.len(), 1);
+}
+#[test]
+fn named_background_moves_resizes_and_deletes_without_changing_cards() {
+    for zoom in [0.5, 1.5] {
+        let (mut tab, ctx) = setup();
+        let size = egui::vec2(1440., 900.);
+        let background = Background::new("Folder", [10., 10.], [600., 300.]);
+        let id = background.id.clone();
+        tab.board.as_mut().unwrap().backgrounds.push(background);
+        tab.board.as_mut().unwrap().zoom = zoom;
+        for _ in 0..4 {
+            frame(&mut tab, &ctx, vec![], size);
+        }
+        let cards = tab.board.as_ref().unwrap().cards.clone();
+        let pan = tab.board.as_ref().unwrap().pan;
+        let title = ctx
+            .read_response(egui::Id::new(("squidy-background", &id)))
+            .unwrap()
+            .rect
+            .center();
+        pointer(&mut tab, &ctx, size, title, true);
+        frame(
+            &mut tab,
+            &ctx,
+            vec![egui::Event::PointerMoved(
+                title + egui::vec2(40., 30.) * zoom,
+            )],
+            size,
+        );
+        pointer(
+            &mut tab,
+            &ctx,
+            size,
+            title + egui::vec2(40., 30.) * zoom,
+            false,
+        );
+        frame(&mut tab, &ctx, vec![], size);
+        assert_eq!(
+            tab.board.as_ref().unwrap().backgrounds[0].position,
+            [50., 40.]
+        );
+        let corner = ctx
+            .read_response(egui::Id::new(("squidy-background-resize", &id, 3usize)))
+            .unwrap()
+            .rect
+            .center();
+        pointer(&mut tab, &ctx, size, corner, true);
+        frame(
+            &mut tab,
+            &ctx,
+            vec![egui::Event::PointerMoved(
+                corner + egui::vec2(60., 40.) * zoom,
+            )],
+            size,
+        );
+        pointer(
+            &mut tab,
+            &ctx,
+            size,
+            corner + egui::vec2(60., 40.) * zoom,
+            false,
+        );
+        assert_eq!(
+            tab.board.as_ref().unwrap().backgrounds[0].size,
+            [660., 340.]
+        );
+        assert_eq!(tab.board.as_ref().unwrap().pan, pan);
+        assert_eq!(tab.board.as_ref().unwrap().cards, cards);
+        tab.confirm_delete(Delete::Background(id));
+        let mut output = frame(&mut tab, &ctx, vec![], size);
+        for _ in 0..3 {
+            output = frame(&mut tab, &ctx, vec![], size);
+        }
+        click(&mut tab, &ctx, &output, "Delete", size);
+        assert!(tab.board.as_ref().unwrap().backgrounds.is_empty());
+        assert_eq!(tab.board.as_ref().unwrap().cards, cards);
+    }
+}
+
+#[test]
+fn background_title_renames_and_cards_on_top_still_drag_normally() {
+    let (mut tab, ctx) = setup();
+    let size = egui::vec2(1440., 900.);
+    tab.board
+        .as_mut()
+        .unwrap()
+        .backgrounds
+        .push(Background::new("Folder", [-24., -48.], [700., 320.]));
+    tab.board.as_mut().unwrap().pan = [100., 120.];
+    let id = tab.board.as_ref().unwrap().backgrounds[0].id.clone();
+    for _ in 0..4 {
+        frame(&mut tab, &ctx, vec![], size);
+    }
+    let title = ctx
+        .read_response(egui::Id::new(("squidy-background", &id)))
+        .unwrap()
+        .rect
+        .center();
+    for _ in 0..2 {
+        pointer(&mut tab, &ctx, size, title, true);
+        pointer(&mut tab, &ctx, size, title, false);
+    }
+    assert!(tab.background_draft.is_some());
+    frame(
+        &mut tab,
+        &ctx,
+        vec![egui::Event::Text(" renamed".into())],
+        size,
+    );
+    let output = frame(&mut tab, &ctx, vec![], size);
+    click(&mut tab, &ctx, &output, "Save File Border", size);
+    assert_eq!(
+        tab.board.as_ref().unwrap().backgrounds[0].title,
+        "Folder renamed"
+    );
+    for _ in 0..2 {
+        frame(&mut tab, &ctx, vec![], size);
+    }
+    let card_id = tab.board.as_ref().unwrap().cards[0].id.clone();
+    let card = ctx
+        .read_response(egui::Id::new(("squidy-card", &card_id)))
+        .unwrap()
+        .rect
+        .center();
+    let position = tab.positions[&card_id];
+    let background = tab.board.as_ref().unwrap().backgrounds[0].clone();
+    pointer(&mut tab, &ctx, size, card, true);
+    frame(
+        &mut tab,
+        &ctx,
+        vec![egui::Event::PointerMoved(card + egui::vec2(35., 20.))],
+        size,
+    );
+    pointer(&mut tab, &ctx, size, card + egui::vec2(35., 20.), false);
+    assert_eq!(
+        tab.positions[&card_id],
+        [position[0] + 35., position[1] + 20.]
+    );
+    assert_eq!(tab.board.as_ref().unwrap().backgrounds[0], background);
 }

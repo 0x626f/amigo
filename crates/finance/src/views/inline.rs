@@ -531,7 +531,7 @@ fn comment(cells: &mut Cells<'_>, row: &str, value: &mut String) {
                     .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
                     .show(ui, |ui| {
                         ui.add(
-                            egui::TextEdit::multiline(&mut draft)
+                            amigo_ui::text_input::TextEdit::multiline(&mut draft)
                                 .id(input_id)
                                 .desired_width(f32::INFINITY)
                                 .desired_rows(10)

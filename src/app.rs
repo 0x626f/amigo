@@ -363,6 +363,10 @@ impl Amigo {
         self.open_settings(SettingsPage::Board(self.library.settings.board.clone()));
     }
     fn render(&mut self, ui: &mut egui::Ui) {
+        amigo_ui::spelling::set_personal_dictionary(
+            ui.ctx(),
+            self.data_path.join("dictionary.txt"),
+        );
         let ctx = ui.ctx().clone();
         self.media_context.get_or_insert_with(|| ctx.clone());
         design::apply_theme(&ctx, self.workspace.dark_mode);
