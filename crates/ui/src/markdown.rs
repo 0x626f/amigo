@@ -1,25 +1,29 @@
 //! Reusable Markdown preview for descriptions and research-card payloads.
+use crate::math::RichJob;
 use crate::{
     design,
     media::{self, Location},
 };
-use egui::{FontId, TextFormat, text::LayoutJob};
+use egui::{FontId, TextFormat};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 
-fn flush(ui: &mut egui::Ui, job: &mut LayoutJob) {
-    if !job.text.is_empty() {
+fn flush(ui: &mut egui::Ui, job: &mut RichJob) {
+    if !job.is_empty() {
         job.wrap.max_width = ui.available_width();
-        ui.label(std::mem::take(job));
+        std::mem::take(job).show(ui);
         ui.add_space(4.);
     }
 }
 pub fn show(ui: &mut egui::Ui, text: &str, location: Option<&Location>) {
     let mut parser = Parser::new_ext(
         text,
-        Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS,
+        Options::ENABLE_MATH
+            | Options::ENABLE_TABLES
+            | Options::ENABLE_STRIKETHROUGH
+            | Options::ENABLE_TASKLISTS,
     )
     .peekable();
-    let mut job = LayoutJob::default();
+    let mut job = RichJob::default();
     let mut bold = false;
     let mut italic = false;
     let mut strike = false;
@@ -29,6 +33,20 @@ pub fn show(ui: &mut egui::Ui, text: &str, location: Option<&Location>) {
     let mut linked = None::<String>;
     while let Some(event) = parser.next() {
         match event {
+            Event::DisplayMath(t) => {
+                flush(ui, &mut job);
+                crate::math::show(ui, &t);
+            }
+            Event::InlineMath(t) => job.append_formula(
+                ui,
+                &t,
+                TextFormat {
+                    font_id: FontId::proportional(15.),
+                    color: design::colors(ui).ink,
+                    ..Default::default()
+                },
+                false,
+            ),
             Event::Start(Tag::Image { dest_url, .. }) => {
                 flush(ui, &mut job);
                 let mut alt = String::new();
@@ -280,6 +298,43 @@ mod tests {
         );
         output.textures_delta.clear();
         output
+    }
+    #[test]
+    fn formulas_and_sequences_render_as_preview_shapes() {
+        let ctx = egui::Context::default();
+        design::install(&ctx);
+        let mut editor = InlineEditor::default();
+        let mut text = r"$$P_{wall}=1400/0.92\approx1522\text{ Вт}$$
+
+```mermaid
+sequenceDiagram
+participant C as curl
+participant K as Ядро Linux
+C->>K: connect(127.0.0.1:1080)
+K-->>C: TCP установлен
+C->>C: self
+```
+"
+        .to_owned();
+        let original = text.clone();
+        let mut output = frame(&ctx, &mut editor, &mut text, vec![]);
+        for _ in 0..3 {
+            output = frame(&ctx, &mut editor, &mut text, vec![]);
+        }
+        let texts: Vec<_> = output
+            .shapes
+            .iter()
+            .filter_map(|s| match &s.shape {
+                egui::Shape::Text(t) => Some(t.galley.text().to_owned()),
+                _ => None,
+            })
+            .collect();
+        assert!(output.shapes.iter().any(|s| matches!(&s.shape, egui::Shape::Rect(r) if r.fill_texture_id() != egui::TextureId::default())), "Formula should be typeset into a texture");
+        assert!(!texts.iter().any(|t| t.contains("P_{wall}")), "{texts:?}");
+        assert!(texts.iter().any(|t| t == "Ядро Linux"));
+        assert!(texts.iter().any(|t| t == "TCP установлен"));
+        assert!(!texts.iter().any(|t| t.contains("Only Mermaid")));
+        assert_eq!(text, original);
     }
     #[test]
     fn descriptions_render_mermaid_and_keep_double_click_source_editing() {

@@ -140,7 +140,7 @@ button stays on **Loading…**, close Discover and reopen the file after pending
 system package operations finish, or install with Fedora's package manager:
 
 ```sh
-sudo dnf install ./amigo-0.0.4-linux-x86_64.rpm
+sudo dnf install ./amigo-0.0.5-linux-x86_64.rpm
 ```
 
 RPMs require the Wayland libraries directly, including on Fedora releases
@@ -150,8 +150,8 @@ that split them into separate packages. CI tests RPM installation in a Fedora
 To inspect the package without installing it:
 
 ```sh
-rpm -qp --queryformat 'Name: %{NAME}\nLicense: %{LICENSE}\nPackager: %{PACKAGER}\nVendor: %{VENDOR}\n' ./amigo-0.0.4-linux-x86_64.rpm
-pkcon get-details-local ./amigo-0.0.4-linux-x86_64.rpm
+rpm -qp --queryformat 'Name: %{NAME}\nLicense: %{LICENSE}\nPackager: %{PACKAGER}\nVendor: %{VENDOR}\n' ./amigo-0.0.5-linux-x86_64.rpm
+pkcon get-details-local ./amigo-0.0.5-linux-x86_64.rpm
 ```
 
 The license expression defaults to `[workspace.package].license` in `Cargo.toml`
@@ -175,11 +175,11 @@ uninstalling the application preserves the user's Amigo library.
 Output goes to `dist/<version>/<platform>/<architecture>/`, for example:
 
 ```text
-dist/0.0.4/linux/x86_64/amigo-0.0.4-linux-x86_64.deb
-dist/0.0.4/macos/aarch64/amigo-0.0.4-macos-aarch64.app.zip
-dist/0.0.4/macos/aarch64/amigo-0.0.4-macos-aarch64.dmg
-dist/0.0.4/windows/x86_64/amigo-0.0.4-windows-x86_64.zip
-dist/0.0.4/windows/x86_64/amigo-0.0.4-windows-x86_64.setup.exe
+dist/0.0.5/linux/x86_64/amigo-0.0.5-linux-x86_64.deb
+dist/0.0.5/macos/aarch64/amigo-0.0.5-macos-aarch64.app.zip
+dist/0.0.5/macos/aarch64/amigo-0.0.5-macos-aarch64.dmg
+dist/0.0.5/windows/x86_64/amigo-0.0.5-windows-x86_64.zip
+dist/0.0.5/windows/x86_64/amigo-0.0.5-windows-x86_64.setup.exe
 ```
 
 All formats include the executable, platform icon, README, application license,
@@ -204,10 +204,10 @@ prepare each platform on its native build machine:
 
 ```sh
 just release-prepare
-# Review packages and edit dist/0.0.4/<platform>/<architecture>/RELEASE_NOTES.md.
-git tag -a v0.0.4 -m 'Amigo 0.0.4'
-git push origin v0.0.4
-just release-draft v0.0.4
+# Review packages and edit dist/0.0.5/<platform>/<architecture>/RELEASE_NOTES.md.
+git tag -a v0.0.5 -m 'Amigo 0.0.5'
+git push origin v0.0.5
+just release-draft v0.0.5
 ```
 
 Create and push the tag once, then fetch it on the other build machines.
@@ -344,9 +344,13 @@ Editable text is checked automatically after a short typing pause. Misspelled wo
 
 ## Journal
 
-Fenced `mermaid` blocks render as native flowcharts in Journal previews and shared Markdown descriptions, including Squidy card data. Supported syntax includes `flowchart`/`graph` with TD/TB, BT, LR, or RL directions; Unicode labels; rectangle, rounded, diamond, circle, stadium, and database nodes; solid, dotted, thick, bidirectional, and labeled links; chained or branching connections; and basic subgraphs. Use **+ / −** or **Alt+scroll** over the diagram to zoom (scroll up to zoom in, down to zoom out). Drag the diagram to pan in either direction; mouse-wheel, trackpad, and visible scrollbars also navigate the diagram. **Fit** resets the zoom and scroll position. Use **Copy source** to copy its definition. In editable Journal previews, expand **Edit Mermaid source** to change the diagram; formatting, autosave, and Undo remain available. Description previews retain their usual double-click source editing. Unsupported syntax shows a clear error and leaves the source intact. This is a basic flowchart renderer, not the full Mermaid JavaScript engine; other diagram types, styles, and scripts are not supported.
+Fenced `mermaid` blocks render as native flowcharts in Journal previews and shared Markdown descriptions, including Squidy card data. Supported syntax includes `flowchart`/`graph` with TD/TB, BT, LR, or RL directions; Unicode labels; rectangle, rounded, diamond, circle, stadium, and database nodes; solid, dotted, thick, bidirectional, and labeled links; chained or branching connections; and basic subgraphs. Use **+ / −** or **Alt+scroll** over the diagram to zoom (scroll up to zoom in, down to zoom out). Drag the diagram to pan in either direction; mouse-wheel, trackpad, and visible scrollbars also navigate the diagram. **Fit** resets the zoom and scroll position. Use **Copy source** to copy its definition. In editable Journal previews, expand **Edit Mermaid source** to change the diagram; formatting, autosave, and Undo remain available. Description previews retain their usual double-click source editing. Unsupported syntax shows a clear error and leaves the source intact. This native renderer supports basic flowcharts and sequence diagrams; advanced Mermaid directives, styles, and scripts are not supported.
 
 ````markdown
+`sequenceDiagram` blocks support participants with aliases, implicit participants, ordered messages, self messages, and solid or dashed arrows (`->>`, `-->>`, `->`, `-->`). Embedded diagrams size their height to the rendered content, capped by the visible panel height. Short diagrams stay compact; longer diagrams reserve a useful viewing area even after other text in a scrollable description. Sequence previews have zoom buttons, visible scrollbars, and **Copy source**. Choose **Expand** to open a separate window using most of the app area, then drag its edges or corner to resize it. The diagram uses the available window width and height, including when opened from a narrow task/card description. Close the enlarged view with its close button or Escape. The Journal source editor works for both diagram types.
+
+Formulas use `$…$` inline or `$$…$$` for display. Native LaTeX typesetting supports stacked and nested fractions (`\frac`, `\dfrac`, `\tfrac`), roots (`\sqrt[n]{…}`), nested subscripts and superscripts, sums/products/integrals with limits, Greek letters, mathematical operators, scalable delimiters, accents and vectors, matrices, cases, and aligned equations. For example: `$$B_{GB/s}=\frac{MT/s\times W_{bit}\times C}{8\times1000}$$`. The renderer embeds STIX Two Math, including Cyrillic units in `\text{…}`, and caches previews for the current color, size, and display resolution. Long display equations scroll horizontally. Hover to inspect the source; right-click a formula to copy it. Unsupported or malformed TeX stays visible as source with an error tooltip. Click a formula paragraph in editable Journal previews to edit its original TeX; Markdown source, autosave, and Undo retain the formula. PDF conversion currently retains formula source. See [light preview](docs/formulas.png) and [dark preview](docs/formulas-dark.png).
+
 ```mermaid
 flowchart TD
     OS[Приложения / ОС] --> CPU[CPU: ядра]
@@ -360,7 +364,7 @@ Use **Alt+F** to find text in the open document and **Alt+A** to select its full
 
 The editor header’s **Check spelling** icon opens spelling suggestions. This optional feature requires the `hunspell` executable on PATH and an installed language dictionary; it uses the same installed English, Spanish, and Russian dictionaries. Choose a suggestion to correct the first matching word, then undo it like any other edit.
 
-Journal stores ordinary UTF-8 `.md` files below the working library's `journal/` folder. It offers nested folders, title/content search, note renaming, and recoverable deletion to the default **Trash** folder in the Notebook tree. The Notebook header’s new-note and new-folder icons create at Journal root, regardless of the open note. Folder rows have a compact **…** actions button; note rows have a direct trash icon instead. Note removal still requires confirmation, and Restore remains available from a trashed note’s right-click menu. A regular folder’s menu offers **New Note → New Folder → Move to Trash**; creation targets that folder. Right-clicking a row opens the same menu. Right-click the space between children for their folder’s menu, or empty root space for root creation and refresh. Creation dialogs show the destination separately from the name. Folder names can be entered as `Projects/Plan`. Use the **Open External Markdown or PDF File** icon at the upper left of the editor to open a `.md` or `.pdf` immediately, without copying it into Journal. External files are temporary drafts: reading and editing do not change the original. A disk-shaped **Save to Journal** icon appears for files outside Journal. Click it, choose **Journal Root** or an existing folder, and select **Save to Journal** to save the current draft, including edits. Duplicate names receive a suffix. Switching documents with unsaved external edits offers Save, Discard, or Cancel. Files already inside Journal open as saved documents.
+Journal stores ordinary UTF-8 `.md` files below the working library's `journal/` folder. The tree lists folders before files at each level. Each group sorts alphabetically without regard to case, with shorter matching prefixes first (for example, `Note` before `Notebook`). Trash items sort by their displayed names. It offers nested folders, title/content search, note renaming, and recoverable deletion to the default **Trash** folder in the Notebook tree. The Notebook header’s new-note and new-folder icons create at Journal root, regardless of the open note. Folder rows have a compact **…** actions button; note rows have a direct trash icon instead. Note removal still requires confirmation, and Restore remains available from a trashed note’s right-click menu. A regular folder’s menu offers **New Note → New Folder → Move to Trash**; creation targets that folder. Right-clicking a row opens the same menu. Right-click the space between children for their folder’s menu, or empty root space for root creation and refresh. Creation dialogs show the destination separately from the name. Folder names can be entered as `Projects/Plan`. Use the **Open External Markdown or PDF File** icon at the upper left of the editor to open a `.md` or `.pdf` immediately, without copying it into Journal. External files are temporary drafts: reading and editing do not change the original. A disk-shaped **Save to Journal** icon appears for files outside Journal. Click it, choose **Journal Root** or an existing folder, and select **Save to Journal** to save the current draft, including edits. Duplicate names receive a suffix. Switching documents with unsaved external edits offers Save, Discard, or Cancel. Files already inside Journal open as saved documents.
 
 Right-click a saved Markdown or PDF document and choose **Move to Folder…**. Select an existing folder or **Journal Root**, then **Move**. Drag a Markdown or PDF file onto a folder in the tree to move it directly; valid destinations are highlighted, and hovering a closed folder reveals its children. Drop onto the NOTEBOOK header or empty space below the tree to move it to Journal root. Press Escape or release outside a destination to cancel. Journal saves pending edits before moving an open document, updates its editor path, and preserves the file contents. Name collisions show an error and retain both files; Trash is excluded from destinations.
 
@@ -660,7 +664,8 @@ PURPOSE. See [LICENSE](LICENSE) for the full terms.
 When distributing binaries, provide the corresponding source code under the GPL,
 including the build scripts, using one of the methods in section 6 of the license.
 
-Third-party components retain their own licenses: the [bundled font](crates/ui/assets/fonts/LICENSE),
+Third-party components retain their own licenses: the [bundled UI font](crates/ui/assets/fonts/LICENSE),
+the [bundled math font](crates/ui/assets/fonts/NotoSansMath-LICENSE),
 [country catalogue](crates/core/COUNTRY-DATA-LICENSE),
 [Unicode data](crates/connect/data/UNICODE-LICENSE.txt), and
 [Apple design skill](skills/apple-design/LICENSE). Dependency licenses also continue to apply.

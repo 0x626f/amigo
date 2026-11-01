@@ -225,6 +225,7 @@ impl Journal {
             if depth > 48 {
                 return Err("The notebook contains too many nested folders.".into());
             }
+            let mut children = Vec::new();
             for item in fs::read_dir(dir).map_err(|e| e.to_string())? {
                 let item = item.map_err(|e| e.to_string())?;
                 let kind = item.file_type().map_err(|e| e.to_string())?;
@@ -242,27 +243,50 @@ impl Journal {
                     .ok_or("A note name is not UTF-8.")?
                     .replace(std::path::MAIN_SEPARATOR, "/");
                 if kind.is_dir() {
-                    out.push(Entry {
+                    children.push(Entry {
                         path: key,
                         folder: true,
                     });
-                    visit(base, &path, out, depth + 1)?;
                 } else if kind.is_file()
                     && path.extension().is_some_and(|e| {
                         e.eq_ignore_ascii_case("md") || e.eq_ignore_ascii_case("pdf")
                     })
                 {
-                    out.push(Entry {
+                    children.push(Entry {
                         path: key,
                         folder: false,
                     });
+                }
+            }
+            // Sort siblings before descending so each folder stays beside its children.
+            // Compare displayed names: the .md suffix and Trash storage IDs must not
+            // put longer names ahead of their shorter prefixes.
+            children.sort_by_cached_key(|entry| {
+                let name = entry_name(&entry.path);
+                let name = if entry.folder {
+                    name
+                } else {
+                    name.strip_suffix(".md").unwrap_or(name)
+                };
+                (
+                    !entry.folder,
+                    name.to_lowercase(),
+                    name.chars().count(),
+                    entry.path.clone(),
+                )
+            });
+            for entry in children {
+                let path = base.join(&entry.path);
+                let folder = entry.folder;
+                out.push(entry);
+                if folder {
+                    visit(base, &path, out, depth + 1)?;
                 }
             }
             Ok(())
         }
         let mut entries = vec![];
         visit(&self.root, &self.root, &mut entries, 0)?;
-        entries.sort_by_key(|e| (is_in_trash(&e.path), e.path.to_lowercase()));
         Ok(entries)
     }
     pub fn read(&self, name: &str) -> Result<Document> {

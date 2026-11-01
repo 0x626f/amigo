@@ -665,3 +665,58 @@ fn mermaid_preview_renders_and_source_edits_keep_the_fence_and_undo() {
     preview_key(&mut app, &ctx, size, egui::Key::Z, egui::Modifiers::COMMAND);
     assert_eq!(text(&app), source);
 }
+
+#[test]
+fn typeset_fraction_preview_opens_tex_for_editing_and_keeps_undo() {
+    let size = egui::vec2(1000., 800.);
+    let source =
+        "Intro\n\n$$B_{GB/s}=\\frac{MT/s\\times W_{bit}\\times C}{8\\times1000}$$\n\nAfter";
+    for dark in [false, true] {
+        let (mut app, ctx) = start(source, Mode::Preview, PreviewLayout::SideBySide, dark, size);
+        let output = frame(&mut app, &ctx, vec![], size);
+        let formula = output
+            .shapes
+            .iter()
+            .find_map(|s| match &s.shape {
+                egui::Shape::Rect(r) if r.fill_texture_id() != egui::TextureId::default() => {
+                    Some(r.rect)
+                }
+                _ => None,
+            })
+            .expect("A typeset formula texture");
+        assert!(formula.height() > 20.);
+        assert_eq!(text(&app), source);
+        click(&mut app, &ctx, formula.center(), size);
+        settle(&mut app, &ctx, size, 3);
+        let input = app
+            .tab
+            .editor
+            .as_ref()
+            .unwrap()
+            .preview
+            .inputs
+            .iter()
+            .find(|i| i.text.contains("\\frac"))
+            .expect("Clicking formula opens original TeX");
+        let id = input.output.response.id;
+        let end = input.text.chars().count();
+        ctx.memory_mut(|m| m.request_focus(id));
+        let mut state = egui::TextEdit::load_state(&ctx, id).unwrap();
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::two(
+                egui::text::CCursor::new(0),
+                egui::text::CCursor::new(end),
+            )));
+        state.store(&ctx, id);
+        frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::Text(r"$$B=\frac{a}{b}$$".into())],
+            size,
+        );
+        assert_eq!(text(&app), "Intro\n\n$$B=\\frac{a}{b}$$\n\nAfter");
+        preview_key(&mut app, &ctx, size, egui::Key::Z, egui::Modifiers::COMMAND);
+        assert_eq!(text(&app), source);
+    }
+}

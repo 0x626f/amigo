@@ -178,3 +178,24 @@ fn empty_items_render_without_adding_a_spurious_item_before_a_heading_or_code_bl
     assert!(matches!(&preview.blocks[1].kind, Kind::Code(language, _) if language == "rust"));
     assert!(matches!(&preview.blocks[2].kind, Kind::Text(0, text) if text.value.is_empty()));
 }
+
+#[test]
+fn editing_math_and_surrounding_text_preserves_tex_delimiters_and_commands() {
+    let source = r"Before $P\propto f\times IPC$ after.";
+    let mut preview = Preview::document(source);
+    text(&mut preview, 0, r"Changed $P\propto f\times IPC$ after.");
+    assert_eq!(
+        preview.edited_document().unwrap(),
+        source.replace("Before", "Changed")
+    );
+    let mut preview = Preview::document(source);
+    text(
+        &mut preview,
+        0,
+        r"Before $P_{wall}\approx1522\text{ Вт}$ after.",
+    );
+    assert_eq!(
+        preview.edited_document().unwrap(),
+        r"Before $P_{wall}\approx1522\text{ Вт}$ after."
+    );
+}

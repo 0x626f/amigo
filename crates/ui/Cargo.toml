@@ -12,3 +12,4 @@ amigo-core.workspace = true
 image.workspace = true
 pulldown-cmark.workspace = true
 serde_json.workspace = true
+latex-rust = { version = "2.1.1", features = ["png"] }

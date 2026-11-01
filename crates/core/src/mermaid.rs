@@ -1,4 +1,4 @@
-//! A native parser for Mermaid's basic flowchart notation. No scripts or remote content run.
+//! Native parsers for basic Mermaid flowcharts and sequence diagrams. No scripts or remote content run.
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Direction {
@@ -471,5 +471,120 @@ PL"#;
         let graph = parse("flowchart TD\nA <-- B").unwrap();
         let ranks = graph.ranks();
         assert!(ranks[1].0 < ranks[0].0);
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Sequence {
+    pub participants: Vec<Node>,
+    /// Messages remain in source order, including repeated and self messages.
+    pub messages: Vec<Edge>,
+}
+pub fn is_sequence(source: &str) -> bool {
+    source
+        .lines()
+        .map(str::trim)
+        .find(|s| !s.is_empty() && !s.starts_with("%%"))
+        == Some("sequenceDiagram")
+}
+pub fn parse_sequence(source: &str) -> Result<Sequence, String> {
+    if source.len() > 256_000 {
+        return Err("Sequence source is too large.".into());
+    }
+    let mut sequence = Sequence {
+        participants: vec![],
+        messages: vec![],
+    };
+    fn participant(sequence: &mut Sequence, id: &str) -> Result<usize, String> {
+        if id.is_empty() || !id.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            return Err(format!("Invalid participant ID: {id}"));
+        }
+        if let Some(i) = sequence.participants.iter().position(|p| p.id == id) {
+            return Ok(i);
+        }
+        if sequence.participants.len() >= 128 {
+            return Err("Too many participants.".into());
+        }
+        sequence.participants.push(Node {
+            id: id.into(),
+            label: id.into(),
+            shape: Shape::Rectangle,
+        });
+        Ok(sequence.participants.len() - 1)
+    }
+    if !is_sequence(source) {
+        return Err("Start with sequenceDiagram.".into());
+    }
+    for (line, text) in source.lines().enumerate() {
+        let text = text.trim();
+        if text.is_empty() || text.starts_with("%%") || text == "sequenceDiagram" {
+            continue;
+        }
+        let result = (|| {
+            if let Some(declaration) = text
+                .strip_prefix("participant ")
+                .or_else(|| text.strip_prefix("actor "))
+            {
+                let (id, label) = declaration
+                    .split_once(" as ")
+                    .unwrap_or((declaration, declaration));
+                let i = participant(&mut sequence, id.trim())?;
+                sequence.participants[i].label = label_text(label);
+                return Ok(());
+            }
+            let (connection, label) = text
+                .split_once(':')
+                .ok_or("Expected a sequence message: A->>B: message".to_owned())?;
+            let mut parsed = None;
+            for (token, dotted, arrow) in [
+                ("-->>", true, true),
+                ("->>", false, true),
+                ("-->", true, false),
+                ("->", false, false),
+            ] {
+                if let Some((from, to)) = connection.split_once(token) {
+                    parsed = Some((from.trim(), to.trim(), dotted, arrow));
+                    break;
+                }
+            }
+            let (from, to, dotted, arrow) =
+                parsed.ok_or("Unsupported sequence message arrow.".to_owned())?;
+            let from = participant(&mut sequence, from)?;
+            let to = participant(&mut sequence, to)?;
+            if sequence.messages.len() >= 2048 {
+                return Err("Too many sequence messages.".into());
+            }
+            sequence.messages.push(Edge {
+                from,
+                to,
+                label: label_text(label),
+                start_arrow: false,
+                end_arrow: arrow,
+                line: if dotted { Line::Dotted } else { Line::Solid },
+            });
+            Ok(())
+        })();
+        result.map_err(|e: String| format!("Line {}: {e}", line + 1))?;
+    }
+    if sequence.participants.is_empty() {
+        return Err("Add at least one participant.".into());
+    }
+    Ok(sequence)
+}
+
+#[cfg(test)]
+mod sequence_tests {
+    use super::*;
+    #[test]
+    fn aliases_unicode_replies_and_repeated_messages_keep_order() {
+        let s = parse_sequence("  sequenceDiagram\n participant C as curl\n participant S as sing-box SOCKS\n participant K as Ядро Linux\n participant W as Сайт\n C->>K: connect(127.0.0.1:1080)\n K-->>C: TCP установлен\n C->>S: CONNECT example.org:443\n C->>W: TLS через прокси\n C->>W: HTTPS-запрос\n W-->>C: HTTPS-ответ").unwrap();
+        assert_eq!(s.participants.len(), 4);
+        assert_eq!(s.participants[2].label, "Ядро Linux");
+        assert_eq!(s.messages.len(), 6);
+        assert_eq!(s.messages[1].line, Line::Dotted);
+        assert_eq!(s.messages[2].label, "CONNECT example.org:443");
+        assert_eq!(s.messages[3].from, s.messages[4].from);
+        assert!(parse_sequence("sequenceDiagram\nA->>A: self").is_ok());
+        assert!(parse_sequence("sequenceDiagram\nloop forever").is_err());
     }
 }

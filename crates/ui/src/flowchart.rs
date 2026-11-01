@@ -1,4 +1,4 @@
-//! Local rendering of basic Mermaid flowcharts in Markdown previews.
+//! Local rendering of basic Mermaid diagrams in Markdown previews.
 use crate::design;
 use amigo_core::mermaid::{self, Direction, Flowchart, Line, Shape};
 use egui::{Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2};
@@ -95,8 +95,23 @@ fn layout(ui: &egui::Ui, graph: &Flowchart, zoom: f32) -> Layout {
         size,
     }
 }
+/// Reserve a content-sized viewport even below other blocks in a scrolling parent.
+/// `available_height` is only the space left below the cursor, so it can collapse
+/// nested scroll areas to a thin strip. Use the full visible panel as the cap.
+pub(crate) fn viewport_height(ui: &egui::Ui, content_height: f32) -> f32 {
+    let panel_height = ui
+        .clip_rect()
+        .height()
+        .min(ui.ctx().content_rect().height());
+    let cap = (panel_height - 64.).max(180.);
+    content_height.min(cap).max(1.)
+}
+
 /// Returns a response so description previews retain their normal double-click editing.
 pub fn show(ui: &mut egui::Ui, source: &str) -> egui::Response {
+    if mermaid::is_sequence(source) {
+        return crate::sequence::show(ui, source);
+    }
     let id = ui.next_auto_id().with("mermaid-flowchart");
     let cached = ui.ctx().data_mut(|d| {
         let cached = d.get_temp_mut_or_insert_with(id, || Cached {
@@ -216,13 +231,14 @@ pub fn show(ui: &mut egui::Ui, source: &str) -> egui::Response {
             ui.scope(|ui| {
                 // Diagrams need visible navigation controls even though ordinary app lists hide bars.
                 ui.spacing_mut().scroll = egui::style::ScrollStyle::solid();
+                let height = viewport_height(ui, layout.size.y);
                 let mut scrolling = egui::ScrollArea::both()
                     .id_salt(id)
                     .scroll_source(egui::scroll_area::ScrollSource::ALL)
                     .on_hover_cursor(egui::CursorIcon::Grab)
                     .on_drag_cursor(egui::CursorIcon::Grabbing)
-                    .max_height(620.)
-                    .min_scrolled_height(layout.size.y.min(620.))
+                    .max_height(height)
+                    .min_scrolled_height(height)
                     .auto_shrink([false, true]);
                 if reset_scroll || target_offset.is_some() {
                     egui::scroll_area::State::default()

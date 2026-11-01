@@ -13,3 +13,6 @@ pub mod spelling;
 pub mod text_input;
 
 pub mod flowchart;
+
+pub mod math;
+pub mod sequence;

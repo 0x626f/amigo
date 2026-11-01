@@ -1,9 +1,6 @@
 //! Cached CommonMark blocks, readable typography, and source-line locations for scroll sync.
 use amigo_ui::design::{self, colors};
-use egui::{
-    self, FontId, RichText, Stroke,
-    text::{LayoutJob, TextFormat},
-};
+use egui::{self, FontId, RichText, Stroke, text::TextFormat};
 use pulldown_cmark::{Alignment, CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 use std::ops::Range;
 
@@ -17,6 +14,7 @@ struct Atom {
     italic: bool,
     strike: bool,
     code: bool,
+    math: bool,
     link: Option<String>,
 }
 #[derive(Clone, Default, Debug)]
@@ -27,6 +25,7 @@ struct Inline {
     restore: Option<Range<usize>>,
     needs_space: bool,
 }
+#[derive(Clone, Copy)]
 struct InlineStyle {
     size: f32,
     bold: bool,
@@ -137,7 +136,8 @@ impl Preview {
         let mut b = Builder::default();
         let mut events = Parser::new_ext(
             source,
-            Options::ENABLE_HEADING_ATTRIBUTES
+            Options::ENABLE_MATH
+                | Options::ENABLE_HEADING_ATTRIBUTES
                 | Options::ENABLE_TABLES
                 | Options::ENABLE_STRIKETHROUGH
                 | Options::ENABLE_TASKLISTS
@@ -239,6 +239,18 @@ impl Preview {
                 Event::End(TagEnd::Image) => {
                     b.style.link = None;
                     b.style.wrappers.pop();
+                }
+                Event::InlineMath(_) | Event::DisplayMath(_) => {
+                    let display = matches!(event, Event::DisplayMath(_));
+                    if display {
+                        b.flush(&mut result.blocks, &starts, base_line);
+                    }
+                    b.style.math = true;
+                    b.append(&source[span.clone()], span.start, span.end);
+                    b.style.math = false;
+                    if display {
+                        b.flush(&mut result.blocks, &starts, base_line);
+                    }
                 }
                 Event::Text(text) if !b.empty_task => b.append(&text, span.start, span.end),
                 Event::Code(text) => {
@@ -356,6 +368,12 @@ impl Preview {
                                 cell.value = cell.atoms.iter().map(|a| a.text.as_str()).collect();
                                 row.push(std::mem::take(&mut cell));
                             }
+                            Event::InlineMath(_) | Event::DisplayMath(_) => cell.atoms.push(Atom {
+                                text: source[range.clone()].into(),
+                                span: range.clone(),
+                                math: true,
+                                ..style.clone()
+                            }),
                             Event::Text(s) => cell.atoms.push(Atom {
                                 text: s.into_string(),
                                 span: range.clone(),
@@ -656,14 +674,29 @@ impl Preview {
             };
             return vec![self.prepared.insert_patch(inline.anchor.clone(), &value)];
         }
-        self.prepared.inline(
+        let mut patches = self.prepared.inline(
             &units,
             &inline
                 .atoms
                 .iter()
-                .map(|a| a.text.clone())
+                .map(|a| {
+                    if a.math {
+                        a.original.clone()
+                    } else {
+                        a.text.clone()
+                    }
+                })
                 .collect::<Vec<_>>(),
-        )
+        );
+        for atom in &inline.atoms {
+            if atom.math && atom.text != atom.original {
+                patches.push(super::editing::Patch {
+                    range: self.prepared.range(atom.span.clone()),
+                    text: atom.text.clone(),
+                });
+            }
+        }
+        patches
     }
     pub fn heading_y(&self, target: &str) -> Option<f32> {
         self.blocks.iter().enumerate().find_map(|(i, block)| {
@@ -1182,18 +1215,26 @@ fn inline_label(
 ) -> (Option<String>, bool, egui::Id) {
     let InlineStyle {
         size,
-        bold,
-        quote,
         multiline,
         list,
+        ..
     } = style;
     let id = ui.make_persistent_id("preview-text");
     let restoring = inline.restore.is_some();
     super::preview_format::restore(ui, id, inline.restore.take());
+    if inline.atoms.iter().any(|a| a.math) && !ui.memory(|m| m.has_focus(id)) && !restoring {
+        let job = inline_job(ui, &inline.atoms, &inline.value, width, style, true);
+        let response = job.show_with_sense(ui, egui::Sense::click());
+        if editable && response.clicked() {
+            ui.memory_mut(|m| m.request_focus(id));
+            ui.ctx().request_repaint();
+        }
+        return (None, false, id);
+    }
     let atoms = &inline.atoms;
     let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap: f32| {
-        let job = inline_job(ui, atoms, text.as_str(), wrap, size, bold, quote);
-        ui.fonts_mut(|f| f.layout_job(job))
+        let job = inline_job(ui, atoms, text.as_str(), wrap, style, false);
+        ui.fonts_mut(|f| f.layout_job(job.job))
     };
     let enabled = ui.is_enabled();
     let mut readonly = inline.value.as_str();
@@ -1289,12 +1330,14 @@ fn inline_job(
     atoms: &[Atom],
     value: &str,
     width: f32,
-    size: f32,
-    bold: bool,
-    quote: bool,
-) -> LayoutJob {
+    style: InlineStyle,
+    render_math: bool,
+) -> amigo_ui::math::RichJob {
+    let InlineStyle {
+        size, bold, quote, ..
+    } = style;
     let p = colors(ui);
-    let mut job = LayoutJob::default();
+    let mut job = amigo_ui::math::RichJob::default();
     let units: Vec<_> = atoms
         .iter()
         .map(|a| super::editing::Unit {
@@ -1347,7 +1390,16 @@ fn inline_job(
         if atom.link.is_some() {
             format.underline = Stroke::new(0.7, p.accent);
         }
-        job.append(&text, 0., format);
+        if atom.math && render_math {
+            let formula = text
+                .strip_prefix("$$")
+                .and_then(|s| s.strip_suffix("$$"))
+                .or_else(|| text.strip_prefix('$').and_then(|s| s.strip_suffix('$')))
+                .unwrap_or(&text);
+            job.append_formula(ui, formula, format, text.starts_with("$$"));
+        } else {
+            job.append(&text, 0., format);
+        }
     }
     job.wrap.max_width = width;
     job
@@ -1355,6 +1407,39 @@ fn inline_job(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn formula_preview_keeps_tex_and_raw_edits_round_trip() {
+        let source = r"Before $P\propto f\times IPC$ after.
+
+$$P_{wall}=1400/0.92\approx1522\text{ Вт}$$
+
+$$E=1.522\times24\times30\approx1096\text{ кВт·ч}$$
+
+`$raw$`
+
+```text
+$$raw$$
+```
+";
+        let mut preview = Preview::document(source);
+        assert!(preview.patches().is_empty());
+        let mut count = 0;
+        for block in &mut preview.blocks {
+            if let Kind::Text(_, inline) = &mut block.kind {
+                for atom in &mut inline.atoms {
+                    if atom.math {
+                        count += 1;
+                        atom.text = atom.text.replace("1522", "1523");
+                    }
+                }
+            }
+        }
+        assert_eq!(count, 3);
+        assert_eq!(
+            preview.prepared.apply(preview.patches()),
+            source.replace("1522", "1523")
+        );
+    }
     #[test]
     fn commonmark_blocks_keep_lists_unicode_links_formatting_and_source_locations() {
         let source = "# Title\n\n**Bold** _italic_ ~~strike~~ `code` [note](Note.md) 🌍\n\n- [x] Done\n- [ ] Next\n\n> Quote\n\n```rust\nlet n = 1;\n```\n\n| A | B |\n| --- | --- |\n| one | two |\n";

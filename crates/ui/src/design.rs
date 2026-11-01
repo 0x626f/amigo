@@ -1037,6 +1037,18 @@ pub fn install(ctx: &egui::Context) {
         .entry(egui::FontFamily::Proportional)
         .or_default()
         .insert(0, "workspace-sans".into());
+    // The UI sans font and egui defaults omit mathematical operators such as ∝.
+    // Bundle the fallback so formula previews also work on systems without math fonts.
+    fonts.font_data.insert(
+        "workspace-math".into(),
+        egui::FontData::from_static(include_bytes!("../assets/fonts/NotoSansMath-Regular.ttf"))
+            .into(),
+    );
+    fonts
+        .families
+        .entry(egui::FontFamily::Proportional)
+        .or_default()
+        .insert(1, "workspace-math".into());
     ctx.set_fonts(fonts);
     for theme in [egui::Theme::Light, egui::Theme::Dark] {
         let dark = theme == egui::Theme::Dark;

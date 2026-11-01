@@ -122,3 +122,85 @@ fn external_document_links_stay_in_the_opened_directory() {
     }
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn tree_orders_sibling_folders_before_files_with_alphabetical_prefix_order() {
+    let (root, journal) = library();
+    for folder in ["Zebra", "beta", "beta/Notebook", "beta/Note"] {
+        journal.create_folder(folder).unwrap();
+    }
+    for name in [
+        "B",
+        "A-long",
+        "A",
+        "aardvark",
+        "Язык",
+        "Я",
+        "beta/A-long",
+        "beta/A",
+        "beta/Note/Child",
+    ] {
+        journal.create(name, "text").unwrap();
+    }
+    // PDF and Markdown siblings share the same file group.
+    fs::write(root.join("journal/alpha.pdf"), b"%PDF-1.7").unwrap();
+    let paths: Vec<_> = journal
+        .entries()
+        .unwrap()
+        .into_iter()
+        .map(|e| e.path)
+        .collect();
+    assert_eq!(
+        paths,
+        [
+            "beta",
+            "beta/Note",
+            "beta/Note/Child.md",
+            "beta/Notebook",
+            "beta/A.md",
+            "beta/A-long.md",
+            "Trash",
+            "Zebra",
+            "A.md",
+            "A-long.md",
+            "aardvark.md",
+            "alpha.pdf",
+            "B.md",
+            "Я.md",
+            "Язык.md",
+        ]
+    );
+    // Reloading keeps the same order without changing the files.
+    assert_eq!(
+        Journal::open(&root)
+            .unwrap()
+            .entries()
+            .unwrap()
+            .into_iter()
+            .map(|e| e.path)
+            .collect::<Vec<_>>(),
+        paths
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn trash_tree_sorts_displayed_names_instead_of_storage_ids() {
+    let (root, journal) = library();
+    let trash = root.join("journal/Trash");
+    let a = "ffffffff-ffff-ffff-ffff-ffffffffffff-A.md";
+    let longer = "11111111-1111-1111-1111-111111111111-A-long.md";
+    let z = "00000000-0000-0000-0000-000000000000-Z.md";
+    for name in [z, longer, a] {
+        fs::write(trash.join(name), "text").unwrap();
+    }
+    fs::create_dir(trash.join("ZZ folder")).unwrap();
+    let names: Vec<_> = journal
+        .entries()
+        .unwrap()
+        .iter()
+        .map(|e| entry_name(&e.path).to_owned())
+        .collect();
+    assert_eq!(names, ["Trash", "ZZ folder", "A.md", "A-long.md", "Z.md"]);
+    fs::remove_dir_all(root).unwrap();
+}
