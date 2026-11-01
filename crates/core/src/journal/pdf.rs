@@ -614,12 +614,14 @@ struct Temporary(std::path::PathBuf);
 impl Temporary {
     fn new() -> Result<Self, String> {
         let path = std::env::temp_dir().join(format!("amigo-pdf-{}", crate::model::id()));
-        let mut builder = std::fs::DirBuilder::new();
+        let builder = std::fs::DirBuilder::new();
         #[cfg(unix)]
-        {
+        let builder = {
             use std::os::unix::fs::DirBuilderExt;
+            let mut builder = builder;
             builder.mode(0o700);
-        }
+            builder
+        };
         builder.create(&path).map_err(|e| e.to_string())?;
         Ok(Self(path))
     }

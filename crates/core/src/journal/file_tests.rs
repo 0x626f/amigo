@@ -13,7 +13,10 @@ fn external_drafts_open_without_import_and_save_the_edited_snapshot() {
     let before = journal.entries().unwrap();
     let mut doc = journal.open_file(&source).unwrap();
     assert_eq!(journal.entries().unwrap(), before);
-    assert_eq!(doc.external.as_deref(), Some(source.as_path()));
+    assert_eq!(
+        doc.external.as_deref(),
+        Some(source.canonicalize().unwrap().as_path())
+    );
     doc.text = "Edited temporary draft Привет".into();
     assert!(journal.save_document(&doc).is_err());
     assert_eq!(fs::read_to_string(&source).unwrap(), "Original");

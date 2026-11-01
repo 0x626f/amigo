@@ -471,8 +471,9 @@ impl Amigo {
                     });
                 }
                 Action::StoreExternal { source, folder } => {
+                    let canonical_source = source.canonicalize().unwrap_or_else(|_| source.clone());
                     let result = if let Some(draft) =
-                        current.filter(|d| d.external.as_ref() == Some(&source))
+                        current.filter(|d| d.external.as_ref() == Some(&canonical_source))
                     {
                         journal.store_document(&draft, &folder).map(|d| vec![d])
                     } else {
@@ -701,6 +702,39 @@ impl Amigo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn external_save_matches_alias_paths_to_the_edited_draft() {
+        let (mut app, ctx) = crate::app::tests::harness();
+        let source = app.data_path.join("External.md");
+        std::fs::write(&source, "Original external source").unwrap();
+        std::fs::create_dir(app.data_path.join("spare")).unwrap();
+        app.journal_action(Action::OpenExternalFile(source.clone()), &ctx);
+        wait(&mut app, &ctx);
+        app.journal.editor.as_mut().unwrap().document.text = "Keep my edited draft".into();
+        app.journal_action(
+            Action::StoreExternal {
+                source: app.data_path.join("spare/../External.md"),
+                folder: String::new(),
+            },
+            &ctx,
+        );
+        wait(&mut app, &ctx);
+        assert!(app.journal.error.is_empty(), "{}", app.journal.error);
+        assert_eq!(
+            Journal::open(&app.data_path)
+                .unwrap()
+                .read("External.md")
+                .unwrap()
+                .text,
+            "Keep my edited draft"
+        );
+        assert_eq!(
+            std::fs::read_to_string(source).unwrap(),
+            "Original external source"
+        );
+        assert!(!app.journal.dirty());
+        std::fs::remove_dir_all(app.data_path).unwrap();
+    }
     #[test]
     fn saving_an_external_draft_resumes_its_deferred_document_navigation() {
         let (mut app, ctx) = crate::app::tests::harness();
