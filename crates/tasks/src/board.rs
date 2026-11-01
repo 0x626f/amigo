@@ -132,7 +132,7 @@ impl TasksUi<'_> {
                 egui::Layout::left_to_right(egui::Align::Center),
                 |ui| {
                     ui.add(
-                        egui::Label::new(
+                        amigo_ui::design::NameLabel::new(
                             RichText::new(self.board_name)
                                 .size(design::PAGE_TITLE_SIZE)
                                 .strong(),
@@ -257,7 +257,7 @@ impl TasksUi<'_> {
                                                             ui.spacing_mut().item_spacing.x = 7.0;
                                                             design::dot_with_size(ui, accent, 8.0);
                                                             ui.add(
-                                                                egui::Label::new(
+                                                                amigo_ui::design::NameLabel::new(
                                                                     RichText::new(&status.name)
                                                                         .strong()
                                                                         .size(14.0),

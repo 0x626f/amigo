@@ -201,34 +201,33 @@ impl SquidyTab {
                         }
                         active |= handle.dragged();
                     }
-                    if active {
-                        if let Some((handle, original, press)) = capture.drag {
-                            if let Some(pointer) = ui.input(|i| i.pointer.interact_pos()) {
-                                let delta = (pointer - press) / scale;
-                                let mut area = original;
-                                if handle == 8 {
-                                    area = original.translate(delta);
-                                } else {
-                                    if matches!(handle, 0 | 6 | 7) {
-                                        area.min.x = (original.min.x + delta.x)
-                                            .min(original.max.x - 24. / scale);
-                                    }
-                                    if matches!(handle, 2 | 3 | 4) {
-                                        area.max.x = (original.max.x + delta.x)
-                                            .max(original.min.x + 24. / scale);
-                                    }
-                                    if matches!(handle, 0 | 1 | 2) {
-                                        area.min.y = (original.min.y + delta.y)
-                                            .min(original.max.y - 24. / scale);
-                                    }
-                                    if matches!(handle, 4 | 5 | 6) {
-                                        area.max.y = (original.max.y + delta.y)
-                                            .max(original.min.y + 24. / scale);
-                                    }
-                                }
-                                capture.area = area.intersect(capture.view);
+                    if active
+                        && let Some((handle, original, press)) = capture.drag
+                        && let Some(pointer) = ui.input(|i| i.pointer.interact_pos())
+                    {
+                        let delta = (pointer - press) / scale;
+                        let mut area = original;
+                        if handle == 8 {
+                            area = original.translate(delta);
+                        } else {
+                            if matches!(handle, 0 | 6 | 7) {
+                                area.min.x =
+                                    (original.min.x + delta.x).min(original.max.x - 24. / scale);
+                            }
+                            if matches!(handle, 2..=4) {
+                                area.max.x =
+                                    (original.max.x + delta.x).max(original.min.x + 24. / scale);
+                            }
+                            if matches!(handle, 0..=2) {
+                                area.min.y =
+                                    (original.min.y + delta.y).min(original.max.y - 24. / scale);
+                            }
+                            if matches!(handle, 4..=6) {
+                                area.max.y =
+                                    (original.max.y + delta.y).max(original.min.y + 24. / scale);
                             }
                         }
+                        capture.area = area.intersect(capture.view);
                     }
                     if ui.input(|i| i.pointer.any_released()) {
                         capture.drag = None;
@@ -451,7 +450,7 @@ pub(super) fn raster(board: &Board, area: Rect) -> Raster {
             let egui::epaint::Primitive::Mesh(mesh) = primitive.primitive else {
                 continue;
             };
-            for triangle in mesh.indices.chunks_exact(3) {
+            for triangle in mesh.indices.as_chunks::<3>().0 {
                 let vertices = triangle
                     .iter()
                     .map(|i| mesh.vertices[*i as usize])

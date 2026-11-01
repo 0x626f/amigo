@@ -437,7 +437,7 @@ fn month_selector(app: &mut FinanceUi<'_>, ui: &mut egui::Ui, all: bool) {
         .collect();
     months.sort_by(|a, b| b.cmp(a));
     months.dedup();
-    egui::ComboBox::from_id_salt("finance-month")
+    amigo_ui::design::ComboBox::from_id_salt("finance-month")
         .width(ui.available_width())
         .selected_text(month_label(selected))
         .show_ui(ui, |ui| {

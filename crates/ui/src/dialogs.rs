@@ -60,7 +60,7 @@ fn heading(ui: &mut egui::Ui, title: &str, centered: bool) -> egui::Response {
                     ui.add_space(inset);
                     ui.add_sized(
                         [width - inset, 32.0],
-                        egui::Label::new(
+                        crate::design::NameLabel::new(
                             RichText::new(crate::forms::title_case(title))
                                 .size(TITLE_SIZE)
                                 .strong(),
@@ -228,9 +228,11 @@ pub fn data_settings_heading(
                     ui.add_space(inset);
                     ui.add_sized(
                         [width - inset, 32.0],
-                        egui::Label::new(RichText::new(title).size(TITLE_SIZE).strong())
-                            .truncate()
-                            .halign(egui::Align::Center),
+                        crate::design::NameLabel::new(
+                            RichText::new(title).size(TITLE_SIZE).strong(),
+                        )
+                        .truncate()
+                        .halign(egui::Align::Center),
                     )
                     .on_hover_text(title);
                 },
@@ -370,9 +372,11 @@ pub fn named_dialog_heading(
                         let title = format!("{name} {suffix}");
                         ui.add_sized(
                             [title_width, 32.0],
-                            egui::Label::new(RichText::new(&title).size(TITLE_SIZE).strong())
-                                .truncate()
-                                .halign(egui::Align::Center),
+                            crate::design::NameLabel::new(
+                                RichText::new(&title).size(TITLE_SIZE).strong(),
+                            )
+                            .truncate()
+                            .halign(egui::Align::Center),
                         )
                         .on_hover_text(title);
                     }

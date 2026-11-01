@@ -59,7 +59,7 @@ impl FinanceUi<'_> {
                 egui::Layout::left_to_right(egui::Align::Center),
                 |ui| {
                     ui.add(
-                        egui::Label::new(
+                        amigo_ui::design::NameLabel::new(
                             RichText::new(title_case(self.state.view.name()))
                                 .size(design::PAGE_TITLE_SIZE)
                                 .strong(),
@@ -124,20 +124,21 @@ impl FinanceUi<'_> {
             .collect();
         options.sort();
         options.dedup();
-        let response = egui::ComboBox::from_id_salt("wallet-reporting-currency-selector")
-            .width(88.0)
-            .selected_text(&self.plan.meta.reporting_currency)
-            .show_ui(ui, |ui| {
-                for currency in options {
-                    ui.selectable_value(
-                        &mut self.plan.meta.reporting_currency,
-                        currency.clone(),
-                        currency,
-                    );
-                }
-            })
-            .response
-            .on_hover_text("Reporting Currency");
+        let response =
+            amigo_ui::design::ComboBox::from_id_salt("wallet-reporting-currency-selector")
+                .width(88.0)
+                .selected_text(&self.plan.meta.reporting_currency)
+                .show_ui(ui, |ui| {
+                    for currency in options {
+                        ui.selectable_value(
+                            &mut self.plan.meta.reporting_currency,
+                            currency.clone(),
+                            currency,
+                        );
+                    }
+                })
+                .response
+                .on_hover_text("Reporting Currency");
         ui.interact(
             response.rect,
             egui::Id::new("wallet-reporting-currency"),
@@ -273,7 +274,7 @@ impl FinanceUi<'_> {
                 }
                 if self.state.view == FinanceView::Storage {
                     field_label(ui, "Reference Type");
-                    egui::ComboBox::from_id_salt("stored-value-type")
+                    amigo_ui::design::ComboBox::from_id_salt("stored-value-type")
                         .selected_text(title_case(super::references::unit_name(
                             self.state.storage_unit,
                         )))

@@ -28,25 +28,7 @@ pub(super) fn paint(
     if !rect.intersects(painter.clip_rect()) {
         return;
     }
-    let fill = if dark {
-        Color32::from_rgb(37, 47, 65)
-    } else {
-        Color32::from_rgb(231, 237, 247)
-    };
-    let border = if selected {
-        Color32::from_rgb(70, 135, 230)
-    } else if dark {
-        Color32::from_rgb(80, 102, 136)
-    } else {
-        Color32::from_rgb(169, 186, 211)
-    };
-    painter.rect_filled(rect, 6, fill);
-    painter.rect_stroke(
-        rect,
-        6,
-        Stroke::new(if selected { 2. } else { 1. }, border),
-        StrokeKind::Inside,
-    );
+    paint_frame(painter, rect, selected, dark);
     let title = Rect::from_min_max(
         rect.min + egui::vec2(12., 6.) * zoom,
         egui::pos2(rect.right() - 10. * zoom, rect.top() + 34. * zoom),
@@ -71,6 +53,27 @@ pub(super) fn paint(
         } else {
             Color32::from_rgb(55, 73, 103)
         },
+    );
+}
+fn paint_frame(painter: &egui::Painter, rect: Rect, selected: bool, dark: bool) {
+    let fill = if dark {
+        Color32::from_rgb(37, 47, 65)
+    } else {
+        Color32::from_rgb(231, 237, 247)
+    };
+    let border = if selected {
+        Color32::from_rgb(70, 135, 230)
+    } else if dark {
+        Color32::from_rgb(80, 102, 136)
+    } else {
+        Color32::from_rgb(169, 186, 211)
+    };
+    painter.rect_filled(rect, 6, fill);
+    painter.rect_stroke(
+        rect,
+        6,
+        Stroke::new(if selected { 2. } else { 1. }, border),
+        StrokeKind::Inside,
     );
 }
 impl SquidyTab {
@@ -128,11 +131,9 @@ impl SquidyTab {
                 continue;
             }
             let selected = self.selected_background.as_deref() == Some(&background.id);
-            paint(
+            paint_frame(
                 &ui.painter().with_clip_rect(rect),
-                background,
-                origin,
-                zoom,
+                screen,
                 selected,
                 ui.visuals().dark_mode,
             );
@@ -149,6 +150,24 @@ impl SquidyTab {
                     },
                 )
                 .on_hover_text("Drag title to move; double-click to rename");
+            let ink = if ui.visuals().dark_mode {
+                Color32::from_gray(220)
+            } else {
+                Color32::from_rgb(55, 73, 103)
+            };
+            let name = ui.painter().layout_no_wrap(
+                background.title.clone(),
+                FontId::proportional((16. * zoom).max(7.)),
+                ink,
+            );
+            let caption = Rect::from_min_size(
+                screen.min + Vec2::new(12., 6.) * zoom,
+                Vec2::new((screen.width() - 22. * zoom).max(1.), name.size().y),
+            );
+            let clip = ui.clip_rect();
+            ui.set_clip_rect(clip.intersect(rect));
+            design::paint_canvas_name(ui, &hit, caption, name, ink, egui::Align::Min);
+            ui.set_clip_rect(clip);
             if hit.clicked() {
                 self.selected_background = Some(background.id.clone());
                 self.selected.clear();
@@ -200,36 +219,34 @@ impl SquidyTab {
                     active |= handle.dragged();
                 }
             }
-            if active {
-                if let Some((id, corner, original, press)) = &self.background_drag {
-                    if id == &background.id {
-                        if let Some(pointer) = ui.input(|i| i.pointer.interact_pos()) {
-                            let delta = (pointer - *press) / zoom;
-                            let mut area = *original;
-                            if *corner == 8 {
-                                area = area.translate(delta);
-                            } else {
-                                if corner % 2 == 0 {
-                                    area.min.x = (area.min.x + delta.x)
-                                        .clamp(area.max.x - 100_000., area.max.x - 120.);
-                                } else {
-                                    area.max.x = (area.max.x + delta.x)
-                                        .clamp(area.min.x + 120., area.min.x + 100_000.);
-                                }
-                                if corner / 2 == 0 {
-                                    area.min.y = (area.min.y + delta.y)
-                                        .clamp(area.max.y - 100_000., area.max.y - 80.);
-                                } else {
-                                    area.max.y = (area.max.y + delta.y)
-                                        .clamp(area.min.y + 80., area.min.y + 100_000.);
-                                }
-                            }
-                            area.min.x = area.min.x.clamp(-10_000_000., 10_000_000.);
-                            area.min.y = area.min.y.clamp(-10_000_000., 10_000_000.);
-                            update = Some((id.clone(), area));
-                        }
+            if active
+                && let Some((id, corner, original, press)) = &self.background_drag
+                && id == &background.id
+                && let Some(pointer) = ui.input(|i| i.pointer.interact_pos())
+            {
+                let delta = (pointer - *press) / zoom;
+                let mut area = *original;
+                if *corner == 8 {
+                    area = area.translate(delta);
+                } else {
+                    if corner % 2 == 0 {
+                        area.min.x =
+                            (area.min.x + delta.x).clamp(area.max.x - 100_000., area.max.x - 120.);
+                    } else {
+                        area.max.x =
+                            (area.max.x + delta.x).clamp(area.min.x + 120., area.min.x + 100_000.);
+                    }
+                    if corner / 2 == 0 {
+                        area.min.y =
+                            (area.min.y + delta.y).clamp(area.max.y - 100_000., area.max.y - 80.);
+                    } else {
+                        area.max.y =
+                            (area.max.y + delta.y).clamp(area.min.y + 80., area.min.y + 100_000.);
                     }
                 }
+                area.min.x = area.min.x.clamp(-10_000_000., 10_000_000.);
+                area.min.y = area.min.y.clamp(-10_000_000., 10_000_000.);
+                update = Some((id.clone(), area));
             }
             if !drawing {
                 design::context_menu(&hit).show(|ui| {
@@ -247,22 +264,21 @@ impl SquidyTab {
         if ui.input(|i| i.pointer.any_released()) {
             self.background_drag = None;
         }
-        if let Some((id, area)) = update {
-            if let Some(b) = self
+        if let Some((id, area)) = update
+            && let Some(b) = self
                 .board
                 .as_mut()
                 .unwrap()
                 .backgrounds
                 .iter_mut()
                 .find(|b| b.id == id)
-            {
-                b.position = [area.min.x, area.min.y];
-                b.size = [
-                    area.width().clamp(120., 100_000.),
-                    area.height().clamp(80., 100_000.),
-                ];
-                self.changed();
-            }
+        {
+            b.position = [area.min.x, area.min.y];
+            b.size = [
+                area.width().clamp(120., 100_000.),
+                area.height().clamp(80., 100_000.),
+            ];
+            self.changed();
         }
         if let Some(background) = edit {
             self.background_draft = Some(Draft {
@@ -298,32 +314,32 @@ impl SquidyTab {
         if response.drag_started() {
             self.background_start = ui.input(|i| i.pointer.press_origin());
         }
-        if let Some(start) = self.background_start {
-            if let Some(pointer) = ui.input(|i| i.pointer.interact_pos()) {
-                let rect = Rect::from_two_pos(start, pointer).intersect(self.viewport);
-                ui.painter().with_clip_rect(self.viewport).rect_stroke(
-                    rect,
-                    4,
-                    Stroke::new(2., design::colors(ui).accent),
-                    StrokeKind::Inside,
-                );
-                if response.drag_stopped() {
-                    if rect.width() >= 8. && rect.height() >= 8. {
-                        let min = (rect.min - origin) / zoom;
-                        let size = rect.size() / zoom;
-                        self.background_draft = Some(Draft {
-                            background: Background::new(
-                                "",
-                                [min.x, min.y],
-                                [size.x.max(120.), size.y.max(80.)],
-                            ),
-                            focus: true,
-                            error: String::new(),
-                        });
-                    }
-                    self.background_drawing = false;
-                    self.background_start = None;
+        if let Some(start) = self.background_start
+            && let Some(pointer) = ui.input(|i| i.pointer.interact_pos())
+        {
+            let rect = Rect::from_two_pos(start, pointer).intersect(self.viewport);
+            ui.painter().with_clip_rect(self.viewport).rect_stroke(
+                rect,
+                4,
+                Stroke::new(2., design::colors(ui).accent),
+                StrokeKind::Inside,
+            );
+            if response.drag_stopped() {
+                if rect.width() >= 8. && rect.height() >= 8. {
+                    let min = (rect.min - origin) / zoom;
+                    let size = rect.size() / zoom;
+                    self.background_draft = Some(Draft {
+                        background: Background::new(
+                            "",
+                            [min.x, min.y],
+                            [size.x.max(120.), size.y.max(80.)],
+                        ),
+                        focus: true,
+                        error: String::new(),
+                    });
                 }
+                self.background_drawing = false;
+                self.background_start = None;
             }
         }
     }

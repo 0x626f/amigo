@@ -140,7 +140,7 @@ button stays on **Loading…**, close Discover and reopen the file after pending
 system package operations finish, or install with Fedora's package manager:
 
 ```sh
-sudo dnf install ./amigo-0.0.3-linux-x86_64.rpm
+sudo dnf install ./amigo-0.0.4-linux-x86_64.rpm
 ```
 
 RPMs require the Wayland libraries directly, including on Fedora releases
@@ -150,8 +150,8 @@ that split them into separate packages. CI tests RPM installation in a Fedora
 To inspect the package without installing it:
 
 ```sh
-rpm -qp --queryformat 'Name: %{NAME}\nLicense: %{LICENSE}\nPackager: %{PACKAGER}\nVendor: %{VENDOR}\n' ./amigo-0.0.3-linux-x86_64.rpm
-pkcon get-details-local ./amigo-0.0.3-linux-x86_64.rpm
+rpm -qp --queryformat 'Name: %{NAME}\nLicense: %{LICENSE}\nPackager: %{PACKAGER}\nVendor: %{VENDOR}\n' ./amigo-0.0.4-linux-x86_64.rpm
+pkcon get-details-local ./amigo-0.0.4-linux-x86_64.rpm
 ```
 
 The license expression defaults to `[workspace.package].license` in `Cargo.toml`
@@ -175,11 +175,11 @@ uninstalling the application preserves the user's Amigo library.
 Output goes to `dist/<version>/<platform>/<architecture>/`, for example:
 
 ```text
-dist/0.0.3/linux/x86_64/amigo-0.0.3-linux-x86_64.deb
-dist/0.0.3/macos/aarch64/amigo-0.0.3-macos-aarch64.app.zip
-dist/0.0.3/macos/aarch64/amigo-0.0.3-macos-aarch64.dmg
-dist/0.0.3/windows/x86_64/amigo-0.0.3-windows-x86_64.zip
-dist/0.0.3/windows/x86_64/amigo-0.0.3-windows-x86_64.setup.exe
+dist/0.0.4/linux/x86_64/amigo-0.0.4-linux-x86_64.deb
+dist/0.0.4/macos/aarch64/amigo-0.0.4-macos-aarch64.app.zip
+dist/0.0.4/macos/aarch64/amigo-0.0.4-macos-aarch64.dmg
+dist/0.0.4/windows/x86_64/amigo-0.0.4-windows-x86_64.zip
+dist/0.0.4/windows/x86_64/amigo-0.0.4-windows-x86_64.setup.exe
 ```
 
 All formats include the executable, platform icon, README, application license,
@@ -204,10 +204,10 @@ prepare each platform on its native build machine:
 
 ```sh
 just release-prepare
-# Review packages and edit dist/0.0.3/<platform>/<architecture>/RELEASE_NOTES.md.
-git tag -a v0.0.3 -m 'Amigo 0.0.3'
-git push origin v0.0.3
-just release-draft v0.0.3
+# Review packages and edit dist/0.0.4/<platform>/<architecture>/RELEASE_NOTES.md.
+git tag -a v0.0.4 -m 'Amigo 0.0.4'
+git push origin v0.0.4
+just release-draft v0.0.4
 ```
 
 Create and push the tag once, then fetch it on the other build machines.
@@ -229,6 +229,8 @@ builds packages, validates their contents and native containers, and uploads wor
 ## Appearance and settings
 
 The interface follows Apple-inspired macOS conventions: borderless buttons, rounded controls, blue primary actions, restrained hover/press feedback, and a quiet sidebar. Selected navigation rows use a blue tint and accent icon; inactive rows inherit their container. Page headings share a consistent type scale, and muted labels remain readable in both themes. Text inputs use soft surfaces, while keyboard focus remains visible. Dialogs keep clear headings, grouped fields, readable labels, and fixed Save/Cancel actions; menus and dialogs use theme-aware shadows. Use **Light / Dark** at the bottom of the sidebar; the saved appearance transitions smoothly without rebuilding the font atlas. Shared egui helpers keep all four tabs consistent. Adwaita Sans is bundled under the SIL Open Font License; see `crates/ui/assets/fonts/LICENSE`. The project includes an MIT-licensed [Apple design skill](skills/apple-design/SKILL.md), with upstream attribution, a [verified source record](skills/apple-design/SOURCE.json), and [Amigo-specific guidance and review](skills/apple-design/references/amigo.md).
+
+Long names stay inside their controls and can be scrolled to the right with a horizontal wheel/trackpad gesture or **Shift+wheel**. Hover to reveal a small horizontal scrollbar; dragging it also reveals the end of a name. This applies to navigation rows, page/dialog titles, dropdown captions, attachment names, calendar names/events, and Squidy card/File Border titles. Dragging a long static title pans its text; double-click still renames where supported. In Finance data tables, use **Shift+wheel** over the name (or its scrollbar) so an ordinary horizontal gesture continues to pan the whole table. Squidy name scrolling leaves card positions and the board's pan unchanged.
 
 Open **Settings** beside the Amigo title and logo. **Import Amigo Setup** and **Export Amigo Setup** are inside App Settings, before Close. One settings window contains Tasks and its boards, Calendar, Finance and its vaults/categories, Journal, and Updates. Clicking Tasks opens the first board’s settings; with no boards, it leaves the current settings page open. Board and vault drafts survive navigation between settings pages; Save commits the current page, while closing the window discards unconfirmed drafts.
 
@@ -358,9 +360,19 @@ Use **Alt+F** to find text in the open document and **Alt+A** to select its full
 
 The editor header’s **Check spelling** icon opens spelling suggestions. This optional feature requires the `hunspell` executable on PATH and an installed language dictionary; it uses the same installed English, Spanish, and Russian dictionaries. Choose a suggestion to correct the first matching word, then undo it like any other edit.
 
-Journal stores ordinary UTF-8 `.md` files below the working library's `journal/` folder. It offers nested folders, title/content search, note renaming, and recoverable deletion to the default **Trash** folder in the Notebook tree. The Notebook header’s new-note and new-folder icons create at Journal root, regardless of the open note. Folder rows have a compact **…** actions button; note rows have a direct trash icon instead. Note removal still requires confirmation, and Restore remains available from a trashed note’s right-click menu. A regular folder’s menu offers **New Note → New Folder → Move to Trash**; creation targets that folder. Right-clicking a row opens the same menu. Right-click the space between children for their folder’s menu, or empty root space for root creation and refresh. Creation dialogs show the destination separately from the name. Folder names can be entered as `Projects/Plan`. Use the **Open External Markdown File** icon at the upper left of the editor to select a `.md` file, choose **Journal Root** or an existing folder, and select **Save and Open**. The file is copied into the selected location before it opens; originals stay untouched and duplicate names receive a suffix.
+Journal stores ordinary UTF-8 `.md` files below the working library's `journal/` folder. It offers nested folders, title/content search, note renaming, and recoverable deletion to the default **Trash** folder in the Notebook tree. The Notebook header’s new-note and new-folder icons create at Journal root, regardless of the open note. Folder rows have a compact **…** actions button; note rows have a direct trash icon instead. Note removal still requires confirmation, and Restore remains available from a trashed note’s right-click menu. A regular folder’s menu offers **New Note → New Folder → Move to Trash**; creation targets that folder. Right-clicking a row opens the same menu. Right-click the space between children for their folder’s menu, or empty root space for root creation and refresh. Creation dialogs show the destination separately from the name. Folder names can be entered as `Projects/Plan`. Use the **Open External Markdown or PDF File** icon at the upper left of the editor to open a `.md` or `.pdf` immediately, without copying it into Journal. External files are temporary drafts: reading and editing do not change the original. A disk-shaped **Save to Journal** icon appears for files outside Journal. Click it, choose **Journal Root** or an existing folder, and select **Save to Journal** to save the current draft, including edits. Duplicate names receive a suffix. Switching documents with unsaved external edits offers Save, Discard, or Cancel. Files already inside Journal open as saved documents.
 
-Choose the **Markdown**, **Split**, or **Preview** icon at the right of the notebook header; tooltips identify each view. The design follows the [JetBrains Markdown editor](https://www.jetbrains.com/help/idea/markdown.html): source line numbers and syntax colors, a floating formatting toolbar for selected text, and a live preview with real bold text, readable headings, code panels, and tables. Drag the divider to resize panes, or double-click it to return to equal widths. The adjacent options menu switches between side-by-side and stacked panes and toggles source-line scroll synchronization, line numbers, and soft wraps. Editor and preview font sizes are independently configurable in Journal settings. The editor fills the workspace without outside margins or a header-to-content gap, and has no outer, header, or line-number gutter borders; only the resizable divider remains in Split mode, in either orientation. The note name stays centered above the notebook; there is no separate Journal heading above it. Double-click the note name to rename it as plain text with a caret, without an input box, focus outline, or automatic text selection; Enter saves and Escape cancels. Folder arrows show whether their contents are expanded. Removal actions in tree menus open a confirmation dialog; removing a folder moves its entire directory tree into Trash. The default **Trash** folder is always visible and can be expanded to browse deleted items. The default Trash folder cannot be removed. The **Restore** action in each Trash item’s menu recovers a note or an entire folder tree. New deletions retain their original location; missing parents are recreated, and name conflicts receive a ` (restored N)` suffix without replacing existing items. Older Trash items without a saved location restore to Journal root. Trash item menus also offer **Delete Permanently**, with confirmation; deleting a folder also removes its contents and cannot be undone. Deleted notes stay out of ordinary searches and save destinations. Existing `journal/.trash` contents migrate automatically into `journal/Trash` without replacing existing files. Preview renders headings, paragraphs, lists, tables, code, quotes, and links. Click the **Edit Preview** pencil button in the note header to write directly in Preview or the preview half of Split mode; click it again to finish editing. The formatting bar supports bold, italic, strikethrough, links, headings, lists, quotes, tables, and code with a language picker. Select preview text to format it, use the same keyboard shortcuts as the source editor, or right-click for formatting commands. You can also format text inside table cells, edit code, toggle task checkboxes, and add paragraphs after the note. Preview edits preserve Markdown and share autosave and Undo with the source editor. Click links to follow them while reading; Ctrl/Command-click follows them while editing. **App Settings → Journal → Preview → Enable Editing by Default** controls whether newly opened notes start editable; the pencil button overrides it for the current note. Relative Markdown links and Obsidian-style `[[Note]]` or `[[Note|label]]` links navigate within the notebook; YAML front matter stays in the file and is hidden from preview. Connected research cards live in the separate Squidy tab.
+Right-click a saved Markdown or PDF document and choose **Move to Folder…**. Select an existing folder or **Journal Root**, then **Move**. Drag a Markdown or PDF file onto a folder in the tree to move it directly; valid destinations are highlighted, and hovering a closed folder reveals its children. Drop onto the NOTEBOOK header or empty space below the tree to move it to Journal root. Press Escape or release outside a destination to cancel. Journal saves pending edits before moving an open document, updates its editor path, and preserves the file contents. Name collisions show an error and retain both files; Trash is excluded from destinations.
+
+PDF documents live beside Markdown notes in the same folders and use the same save destination, rename, Move to Folder, Trash, Restore, setup backup, and external-change protection. Open existing PDFs up to 64 MiB; **New Note** creates Markdown only. PDF pages form one continuous vertical stack: scroll down into the next page or back up into the previous one. The page indicator and forms panel follow the active page. Page navigation, zoom, **Fit**, horizontal scrolling, and **Alt+wheel** zoom are also available; only nearby page images are cached. PDFs have no Export PDF button or export menu item. **Alt+F** opens a whole-document text search that advances to the next matching page. Scanned pages need an existing text layer for searching; Journal does not perform OCR. Notebook search matches PDF filenames.
+
+**Fill Forms** appears only when the active page contains form fields; choose it to show their outlines and controls. Clicking a text field on the page reveals and focuses its input. Text and multiline fields, checkboxes, radio buttons, lists, and editable choices are supported; read-only fields and PDF permissions are respected. Changes to saved Journal PDFs autosave into the PDF, and form fields remain interactive when reopened elsewhere. Temporary external PDF edits stay in the draft until **Save to Journal**. **Add Text** and **Add Note** let you drag a rectangle and enter an annotation. Text has no visible border. Hover over a note or text annotation to read its current text; double-click to open it. Choose **Note color** when adding or opening a note to change its on-page icon color, using a preset or custom color; the color is saved inside the PDF and supports Undo/Redo. Editable annotations have **Save** and **Cancel**; read-only annotations open for viewing. Saving an existing annotation updates it in place and supports Undo. Right-click a note or text annotation on the page and choose **Remove**; Undo restores it. Read-only annotations and documents that prohibit annotations cannot be removed. The Fill Forms panel also lets you edit or remove annotations. Undo/Redo buttons handle PDF editing actions, while focused text fields retain their own text undo. PDF editing adds text/notes and changes form values; it does not rewrite existing page text or images. Dynamic XFA forms, signing, and PDF scripts/actions are not supported. Password-protected documents prompt for a password, keep it only for the current session, and retain encryption when saved.
+
+For a saved Markdown note, choose **Convert to PDF** from its right-click menu or the header’s options menu. Journal saves and opens a separate PDF in the same folder, adds a numeric suffix if that name exists, and keeps the Markdown source. Conversion produces paginated A4 pages with selectable Unicode text, formatted headings, emphasis, lists, tables, code, and standalone local images. Inline or unavailable/remote images are labeled; remote content is not fetched. Mermaid fences print their source. PDF layout is independent of the Journal editor’s font and split-pane preferences.
+
+PDF reading, forms, annotations, and conversion use the native [Poppler GLib](https://poppler.freedesktop.org/api/glib/), Cairo, and Pango runtimes. Install `poppler-glib cairo pango` on Fedora, `libpoppler-glib8 libcairo2 libpango-1.0-0 libpangocairo-1.0-0` on Debian/Ubuntu, or `poppler` through Homebrew on macOS. Linux packages declare these dependencies and AppImage packaging includes the libraries. On Windows, provide the matching Poppler GLib runtime and its dependencies in an adjacent `lib/` directory. Reading/forms work with older Poppler versions; **Add Text** is available only when the runtime exposes the free-text creation/font APIs. Missing runtimes produce a visible error and preserve the document.
+
+Choose the **Markdown**, **Split**, or **Preview** icon at the right of the notebook header; tooltips identify each view. The design follows the [JetBrains Markdown editor](https://www.jetbrains.com/help/idea/markdown.html): source line numbers and syntax colors, a floating formatting toolbar for selected text, and a live preview with real bold text, readable headings, code panels, and tables. Drag the divider to resize panes, or double-click it to return to equal widths. The adjacent options menu switches between side-by-side and stacked panes and toggles source-line scroll synchronization, line numbers, and soft wraps. Editor and preview font sizes are independently configurable in Journal settings. The editor fills the workspace without outside margins or a header-to-content gap, and has no outer, header, or line-number gutter borders; only the resizable divider remains in Split mode, in either orientation. The note name stays centered above the notebook; there is no separate Journal heading above it. Double-click the note name to rename it as plain text with a caret, without an input box, focus outline, or automatic text selection; Enter saves and Escape cancels. Long names scroll automatically as you type or move the caret left and right, keeping it visible; short names remain centered. Folder arrows show whether their contents are expanded. Removal actions in tree menus open a confirmation dialog; removing a folder moves its entire directory tree into Trash. The default **Trash** folder is always visible and can be expanded to browse deleted items. The default Trash folder cannot be removed. The **Restore** action in each Trash item’s menu recovers a note or an entire folder tree. New deletions retain their original location; missing parents are recreated, and name conflicts receive a ` (restored N)` suffix without replacing existing items. Older Trash items without a saved location restore to Journal root. Trash item menus also offer **Delete Permanently**, with confirmation; deleting a folder also removes its contents and cannot be undone. Deleted notes stay out of ordinary searches and save destinations. Existing `journal/.trash` contents migrate automatically into `journal/Trash` without replacing existing files. Preview renders headings, paragraphs, lists, tables, code, quotes, and links. Click the **Edit Preview** pencil button in the note header to write directly in Preview or the preview half of Split mode; click it again to finish editing. The formatting bar supports bold, italic, strikethrough, links, headings, lists, quotes, tables, and code with a language picker. Select preview text to format it, use the same keyboard shortcuts as the source editor, or right-click for formatting commands. You can also format text inside table cells, edit code, toggle task checkboxes, and add paragraphs after the note. Preview edits preserve Markdown and share autosave and Undo with the source editor. Click links to follow them while reading; Ctrl/Command-click follows them while editing. **App Settings → Journal → Preview → Enable Editing by Default** controls whether newly opened notes start editable; the pencil button overrides it for the current note. Relative Markdown links and Obsidian-style `[[Note]]` or `[[Note|label]]` links navigate within the notebook; YAML front matter stays in the file and is hidden from preview. Connected research cards live in the separate Squidy tab.
 
 List editing works in Markdown and editable Preview: **Enter** continues the current bullet, numbered item, or task; new tasks start unchecked. Press **Enter again on the empty item** to finish the list and write a normal paragraph. An empty nested item moves back one level first. **Shift+Enter** adds a line break inside the current item. Empty markers remain visible and editable. In Preview, typing `- `, `* `, `+ `, a number and delimiter such as `1. `, or a task prefix starts a list immediately. Undo/Redo retains the caret as items appear or disappear. See [editable lists](docs/journal-lists.png) and [dark appearance](docs/journal-lists-dark.png). This behavior follows the requested two-Enter exit rule, informed by [Obsidian’s formatting guide](https://obsidian.md/help/syntax), [Typora’s Markdown guide](https://support.typora.io/Markdown-Reference/), and [CodeMirror’s list continuation commands](https://github.com/codemirror/lang-markdown/blob/main/src/commands.ts).
 
@@ -440,7 +452,7 @@ The folder layout and `.amigo` exports are shared across platforms. Close Clerk 
   organizer.json                  # Calendar items, subscription metadata/cache, reminder receipts
   credentials.enc                 # encrypted subscription URLs and Telegram settings
   credentials.key                 # owner-only credential encryption key
-  journal/                        # ordinary UTF-8 Markdown notes and folders
+  journal/                        # Markdown notes, PDF documents, and folders
     Welcome.md
     Projects/Plan.md
     .media/attachments/<attachment-id>/<original-filename>
@@ -552,7 +564,20 @@ AMIGO_DATA_FILE=/tmp/amigo-journal-review/workspace.json \
 
 Add `--settings` to capture the app, Journal, board, vault, Calendar, Finance, shared reference, and vault category configuration pages. Add `--dark` or `--compact` for appearance and minimum-size checks. Use a fresh temporary path for each run.
 
+Add `--name-edit` to capture caret-following horizontal scrolling while renaming a long document.
+
 Add `--edit-preview` to the Journal preview command to capture the preview formatting bar and an editable text selection. Combine it with `--list-editing` for three focused scenes containing bullet, numbered, and task lists with empty items.
+
+Capture the continuous PDF reader, forms panel, temporary-file Save icon, scrolled page, annotation Remove menu, tree drag destination highlight, note hover text, an opened note, and a changed note color using a synthetic PDF in a fresh library (add `--dark` or `--compact` as needed):
+
+```sh
+AMIGO_DATA_FILE=/tmp/amigo-journal-pdf-review-UNIQUE/workspace.json \
+  cargo run --locked --example journal_pdf_preview -- /tmp/amigo-journal-pdf-review-UNIQUE/screens
+```
+
+Add `--long-names` to exercise horizontal scrolling of long document names in the sidebar and header.
+
+The regular suite checks binary PDF lifecycle, backups, UI forms, and annotation gestures without native PDF dependencies. With the PDF runtime installed, run `cargo test -p amigo-core journal::pdf -- --include-ignored` and `cargo test -p amigo pdf_edits_autosave -- --ignored` for native form/annotation/password/conversion and shell autosave/conflict round trips. `cargo test -p amigo external_pdf_forms_save -- --ignored` verifies that temporary PDF form edits are imported only on explicit save. The encrypted test fixture’s synthetic password is `secret-test`.
 
 Capture Squidy, card/path dialogs, and Journal/Task inline media with FFmpeg installed:
 
@@ -591,7 +616,7 @@ The desktop shell composes five independent tab crates. Tabs own their UI state,
 | `amigo` · `src/app.rs`, `src/app/autosave.rs`, `src/app/library_ui.rs`, `src/app/sync.rs`, `src/app/organizer/` | Tab navigation, board/vault selection, password prompts, autosave, background refresh, tab settings coordination, and shared workspace ownership |
 | `amigo-tasks` · `crates/tasks/` | Kanban, filters, task editor, and board settings |
 | `amigo-finance` · `crates/finance/` | Finance subviews, record editing, validation, reference management, and background FX refresh |
-| `amigo-journal` · `crates/journal/` | Markdown editor, formatting, folder tree, search UI, and cached preview |
+| `amigo-journal` · `crates/journal/` | Markdown editor, PDF reader/forms/annotations, folder tree, search UI, and cached preview |
 | `amigo-squidy` · `crates/squidy/` | Research canvas, card/edge drafts, board navigation, and path search |
 | `amigo-calendar` · `crates/calendar/` | Calendar views, personal scheduling, repeat editing, and reminder settings |
 | `amigo-connect` · `crates/connect/` | Calendar URL downloads/iCalendar parsing, Telegram transport, and verified GitHub release downloads; no GUI |

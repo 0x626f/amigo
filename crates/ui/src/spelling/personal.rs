@@ -74,11 +74,11 @@ pub fn personal_revision(ctx: &egui::Context) -> u64 {
 pub fn personal_words(ctx: &egui::Context) -> Arc<BTreeSet<String>> {
     let state = state(ctx);
     let mut state = state.lock().unwrap();
-    if !state.loaded {
-        if let Ok(words) = read(&state.path) {
-            state.words = Arc::new(words);
-            state.loaded = true;
-        }
+    if !state.loaded
+        && let Ok(words) = read(&state.path)
+    {
+        state.words = Arc::new(words);
+        state.loaded = true;
     }
     state.words.clone()
 }

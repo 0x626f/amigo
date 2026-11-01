@@ -65,7 +65,7 @@ pub(super) fn list(app: &mut FinanceUi<'_>, ui: &mut egui::Ui) {
             .push_id(("currency-symbol", &row.id), |ui| {
                 ui.add_sized(
                     [width, 44.0],
-                    design::Button::new((
+                    amigo_ui::design::NameButton::new((
                         RichText::new(inline::currency_symbol(&row, app.plan))
                             .size(15.0)
                             .strong(),
@@ -145,7 +145,7 @@ pub(crate) fn dialog(state: &mut FinanceTab, plan: &mut FinancePlan, ctx: &egui:
                 if editor.crypto_token {
                     ui.add_space(12.0);
                     field_label(ui, "Chain *");
-                    egui::ComboBox::from_id_salt("currency-chain")
+                    amigo_ui::design::ComboBox::from_id_salt("currency-chain")
                         .width(ui.available_width())
                         .selected_text(
                             plan.chains

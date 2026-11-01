@@ -322,15 +322,14 @@ fn edge(rest: &mut &str) -> Result<(bool, bool, Line, String), String> {
         ("-.", ".->", false, Line::Dotted),
         ("==", "==>", false, Line::Thick),
     ] {
-        if let Some(tail) = rest.strip_prefix(prefix) {
-            if !tail.starts_with(['>', '-', '.', '=']) {
-                if let Some(end) = tail.find(suffix) {
-                    let label = &tail[..end];
-                    if !label.contains(['[', ']', '{', '}']) && !label.trim().is_empty() {
-                        *rest = &tail[end + suffix.len()..];
-                        return Ok((start, true, line, label_text(label)));
-                    }
-                }
+        if let Some(tail) = rest.strip_prefix(prefix)
+            && !tail.starts_with(['>', '-', '.', '='])
+            && let Some(end) = tail.find(suffix)
+        {
+            let label = &tail[..end];
+            if !label.contains(['[', ']', '{', '}']) && !label.trim().is_empty() {
+                *rest = &tail[end + suffix.len()..];
+                return Ok((start, true, line, label_text(label)));
             }
         }
     }
@@ -383,9 +382,9 @@ impl Flowchart {
                 incoming.insert(to);
             }
         }
-        for i in 0..self.nodes.len() {
+        for (i, rank) in ranks.iter_mut().enumerate() {
             if !incoming.contains(&i) {
-                ranks[i] = Some(0);
+                *rank = Some(0);
                 queue.push_back(i);
             }
         }

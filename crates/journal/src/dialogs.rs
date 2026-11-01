@@ -23,6 +23,9 @@ impl JournalTab {
         if self.external_file.is_some() {
             return self.external_file_ui(ctx);
         }
+        if self.move_dialog.is_some() {
+            return self.move_dialog_ui(ctx);
+        }
         if self.search.is_some() {
             return self.search_dialog_ui(ctx);
         }
@@ -36,7 +39,7 @@ impl JournalTab {
         let response =
             design::modal(ctx, egui::Id::new("journal-external-destination")).show(ctx, |ui| {
                 ui.set_width(design::dialog_width(ctx, 540.));
-                close = design::dialog_heading(ui, "Open External File").clicked();
+                close = design::dialog_heading(ui, "Save to Journal").clicked();
                 let name = dialog
                     .source
                     .file_name()
@@ -45,7 +48,7 @@ impl JournalTab {
                 ui.label(RichText::new(name).strong());
                 design::hint(
                     ui,
-                    "Choose where to save a copy in Journal. The original file stays unchanged.",
+                    "Choose where to save this draft in Journal. The original file stays unchanged.",
                 );
                 ui.add_space(12.);
                 crate::dialogs::destination_picker(ui, &mut dialog.folder, &self.entries);
@@ -54,14 +57,14 @@ impl JournalTab {
                 }
                 design::dialog_footer(ui, |ui| {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        save = design::dialog_primary(ui, "Save and Open").clicked();
+                        save = design::dialog_primary(ui, "Save to Journal").clicked();
                         close |= design::button(ui, "Cancel").clicked();
                     });
                 });
             });
         let shortcut = keys.dialog(&response, true);
         if close || shortcut.cancel {
-            return None;
+            return Some(Action::CancelExternalSave);
         }
         if save || shortcut.confirm {
             return Some(Action::StoreExternal {
@@ -185,7 +188,7 @@ impl JournalTab {
                         };
                         ui.add_sized(
                             [120., 28.],
-                            egui::Label::new(
+                            amigo_ui::design::NameLabel::new(
                                 RichText::new(destination).size(12.).color(colors(ui).muted),
                             )
                             .truncate(),
@@ -277,8 +280,16 @@ fn child_path(parent: &str, name: &str) -> String {
 }
 
 fn destination_picker(ui: &mut egui::Ui, folder: &mut String, entries: &[Entry]) {
-    amigo_ui::forms::field_label(ui, "Save in");
-    let picker = egui::ComboBox::from_id_salt("journal-external-folder")
+    destination_picker_with_label(ui, folder, entries, "Save in");
+}
+fn destination_picker_with_label(
+    ui: &mut egui::Ui,
+    folder: &mut String,
+    entries: &[Entry],
+    label: &str,
+) {
+    amigo_ui::forms::field_label(ui, label);
+    let picker = amigo_ui::design::ComboBox::from_id_salt("journal-external-folder")
         .width(ui.available_width())
         .selected_text(if folder.is_empty() {
             "Journal Root"
@@ -309,4 +320,69 @@ fn destination_picker(ui: &mut egui::Ui, folder: &mut String, entries: &[Entry])
         egui::Id::new("journal-external-folder-open"),
         egui::Sense::hover(),
     );
+}
+
+pub(super) struct MoveDialog {
+    path: String,
+    folder: String,
+    error: String,
+    pending: bool,
+}
+impl MoveDialog {
+    pub fn new(path: &str) -> Self {
+        Self {
+            path: path.into(),
+            folder: path.rsplit_once('/').map_or("", |(p, _)| p).into(),
+            error: String::new(),
+            pending: false,
+        }
+    }
+}
+impl JournalTab {
+    pub fn move_result(&mut self, error: Option<&str>) {
+        if let Some(dialog) = &mut self.move_dialog
+            && dialog.pending
+        {
+            if let Some(error) = error {
+                dialog.error = error.into();
+                dialog.pending = false;
+            } else {
+                self.move_dialog = None;
+            }
+        }
+    }
+    fn move_dialog_ui(&mut self, ctx: &egui::Context) -> Option<Action> {
+        let mut dialog = self.move_dialog.take()?;
+        let mut cancel = false;
+        let mut save = false;
+        let modal = design::modal(ctx, egui::Id::new("journal-move-dialog")).show(ctx, |ui| {
+            ui.set_width(design::dialog_width(ctx, 480.));
+            cancel = design::dialog_heading(ui, "Move to Folder").clicked();
+            ui.label(amigo_core::journal::entry_name(&dialog.path));
+            ui.add_enabled_ui(!dialog.pending, |ui| {
+                destination_picker_with_label(ui, &mut dialog.folder, &self.entries, "Move to");
+                if !dialog.error.is_empty() {
+                    ui.colored_label(colors(ui).red, &dialog.error);
+                }
+                design::dialog_footer(ui, |ui| {
+                    cancel |= design::button(ui, "Cancel").clicked();
+                    save = design::dialog_primary(ui, "Move").clicked();
+                });
+            });
+        });
+        if !dialog.pending && (cancel || design::dialog_should_close(&modal)) {
+            return None;
+        }
+        let action = if save && !dialog.pending {
+            dialog.pending = true;
+            Some(Action::Move {
+                path: dialog.path.clone(),
+                folder: dialog.folder.clone(),
+            })
+        } else {
+            None
+        };
+        self.move_dialog = Some(dialog);
+        action
+    }
 }

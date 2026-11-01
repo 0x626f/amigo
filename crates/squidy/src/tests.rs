@@ -1564,3 +1564,72 @@ fn background_title_renames_and_cards_on_top_still_drag_normally() {
     );
     assert_eq!(tab.board.as_ref().unwrap().backgrounds[0], background);
 }
+
+#[test]
+fn long_card_and_file_border_names_scroll_without_panning_or_moving_cards() {
+    let ctx = egui::Context::default();
+    design::install(&ctx);
+    let mut board = Board::new("Name scrolling");
+    let long_card = "A very long card name with español and Привет that must remain reachable to its right edge";
+    let mut card = Card::new(long_card);
+    card.position = Some([0., 0.]);
+    let id = card.id.clone();
+    board.put_card(card).unwrap();
+    let long_border =
+        "A very long File Border folder name whose last words should remain reachable";
+    let group = amigo_core::squidy::Background {
+        id: amigo_core::model::id(),
+        title: long_border.into(),
+        position: [0., 160.],
+        size: [200., 120.],
+    };
+    let group_id = group.id.clone();
+    board.backgrounds.push(group);
+    let mut tab = SquidyTab {
+        board: Some(board),
+        ..Default::default()
+    };
+    let size = egui::vec2(980., 640.);
+    fn position(output: &egui::FullOutput, text: &str) -> egui::Pos2 {
+        output
+            .shapes
+            .iter()
+            .find_map(|s| {
+                if let egui::Shape::Text(t) = &s.shape {
+                    (t.galley.text() == text).then_some(t.pos)
+                } else {
+                    None
+                }
+            })
+            .unwrap()
+    }
+    let mut output = frame(&mut tab, &ctx, vec![], size);
+    for _ in 0..4 {
+        output = frame(&mut tab, &ctx, vec![], size);
+    }
+    for (name, key) in [
+        (long_card, egui::Id::new(("squidy-card", &id))),
+        (long_border, egui::Id::new(("squidy-background", &group_id))),
+    ] {
+        let before = tab.board.clone();
+        let text_before = position(&output, name);
+        let rect = ctx.read_response(key).unwrap().rect;
+        let pointer = egui::pos2(rect.left() + 80., rect.top() + 18.);
+        output = frame(
+            &mut tab,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(pointer),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    phase: egui::TouchPhase::Move,
+                    delta: egui::vec2(-90., 0.),
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+            size,
+        );
+        assert!(position(&output, name).x < text_before.x);
+        assert_eq!(tab.board, before);
+    }
+}

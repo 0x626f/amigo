@@ -151,7 +151,7 @@ impl Widget for Button<'_> {
 pub fn button<'a>(ui: &mut Ui, text: impl IntoAtoms<'a>) -> Response {
     ui.add(Button::new(text))
 }
-/// A centered caption with a reserved arrow gutter, including when the caption truncates.
+/// A centered caption with a reserved arrow gutter and horizontally scrollable overflow.
 pub fn dropdown_button(ui: &mut Ui, id: egui::Id, label: &str, size: Vec2) -> Response {
     let response = ui
         .push_id(id, |ui| ui.add_sized(size, Button::new("")))
@@ -162,20 +162,31 @@ pub fn dropdown_button(ui: &mut Ui, id: egui::Id, label: &str, size: Vec2) -> Re
     );
     let galley = egui::WidgetText::from(label).into_galley(
         ui,
-        Some(egui::TextWrapMode::Truncate),
-        text_rect.width().max(0.),
+        Some(egui::TextWrapMode::Extend),
+        f32::INFINITY,
         egui::TextStyle::Button,
     );
-    let text_left = (response.rect.center().x - galley.size().x * 0.5)
-        .min(text_rect.right() - galley.size().x)
-        .max(text_rect.left());
-    ui.painter()
-        .with_clip_rect(text_rect.intersect(ui.clip_rect()))
-        .galley(
-            egui::pos2(text_left, text_rect.center().y - galley.size().y * 0.5),
+    if galley.size().x <= text_rect.width() {
+        let left = (response.rect.center().x - galley.size().x * 0.5)
+            .min(text_rect.right() - galley.size().x)
+            .max(text_rect.left());
+        ui.painter()
+            .with_clip_rect(text_rect.intersect(ui.clip_rect()))
+            .galley(
+                egui::pos2(left, text_rect.center().y - galley.size().y * 0.5),
+                galley,
+                colors(ui).ink,
+            );
+    } else {
+        crate::names::paint(
+            ui,
+            &response,
+            text_rect,
             galley,
             colors(ui).ink,
+            egui::Align::Center,
         );
+    }
     paint_icon(
         ui.painter(),
         Rect::from_center_size(
@@ -213,6 +224,20 @@ fn checkbox_sized<'a>(
 ) -> Response {
     let mut atoms = label.into_atoms();
     let text = atoms.text().map(String::from);
+    let full = atoms.iter_texts().next().cloned().map(|text| {
+        text.into_galley(
+            ui,
+            Some(egui::TextWrapMode::Extend),
+            f32::INFINITY,
+            egui::TextStyle::Body,
+        )
+    });
+    let scrolling = full.filter(|g| g.size().x > (ui.available_width() - size - 8.).max(0.));
+    if scrolling.is_some() {
+        for text in atoms.iter_texts_mut() {
+            *text = egui::WidgetText::from(" ");
+        }
+    }
     let icon_id = egui::Id::new("amigo-checkbox-indicator");
     let height = ui.spacing().interact_size.y.max(size);
     atoms.push_left(egui::Atom::custom(icon_id, egui::vec2(size, height)));
@@ -220,7 +245,11 @@ fn checkbox_sized<'a>(
     let mut allocated = egui::AtomLayout::new(atoms)
         .gap(8.)
         .sense(egui::Sense::click())
-        .min_size(Vec2::splat(height))
+        .min_size(if scrolling.is_some() {
+            Vec2::new(ui.available_width(), height)
+        } else {
+            Vec2::splat(height)
+        })
         .allocate(ui);
     if allocated.response.clicked() {
         *checked = !*checked;
@@ -278,6 +307,22 @@ fn checkbox_sized<'a>(
                 StrokeKind::Outside,
             );
         }
+    }
+    if let Some(galley) = scrolling
+        && let Some(icon) = painted.rect(icon_id)
+    {
+        let rect = Rect::from_min_max(
+            egui::pos2(icon.right() + 8., painted.response.rect.top()),
+            painted.response.rect.max,
+        );
+        crate::names::paint(
+            ui,
+            &painted.response,
+            rect,
+            galley,
+            colors(ui).ink,
+            egui::Align::Min,
+        );
     }
     painted.response
 }
@@ -402,15 +447,17 @@ mod tests {
                     });
                 });
                 output.textures_delta.clear();
-                let text = output
+                let (clip, text) = output
                     .shapes
                     .iter()
                     .find_map(|s| match &s.shape {
-                        egui::Shape::Text(t) if !t.galley.text().is_empty() => Some(t),
+                        egui::Shape::Text(t) if !t.galley.text().is_empty() => {
+                            Some((s.clip_rect, t))
+                        }
                         _ => None,
                     })
                     .unwrap();
-                let painted = Rect::from_min_size(text.pos, text.galley.size());
+                let painted = Rect::from_min_size(text.pos, text.galley.size()).intersect(clip);
                 assert!(painted.left() >= rect.left() + 5.);
                 assert!(
                     painted.right() <= rect.right() - 25.,

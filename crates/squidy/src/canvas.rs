@@ -1,6 +1,57 @@
 use super::*;
 use egui::{Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2};
 impl SquidyTab {
+    fn scrolling_name_at(&self, ui: &egui::Ui, point: Pos2, rect: Rect) -> bool {
+        let Some(board) = &self.board else {
+            return false;
+        };
+        let zoom = board.zoom;
+        let origin = rect.min + Vec2::new(board.pan[0], board.pan[1]);
+        for card in board.cards.iter().rev() {
+            if let Some(position) = self.positions.get(&card.id) {
+                let card_rect = Rect::from_min_size(
+                    origin + Vec2::new(position[0], position[1]) * zoom,
+                    Vec2::new(card.size[0], card.size[1]) * zoom,
+                );
+                if card_rect.contains(point) {
+                    let width = ((card.size[0]
+                        - if self.picking.is_some() || ui.input(|i| i.modifiers.alt) {
+                            52.
+                        } else {
+                            24.
+                        })
+                        * zoom)
+                        .max(1.);
+                    let title = ui.painter().layout_no_wrap(
+                        card.name.clone(),
+                        FontId::proportional((17. * zoom).max(8.)),
+                        Color32::WHITE,
+                    );
+                    return Rect::from_min_size(
+                        card_rect.min + Vec2::new(12., 10.) * zoom,
+                        Vec2::new(width, title.size().y),
+                    )
+                    .contains(point)
+                        && title.size().x > width;
+                }
+            }
+        }
+        for background in board.backgrounds.iter().rev() {
+            let left = origin
+                + Vec2::new(background.position[0], background.position[1]) * zoom
+                + Vec2::new(12., 6.) * zoom;
+            let title = ui.painter().layout_no_wrap(
+                background.title.clone(),
+                FontId::proportional((16. * zoom).max(7.)),
+                Color32::WHITE,
+            );
+            let width = ((background.size[0] - 22.) * zoom).max(1.);
+            if Rect::from_min_size(left, Vec2::new(width, title.size().y)).contains(point) {
+                return title.size().x > width;
+            }
+        }
+        false
+    }
     pub(super) fn canvas(&mut self, ui: &mut egui::Ui) {
         let (board_rect, _) = ui.allocate_exact_size(
             ui.available_size().max(egui::vec2(1., 174.)),
@@ -57,7 +108,20 @@ impl SquidyTab {
             if zoom != 1. {
                 self.zoom(zoom, anchor);
             }
-            let pan = if middle { delta } else { scroll };
+            let over_name = if !middle
+                && (scroll.x != 0. || ui.input(|i| i.modifiers.shift) && scroll.y != 0.)
+            {
+                self.scrolling_name_at(ui, anchor, rect)
+            } else {
+                false
+            };
+            let pan = if over_name {
+                Vec2::ZERO
+            } else if middle {
+                delta
+            } else {
+                scroll
+            };
             if pan != Vec2::ZERO {
                 let b = self.board.as_mut().unwrap();
                 b.pan[0] = (b.pan[0] + pan.x).clamp(-10_000_000., 10_000_000.);
@@ -302,37 +366,35 @@ impl SquidyTab {
                         let press = ui.input(|i| i.pointer.press_origin()).unwrap_or(point);
                         self.resize = Some((card.id.clone(), corner, card_rect, press));
                     }
-                    if handle.dragged() {
-                        if let Some((id, corner, original, press)) = &self.resize {
-                            if id == &card.id {
-                                if let Some(pointer) = handle.interact_pointer_pos() {
-                                    let delta = pointer - *press;
-                                    let mut min = original.min;
-                                    let mut max = original.max;
-                                    if corner % 2 == 0 {
-                                        min.x = (min.x + delta.x)
-                                            .clamp(max.x - 4000. * zoom, max.x - 160. * zoom);
-                                    } else {
-                                        max.x = (max.x + delta.x)
-                                            .clamp(min.x + 160. * zoom, min.x + 4000. * zoom);
-                                    }
-                                    if corner / 2 == 0 {
-                                        min.y = (min.y + delta.y)
-                                            .clamp(max.y - 4000. * zoom, max.y - 90. * zoom);
-                                    } else {
-                                        max.y = (max.y + delta.y)
-                                            .clamp(min.y + 90. * zoom, min.y + 4000. * zoom);
-                                    }
-                                    let position = (min - origin) / zoom;
-                                    let size = (max - min) / zoom;
-                                    resized = Some((
-                                        id.clone(),
-                                        [position.x, position.y],
-                                        [size.x.clamp(160., 4000.), size.y.clamp(90., 4000.)],
-                                    ));
-                                }
-                            }
+                    if handle.dragged()
+                        && let Some((id, corner, original, press)) = &self.resize
+                        && id == &card.id
+                        && let Some(pointer) = handle.interact_pointer_pos()
+                    {
+                        let delta = pointer - *press;
+                        let mut min = original.min;
+                        let mut max = original.max;
+                        if corner % 2 == 0 {
+                            min.x =
+                                (min.x + delta.x).clamp(max.x - 4000. * zoom, max.x - 160. * zoom);
+                        } else {
+                            max.x =
+                                (max.x + delta.x).clamp(min.x + 160. * zoom, min.x + 4000. * zoom);
                         }
+                        if corner / 2 == 0 {
+                            min.y =
+                                (min.y + delta.y).clamp(max.y - 4000. * zoom, max.y - 90. * zoom);
+                        } else {
+                            max.y =
+                                (max.y + delta.y).clamp(min.y + 90. * zoom, min.y + 4000. * zoom);
+                        }
+                        let position = (min - origin) / zoom;
+                        let size = (max - min) / zoom;
+                        resized = Some((
+                            id.clone(),
+                            [position.x, position.y],
+                            [size.x.clamp(160., 4000.), size.y.clamp(90., 4000.)],
+                        ));
                     }
                     if handle.drag_stopped() {
                         self.resize = None;
@@ -475,16 +537,22 @@ impl SquidyTab {
                 }
             }
             let clipped = painter.with_clip_rect(card_rect.shrink(10. * zoom).intersect(rect));
-            let mut name_job = egui::text::LayoutJob::simple(
+            let name = clipped.layout_no_wrap(
                 card.name.clone(),
                 FontId::proportional((17. * zoom).max(8.)),
                 p.ink,
-                ((card.size[0] - if choosing { 52. } else { 24. }) * zoom).max(1.),
             );
-            name_job.wrap.max_rows = 1;
-            name_job.wrap.break_anywhere = true;
-            let name = clipped.layout_job(name_job);
-            clipped.galley(card_rect.min + Vec2::new(12., 10.) * zoom, name, p.ink);
+            let title_rect = Rect::from_min_size(
+                card_rect.min + Vec2::new(12., 10.) * zoom,
+                Vec2::new(
+                    ((card.size[0] - if choosing { 52. } else { 24. }) * zoom).max(1.),
+                    name.size().y,
+                ),
+            );
+            let clip = ui.clip_rect();
+            ui.set_clip_rect(clip.intersect(rect));
+            design::paint_canvas_name(ui, &hit, title_rect, name, p.ink, egui::Align::Min);
+            ui.set_clip_rect(clip);
             let mut brief_job = egui::text::LayoutJob::simple(
                 card.brief.clone(),
                 FontId::proportional((13. * zoom).max(7.)),
@@ -533,12 +601,12 @@ impl SquidyTab {
                 }
             }
             for card in &mut self.board.as_mut().unwrap().cards {
-                if self.selected.contains(&card.id) {
-                    if let Some(old) = self.positions.get(&card.id).copied() {
-                        let position = [old[0] + delta[0], old[1] + delta[1]];
-                        self.positions.insert(card.id.clone(), position);
-                        card.position = Some(position);
-                    }
+                if self.selected.contains(&card.id)
+                    && let Some(old) = self.positions.get(&card.id).copied()
+                {
+                    let position = [old[0] + delta[0], old[1] + delta[1]];
+                    self.positions.insert(card.id.clone(), position);
+                    card.position = Some(position);
                 }
             }
             self.changed();

@@ -316,7 +316,7 @@ impl Amigo {
                 let width = (ui.available_width() - 215.).max(80.);
                 ui.add_sized(
                     [width, 38.],
-                    egui::Label::new(
+                    amigo_ui::design::NameLabel::new(
                         RichText::new(
                             vault
                                 .as_ref()

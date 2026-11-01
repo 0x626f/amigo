@@ -1,4 +1,4 @@
-//! Markdown notebook UI. Filesystem work and native pickers belong to the shell.
+//! Journal Markdown / PDF UI. Filesystem work and native pickers belong to the shell.
 use amigo_core::journal::{
     Document, Entry, Mode, Preferences, PreviewLayout, TRASH_FOLDER,
     formatting::{self, Format},
@@ -11,6 +11,7 @@ mod document_tools;
 mod editing;
 mod highlight;
 mod panes;
+mod pdf;
 mod preview_format;
 mod render;
 mod scroll;
@@ -38,18 +39,28 @@ pub enum Action {
     Restore(String),
     DeletePermanently(String),
     OpenExternal,
+    OpenExternalFile(std::path::PathBuf),
+    SaveToJournal,
+    CancelExternalSave,
+    Move {
+        path: String,
+        folder: String,
+    },
     AttachMedia,
     StoreExternal {
         source: std::path::PathBuf,
         folder: String,
     },
     Export(String),
+    ConvertToPdf(String),
     Reload,
     SaveCopy,
 }
 pub struct Editor {
     pub document: Document,
     pub saved_text: String,
+    pub saved_pdf_edits: Option<amigo_core::journal::pdf::Edits>,
+    pdf: pdf::PdfEditor,
     pub changed_at: Instant,
     pub conflict: bool,
     selection: std::ops::Range<usize>,
@@ -71,6 +82,8 @@ impl Editor {
     pub fn new(document: Document) -> Self {
         Self {
             saved_text: document.text.clone(),
+            saved_pdf_edits: document.pdf.as_ref().map(|pdf| pdf.edits.clone()),
+            pdf: Default::default(),
             document,
             changed_at: Instant::now(),
             conflict: false,
@@ -108,6 +121,7 @@ impl Editor {
     }
     pub fn dirty(&self) -> bool {
         self.document.text != self.saved_text
+            || self.document.pdf.as_ref().map(|pdf| &pdf.edits) != self.saved_pdf_edits.as_ref()
     }
     pub fn append_markdown(&mut self, ctx: &egui::Context, text: &str) {
         let id = egui::Id::new(("journal-editor", &self.document.path));
@@ -140,6 +154,7 @@ pub struct JournalTab {
     expanded: BTreeSet<String>,
     dialog: Option<NameDialog>,
     title_edit: Option<TitleEdit>,
+    move_dialog: Option<dialogs::MoveDialog>,
 }
 struct TitleEdit {
     path: String,
@@ -176,7 +191,9 @@ impl JournalTab {
             .path
             .rsplit_once('/')
             .map_or(String::new(), |(parent, _)| parent.into());
-        self.expand_folder(&folder);
+        if document.external.is_none() {
+            self.expand_folder(&folder);
+        }
         self.title_edit = None;
         self.editor = Some(Editor::new(document));
         self.error.clear();
@@ -195,6 +212,13 @@ impl JournalTab {
         }
     }
     pub fn renamed_folder(&mut self, old: &str, new: &str) {
+        if let Some(edit) = &mut self.title_edit {
+            if edit.path == old {
+                edit.path = new.into();
+            } else if let Some(suffix) = edit.path.strip_prefix(&format!("{old}/")) {
+                edit.path = format!("{new}/{suffix}");
+            }
+        }
         let prefix = format!("{old}/");
         self.expanded = self
             .expanded
@@ -250,6 +274,16 @@ impl JournalTab {
                     ),
                 })
         });
+        let location = self
+            .editor
+            .as_ref()
+            .and_then(|e| e.document.external.as_ref())
+            .and_then(|p| p.parent())
+            .map(|p| amigo_ui::media::Location {
+                root: p.into(),
+                base: p.into(),
+            })
+            .or(location);
         amigo_ui::media::set_location(ui.ctx(), location);
         let mut action = None;
         if !self.error.is_empty() {
@@ -288,14 +322,26 @@ impl JournalTab {
                     let width = ui.available_width();
                     let height = ui.available_height().max(80.);
                     ui.add_enabled_ui(!self.loading, |ui| {
-                        panes::show(editor, preferences, ui, width, height)
+                        if let Some(document) = &mut editor.document.pdf {
+                            if editor
+                                .pdf
+                                .show(ui, document, &editor.document.path, width, height)
+                            {
+                                editor.changed_at = Instant::now();
+                            }
+                        } else {
+                            panes::show(editor, preferences, ui, width, height);
+                        }
                     });
                 } else {
                     ui.vertical_centered(|ui| {
                         ui.add_space(80.);
                         design::icon(ui, Icon::Book, colors(ui).muted, 44.);
                         ui.heading("Your Journal");
-                        design::hint(ui, "Create a note or open an external Markdown file.");
+                        design::hint(
+                            ui,
+                            "Create a note or open an external Markdown or PDF file.",
+                        );
                     });
                 }
             });
@@ -334,18 +380,26 @@ impl JournalTab {
     fn note_header(&mut self, ui: &mut egui::Ui, preferences: &mut Preferences) -> Option<Action> {
         let keys = design::ActionKeys::capture(ui.ctx());
         let has_note = self.editor.is_some();
+        let is_pdf = self
+            .editor
+            .as_ref()
+            .is_some_and(|e| e.document.pdf.is_some());
         let path = self
             .editor
             .as_ref()
             .map(|editor| editor.document.path.clone())
             .unwrap_or_default();
+        let external = self
+            .editor
+            .as_ref()
+            .is_some_and(|e| e.document.external.is_some());
         let filename = amigo_core::journal::entry_name(&path);
         let name = filename.strip_suffix(".md").unwrap_or(filename);
         let width = ui.available_width();
         let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 46.), egui::Sense::hover());
         ui.painter().rect_filled(rect, 0, colors(ui).field);
-        let show_edit = has_note && preferences.mode != Mode::Source;
-        let controls_width = if show_edit { 176. } else { 140. };
+        let show_edit = has_note && !is_pdf && preferences.mode != Mode::Source;
+        let controls_width = if show_edit { 176. } else { 140. } + if external { 36. } else { 0. };
         let controls_left = rect.right() - controls_width - 12.;
         let rename_controls_left = controls_left - 76.;
         let title_width = (width - 2. * (controls_width + 24.)).clamp(80., 500.);
@@ -370,7 +424,7 @@ impl JournalTab {
                             ui,
                             egui::Id::new("journal-open-external"),
                             Icon::OpenFile,
-                            "Open External Markdown File",
+                            "Open External Markdown or PDF File",
                             32.,
                         )
                     })
@@ -385,15 +439,18 @@ impl JournalTab {
             egui::Rect::from_min_size(rect.min + egui::vec2(48., 7.), egui::vec2(32., 32.));
         ui.scope_builder(egui::UiBuilder::new().max_rect(attach), |ui| {
             if ui
-                .add_enabled_ui(has_note && !self.busy && !is_in_trash(&path), |ui| {
-                    design::icon_button(
-                        ui,
-                        egui::Id::new("journal-attach-media"),
-                        Icon::Plus,
-                        "Attach Photo or Video",
-                        32.,
-                    )
-                })
+                .add_enabled_ui(
+                    has_note && !external && !is_pdf && !self.busy && !is_in_trash(&path),
+                    |ui| {
+                        design::icon_button(
+                            ui,
+                            egui::Id::new("journal-attach-media"),
+                            Icon::Plus,
+                            "Attach Photo or Video",
+                            32.,
+                        )
+                    },
+                )
                 .inner
                 .clicked()
             {
@@ -404,7 +461,7 @@ impl JournalTab {
             egui::Rect::from_min_size(rect.min + egui::vec2(84., 7.), egui::vec2(32., 32.));
         ui.scope_builder(egui::UiBuilder::new().max_rect(spelling), |ui| {
             if ui
-                .add_enabled_ui(has_note && !self.loading, |ui| {
+                .add_enabled_ui(has_note && !is_pdf && !self.loading, |ui| {
                     design::icon_button(
                         ui,
                         egui::Id::new("journal-check-spelling"),
@@ -415,10 +472,9 @@ impl JournalTab {
                 })
                 .inner
                 .clicked()
+                && let Some(editor) = &mut self.editor
             {
-                if let Some(editor) = &mut self.editor {
-                    document_tools::start_spelling(editor, ui.ctx());
-                }
+                document_tools::start_spelling(editor, ui.ctx());
             }
         });
         if let Some(edit) = &mut self.title_edit {
@@ -432,9 +488,21 @@ impl JournalTab {
                     )));
                 state.store(ui.ctx(), id);
             }
+            // Keep glyph coordinates left-based: egui's single-line caret scrolling
+            // assumes that origin. The widget alignment still centers short names.
+            let mut layout_name = |ui: &egui::Ui, text: &dyn egui::TextBuffer, _: f32| {
+                let mut job = egui::text::LayoutJob::simple_singleline(
+                    text.as_str().to_owned(),
+                    egui::FontId::proportional(20.),
+                    colors(ui).ink,
+                );
+                job.keep_trailing_whitespace = true;
+                ui.fonts_mut(|fonts| fonts.layout_job(job))
+            };
             let response = ui.put(
                 title_rect,
                 design::input(&mut edit.value)
+                    .layouter(&mut layout_name)
                     .id(id)
                     .frame(egui::Frame::NONE)
                     .min_size(egui::vec2(0., title_rect.height()))
@@ -502,21 +570,25 @@ impl JournalTab {
             let response = ui
                 .put(
                     title_rect,
-                    egui::Label::new(RichText::new(name).size(20.).strong())
+                    amigo_ui::design::NameLabel::new(RichText::new(name).size(20.).strong())
                         .truncate()
                         .halign(egui::Align::Center)
                         .sense(egui::Sense::click()),
                 )
-                .on_hover_text("Double-click to rename note");
+                .on_hover_text(if external {
+                    "External file. Save to Journal to rename."
+                } else {
+                    "Double-click to rename note"
+                });
             ui.interact(
                 response.rect,
                 egui::Id::new("journal-note-title"),
                 egui::Sense::hover(),
             );
-            if response.double_clicked() && !self.loading {
+            if response.double_clicked() && !self.loading && !external {
                 self.title_edit = Some(TitleEdit {
                     value: name.into(),
-                    path,
+                    path: path.clone(),
                     focus: true,
                 });
                 ui.ctx().request_repaint();
@@ -532,6 +604,22 @@ impl JournalTab {
                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
             |ui| {
                 ui.spacing_mut().item_spacing.x = 4.;
+                if external
+                    && design::icon_button(
+                        ui,
+                        egui::Id::new("journal-save-external"),
+                        Icon::Save,
+                        "Save to Journal",
+                        32.,
+                    )
+                    .clicked()
+                    && !self.busy
+                {
+                    action = Some(Action::SaveToJournal);
+                }
+                if is_pdf {
+                    return;
+                }
                 if show_edit {
                     let editor = self.editor.as_mut().unwrap();
                     let editing = editor
@@ -573,6 +661,18 @@ impl JournalTab {
                 );
                 design::menu(&menu).show(|ui| {
                     ui.set_min_width(220.);
+                    if has_note
+                        && !is_in_trash(&path)
+                        && design::button(ui, "Convert to PDF").clicked()
+                    {
+                        action = Some(Action::ConvertToPdf(path.clone()));
+                        ui.close();
+                    }
+                    if has_note && !external && design::button(ui, "Export Markdown").clicked() {
+                        action = Some(Action::Export(path.clone()));
+                        ui.close();
+                    }
+                    ui.separator();
                     design::eyebrow(ui, "PREVIEW LAYOUT");
                     let side = ui.radio_value(
                         &mut preferences.preview_layout,

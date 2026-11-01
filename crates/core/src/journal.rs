@@ -1,4 +1,4 @@
-//! Portable Markdown notes. Paths are relative to the journal; writes detect external edits.
+//! Portable Markdown notes and PDFs. Journal-relative paths and checked file writes.
 use crate::{model::id, storage};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -7,12 +7,21 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
+#[cfg(test)]
+mod file_tests;
 pub mod formatting;
+pub mod pdf;
 mod trash;
 
 type Result<T> = std::result::Result<T, String>;
 pub const MAX_NOTE_BYTES: u64 = 8 * 1024 * 1024;
 pub const TRASH_FOLDER: &str = "Trash";
+
+pub fn is_pdf(path: &str) -> bool {
+    Path::new(path)
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("pdf"))
+}
 
 pub fn is_in_trash(path: &str) -> bool {
     path.split('/')
@@ -83,6 +92,9 @@ pub struct Document {
     pub path: String,
     pub text: String,
     pub fingerprint: String,
+    pub pdf: Option<pdf::PdfDocument>,
+    /// Temporary drafts retain their source identity; core saves require an explicit import.
+    pub external: Option<PathBuf>,
 }
 #[derive(Clone)]
 pub struct Journal {
@@ -236,9 +248,9 @@ impl Journal {
                     });
                     visit(base, &path, out, depth + 1)?;
                 } else if kind.is_file()
-                    && path
-                        .extension()
-                        .is_some_and(|e| e.eq_ignore_ascii_case("md"))
+                    && path.extension().is_some_and(|e| {
+                        e.eq_ignore_ascii_case("md") || e.eq_ignore_ascii_case("pdf")
+                    })
                 {
                     out.push(Entry {
                         path: key,
@@ -255,36 +267,300 @@ impl Journal {
     }
     pub fn read(&self, name: &str) -> Result<Document> {
         let path = self.path(name)?;
-        if !path
-            .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("md"))
+        let is_pdf = is_pdf(name);
+        if !is_pdf
+            && !path
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("md"))
         {
-            return Err("Choose a Markdown (.md) note.".into());
+            return Err("Choose a Markdown (.md) or PDF (.pdf) document.".into());
         }
         let file = fs::File::open(path).map_err(|e| e.to_string())?;
         use std::io::Read;
         let mut bytes = vec![];
-        file.take(MAX_NOTE_BYTES + 1)
+        let limit = if is_pdf {
+            pdf::MAX_PDF_BYTES
+        } else {
+            MAX_NOTE_BYTES
+        };
+        file.take(limit + 1)
             .read_to_end(&mut bytes)
             .map_err(|e| e.to_string())?;
-        if bytes.len() as u64 > MAX_NOTE_BYTES {
-            return Err(
-                "This note exceeds the 8 MiB editor limit. Split it into smaller notes.".into(),
-            );
+        if bytes.len() as u64 > limit {
+            return Err(if is_pdf {
+                "This PDF exceeds the 64 MiB document limit."
+            } else {
+                "This note exceeds the 8 MiB editor limit. Split it into smaller notes."
+            }
+            .into());
         }
         let fingerprint = hash(&bytes);
-        let text = String::from_utf8(bytes).map_err(|_| "Notes must use UTF-8 encoding.")?;
+        let (text, pdf) = if is_pdf {
+            pdf::validate_header(&bytes)?;
+            (String::new(), Some(pdf::PdfDocument::new(bytes)))
+        } else {
+            (
+                String::from_utf8(bytes).map_err(|_| "Notes must use UTF-8 encoding.")?,
+                None,
+            )
+        };
         Ok(Document {
             path: name.into(),
             text,
             fingerprint,
+            pdf,
+            external: None,
         })
+    }
+    pub fn open_file(&self, source: &Path) -> Result<Document> {
+        if fs::symlink_metadata(source)
+            .map_err(|e| e.to_string())?
+            .file_type()
+            .is_symlink()
+        {
+            return Err("Open a regular Markdown or PDF file.".into());
+        }
+        let canonical = source.canonicalize().map_err(|e| e.to_string())?;
+        if let Ok(relative) = canonical.strip_prefix(&self.root) {
+            return self.read(
+                &relative
+                    .to_str()
+                    .ok_or("Invalid document path.")?
+                    .replace(std::path::MAIN_SEPARATOR, "/"),
+            );
+        }
+        Self::read_external(&canonical)
+    }
+    /// Open a bounded external file without importing or modifying it.
+    pub fn read_external(source: &Path) -> Result<Document> {
+        let metadata = fs::symlink_metadata(source).map_err(|e| e.to_string())?;
+        if !metadata.is_file() {
+            return Err("Open a regular Markdown or PDF file.".into());
+        }
+        let filename = source
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or("Invalid document filename.")?;
+        let pdf_file = is_pdf(filename);
+        if !pdf_file
+            && !source
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("md"))
+        {
+            return Err("Open a Markdown (.md) or PDF (.pdf) file.".into());
+        }
+        let limit = if pdf_file {
+            pdf::MAX_PDF_BYTES
+        } else {
+            MAX_NOTE_BYTES
+        };
+        use std::io::Read;
+        let mut bytes = Vec::new();
+        fs::File::open(source)
+            .map_err(|e| e.to_string())?
+            .take(limit + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|e| e.to_string())?;
+        if bytes.len() as u64 > limit {
+            return Err(
+                "This document exceeds its size limit (Markdown: 8 MiB, PDF: 64 MiB).".into(),
+            );
+        }
+        let fingerprint = hash(&bytes);
+        let (text, pdf) = if pdf_file {
+            pdf::validate_header(&bytes)?;
+            (String::new(), Some(pdf::PdfDocument::new(bytes)))
+        } else {
+            (
+                String::from_utf8(bytes).map_err(|_| "Notes must use UTF-8 encoding.")?,
+                None,
+            )
+        };
+        let source = source.canonicalize().map_err(|e| e.to_string())?;
+        Ok(Document {
+            path: source
+                .to_string_lossy()
+                .replace(std::path::MAIN_SEPARATOR, "/"),
+            text,
+            pdf,
+            fingerprint,
+            external: Some(source),
+        })
+    }
+    pub fn store_document(&self, document: &Document, folder: &str) -> Result<Document> {
+        let stem = Path::new(&document.path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or("Invalid document filename.")?;
+        let bytes = if let Some(pdf) = &document.pdf {
+            pdf::save(pdf)?
+        } else {
+            document.text.as_bytes().to_vec()
+        };
+        if document.pdf.is_none() && bytes.len() as u64 > MAX_NOTE_BYTES {
+            return Err("This note exceeds the 8 MiB editor limit.".into());
+        }
+        self.unique_file(
+            folder,
+            stem,
+            if document.pdf.is_some() { "pdf" } else { "md" },
+            &bytes,
+        )
+    }
+    pub fn move_file(&self, name: &str, folder: &str) -> Result<String> {
+        if is_in_trash(name) || is_in_trash(folder) {
+            return Err("Use Restore to move documents out of Trash.".into());
+        }
+        let source = self.path(name)?;
+        if !source.is_file() {
+            return Err("Choose a document to move.".into());
+        }
+        if !folder.is_empty() && !self.path(folder)?.is_dir() {
+            return Err("Choose an existing Journal folder.".into());
+        }
+        let filename = source
+            .file_name()
+            .and_then(|s| s.to_str())
+            .ok_or("Invalid document filename.")?;
+        self.rename(
+            name,
+            &if folder.is_empty() {
+                filename.into()
+            } else {
+                format!("{folder}/{filename}")
+            },
+        )
+    }
+    pub fn save_document(&self, document: &Document) -> Result<String> {
+        if document.external.is_some() {
+            return Err(
+                "Save this external draft to Journal first. The original file is unchanged.".into(),
+            );
+        }
+        if let Some(pdf) = &document.pdf {
+            let bytes = pdf::save(pdf)?;
+            let current = self.read(&document.path)?;
+            if current.fingerprint != document.fingerprint {
+                return Err(
+                    "This PDF changed outside Amigo. Reload it or save your edits as a copy."
+                        .into(),
+                );
+            }
+            storage::atomic_write(&self.path(&document.path)?, &bytes)?;
+            Ok(hash(&bytes))
+        } else {
+            self.save(&document.path, &document.text, &document.fingerprint)
+        }
+    }
+    pub fn save_copy(&self, document: &Document) -> Result<Document> {
+        if document.external.is_some() {
+            return self.store_document(document, "");
+        }
+        let stem = Path::new(&document.path)
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy();
+        let parent = document.path.rsplit_once('/').map_or("", |(p, _)| p);
+        let extension = if document.pdf.is_some() { "pdf" } else { "md" };
+        let bytes = if let Some(pdf) = &document.pdf {
+            pdf::save(pdf)?
+        } else {
+            document.text.as_bytes().to_vec()
+        };
+        self.unique_file(parent, &format!("{stem} (recovered)"), extension, &bytes)
+    }
+    /// Convert a saved note to a sibling PDF without replacing either file.
+    pub fn convert_to_pdf(&self, name: &str) -> Result<Document> {
+        let document = self.read(name)?;
+        if document.pdf.is_some() {
+            return Err("Choose a Markdown note to convert to PDF.".into());
+        }
+        if is_in_trash(name) {
+            return Err("Restore this note before converting it.".into());
+        }
+        let stem = Path::new(name)
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy();
+        let bytes = pdf::convert(&document.text, &stem, &self.root, name)?;
+        self.unique_file(
+            name.rsplit_once('/').map_or("", |(p, _)| p),
+            &stem,
+            "pdf",
+            &bytes,
+        )
+    }
+    fn unique_file(
+        &self,
+        folder: &str,
+        stem: &str,
+        extension: &str,
+        bytes: &[u8],
+    ) -> Result<Document> {
+        if is_in_trash(folder) {
+            return Err("Choose a destination outside Trash.".into());
+        }
+        for suffix in 0..10_000 {
+            let filename = if suffix == 0 {
+                format!("{stem}.{extension}")
+            } else {
+                format!("{stem} ({suffix}).{extension}")
+            };
+            let name = if folder.is_empty() {
+                filename
+            } else {
+                format!("{folder}/{filename}")
+            };
+            let path = self.path(&name)?;
+            let parent = path.parent().ok_or("Missing document folder.")?;
+            if let Err(error) = Self::vacant(
+                parent,
+                path.file_name()
+                    .and_then(|p| p.to_str())
+                    .ok_or("Invalid document filename.")?,
+                None,
+            ) {
+                if error.contains("already exists") {
+                    continue;
+                }
+                return Err(error);
+            }
+            use std::io::Write;
+            let mut options = fs::OpenOptions::new();
+            options.write(true).create_new(true);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::OpenOptionsExt;
+                options.mode(0o600);
+            }
+            let mut file = match options.open(&path) {
+                Ok(file) => file,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error.to_string()),
+            };
+            if let Err(error) = file.write_all(bytes).and_then(|()| file.sync_all()) {
+                drop(file);
+                let _ = fs::remove_file(&path);
+                return Err(error.to_string());
+            }
+            return match self.read(&name) {
+                Ok(doc) => Ok(doc),
+                Err(error) => {
+                    let _ = fs::remove_file(path);
+                    Err(error)
+                }
+            };
+        }
+        Err("Too many documents share the same name.".into())
     }
     pub fn save(&self, name: &str, text: &str, expected: &str) -> Result<String> {
         if text.len() as u64 > MAX_NOTE_BYTES {
             return Err("This note exceeds the 8 MiB editor limit.".into());
         }
         let current = self.read(name)?;
+        if current.pdf.is_some() {
+            return Err("Save PDF documents through the PDF editor.".into());
+        }
         if current.fingerprint != expected {
             return Err(
                 "This note changed outside Amigo. Reload it or save your edits as a copy.".into(),
@@ -294,6 +570,11 @@ impl Journal {
         Ok(hash(text.as_bytes()))
     }
     pub fn create(&self, name: &str, text: &str) -> Result<Document> {
+        if is_pdf(name) {
+            return Err(
+                "Import a PDF or convert a Markdown note. New PDF creation is unavailable.".into(),
+            );
+        }
         let name = if name.to_ascii_lowercase().ends_with(".md") {
             name.to_owned()
         } else {
@@ -332,6 +613,8 @@ impl Journal {
             path: name,
             text: text.into(),
             fingerprint: hash(text.as_bytes()),
+            pdf: None,
+            external: None,
         })
     }
     fn vacant(parent: &Path, name: &str, except: Option<&Path>) -> Result<()> {
@@ -363,10 +646,21 @@ impl Journal {
         }
         let old_path = self.path(old)?;
         let folder = old_path.is_dir();
-        let name = if folder || name.to_ascii_lowercase().ends_with(".md") {
+        let extension = if is_pdf(old) { "pdf" } else { "md" };
+        let name = if folder
+            || Path::new(name)
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case(extension))
+        {
             name.to_owned()
         } else {
-            format!("{name}.md")
+            if Path::new(name)
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("pdf") || e.eq_ignore_ascii_case("md"))
+            {
+                return Err("Renaming cannot change a document's file type.".into());
+            }
+            format!("{name}.{extension}")
         };
         let new_path = self.path(&name)?;
         if new_path == old_path {
@@ -385,66 +679,62 @@ impl Journal {
         Ok(name)
     }
     pub fn import(&self, sources: &[PathBuf], folder: &str) -> Result<Vec<Document>> {
-        let mut documents = vec![];
-        let mut created = vec![];
+        let mut documents = Vec::new();
         let result = (|| {
             for source in sources {
                 let meta = fs::symlink_metadata(source).map_err(|e| e.to_string())?;
-                if !meta.is_file()
-                    || meta.len() > MAX_NOTE_BYTES
-                    || !source
-                        .extension()
-                        .is_some_and(|e| e.eq_ignore_ascii_case("md"))
-                {
-                    return Err("Import regular UTF-8 .md files up to 8 MiB each.".into());
+                let is_pdf = source
+                    .extension()
+                    .is_some_and(|e| e.eq_ignore_ascii_case("pdf"));
+                let is_md = source
+                    .extension()
+                    .is_some_and(|e| e.eq_ignore_ascii_case("md"));
+                let limit = if is_pdf {
+                    pdf::MAX_PDF_BYTES
+                } else {
+                    MAX_NOTE_BYTES
+                };
+                if !meta.is_file() || (!is_pdf && !is_md) || meta.len() > limit {
+                    return Err(
+                        "Import regular UTF-8 .md files up to 8 MiB, or .pdf files up to 64 MiB."
+                            .into(),
+                    );
                 }
-                let text = fs::read_to_string(source).map_err(|e| e.to_string())?;
-                let name = source
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .ok_or("Invalid note filename.")?;
+                use std::io::Read;
+                let mut bytes = Vec::new();
+                fs::File::open(source)
+                    .map_err(|e| e.to_string())?
+                    .take(limit + 1)
+                    .read_to_end(&mut bytes)
+                    .map_err(|e| e.to_string())?;
+                if bytes.len() as u64 > limit {
+                    return Err("The imported document exceeds its size limit.".into());
+                }
+                if is_pdf {
+                    pdf::validate(&bytes)?;
+                } else {
+                    std::str::from_utf8(&bytes).map_err(|_| "Notes must use UTF-8 encoding.")?;
+                }
                 let stem = source
                     .file_stem()
-                    .and_then(|s| s.to_str())
-                    .ok_or("Invalid note filename.")?;
-                let before = documents.len();
-                for suffix in 0..10_000 {
-                    let file = if suffix == 0 {
-                        name.to_owned()
-                    } else {
-                        format!("{stem} ({suffix}).md")
-                    };
-                    let file = if folder.is_empty() {
-                        file
-                    } else {
-                        format!("{folder}/{file}")
-                    };
-                    match self.create(&file, &text) {
-                        Ok(doc) => {
-                            created.push(self.path(&doc.path)?);
-                            documents.push(doc);
-                            break;
-                        }
-                        Err(error)
-                            if error.contains("already exists") || self.path(&file)?.exists() =>
-                        {
-                            continue;
-                        }
-                        Err(e) => return Err(e),
-                    }
-                }
-                if documents.len() == before {
-                    return Err("Too many imported notes share the same name.".into());
-                }
+                    .and_then(|p| p.to_str())
+                    .ok_or("Invalid document filename.")?;
+                documents.push(self.unique_file(
+                    folder,
+                    stem,
+                    if is_pdf { "pdf" } else { "md" },
+                    &bytes,
+                )?);
             }
-            Ok(documents)
+            Ok(())
         })();
-        if result.is_err() {
-            for path in created {
-                let _ = fs::remove_file(path);
+        if let Err(error) = result {
+            for document in documents {
+                let _ = fs::remove_file(self.path(&document.path)?);
             }
+            return Err(error);
         }
-        result
+        Ok(documents)
     }
     pub fn search(&self, query: &str) -> Result<Vec<Entry>> {
         let query = query.to_lowercase();
@@ -470,7 +760,7 @@ impl Journal {
         if target.contains(':') || target.starts_with('/') || target.contains('\\') {
             return Err("Use a relative link to a Journal note.".into());
         }
-        let target = if target.to_lowercase().ends_with(".md") {
+        let target = if target.to_lowercase().ends_with(".md") || is_pdf(target) {
             target.into()
         } else {
             format!("{target}.md")
@@ -532,7 +822,12 @@ impl Journal {
         if parent.starts_with(&self.root) {
             return Err("Export outside the Journal folder to preserve your working notes.".into());
         }
-        storage::atomic_write(destination, doc.text.as_bytes())
+        let bytes = if let Some(pdf) = &doc.pdf {
+            pdf.bytes.as_ref()
+        } else {
+            doc.text.as_bytes()
+        };
+        storage::atomic_write(destination, bytes)
     }
 }
 
@@ -874,4 +1169,29 @@ mod preference_tests {
             old
         );
     }
+}
+
+/// Resolve a local document link without letting an external note browse outside its folder.
+pub fn external_link(source: &Path, target: &str) -> Result<PathBuf> {
+    let decoded = percent_encoding::percent_decode_str(target)
+        .decode_utf8()
+        .map_err(|_| "Invalid document link.")?;
+    let target = decoded.split('#').next().unwrap_or("");
+    if target.contains([':', '\\']) || Path::new(target).is_absolute() {
+        return Err("Use a relative document link.".into());
+    }
+    let target = if Path::new(target).extension().is_none() {
+        format!("{target}.md")
+    } else {
+        target.into()
+    };
+    let parent = source.parent().ok_or("Missing external document folder.")?;
+    let path = parent
+        .join(target)
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
+    if !path.starts_with(parent) {
+        return Err("The linked document is outside this external folder.".into());
+    }
+    Ok(path)
 }

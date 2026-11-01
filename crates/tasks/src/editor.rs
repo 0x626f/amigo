@@ -89,7 +89,7 @@ impl TasksUi<'_> {
                                 let control_width = 160.0;
                                 design::settings_group(ui, "Details", |ui| {
                                     design::property_row(ui, "Status", |ui| {
-                                        egui::ComboBox::from_id_salt("task-status")
+                                        amigo_ui::design::ComboBox::from_id_salt("task-status")
                                             .width(control_width)
                                             .truncate()
                                             .selected_text(
@@ -111,7 +111,7 @@ impl TasksUi<'_> {
                                             });
                                     });
                                     design::property_row(ui, "Priority", |ui| {
-                                        egui::ComboBox::from_id_salt("task-priority")
+                                        amigo_ui::design::ComboBox::from_id_salt("task-priority")
                                             .width(control_width)
                                             .selected_text(&editor.draft.priority)
                                             .show_ui(ui, |ui| {
@@ -125,7 +125,7 @@ impl TasksUi<'_> {
                                             });
                                     });
                                     design::property_row(ui, "Category", |ui| {
-                                        egui::ComboBox::from_id_salt("task-category")
+                                        amigo_ui::design::ComboBox::from_id_salt("task-category")
                                             .width(control_width)
                                             .truncate()
                                             .selected_text(
@@ -245,7 +245,10 @@ impl TasksUi<'_> {
                 ui.set_width(design::dialog_width(ctx, 440.0));
                 keep = design::dialog_heading(ui, "Delete Task?").clicked();
                 ui.label("Delete this task permanently?");
-                ui.add(egui::Label::new(RichText::new(&editor.draft.title).strong()).truncate());
+                ui.add(
+                    amigo_ui::design::NameLabel::new(RichText::new(&editor.draft.title).strong())
+                        .truncate(),
+                );
                 design::dialog_footer(ui, |ui| {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         remove = design::dialog_destructive(ui, "Delete Task").clicked();

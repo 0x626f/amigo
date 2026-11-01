@@ -100,7 +100,7 @@ pub(super) fn show(app: &mut FinanceUi<'_>, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.label(RichText::new("Income & Expenses Chart").size(18.0).strong());
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                egui::ComboBox::from_id_salt("wallet-history-range")
+                amigo_ui::design::ComboBox::from_id_salt("wallet-history-range")
                     .height(300.0)
                     .selected_text(match app.state.history_range {
                         HistoryRange::LastMonths(count) => format!("Last {count} months"),

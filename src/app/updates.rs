@@ -367,6 +367,8 @@ mod tests {
     fn pending_install_returns_to_editor_when_a_journal_save_conflicts() {
         let (mut app, ctx) = crate::app::tests::harness();
         app.journal.open(amigo_core::journal::Document {
+            external: None,
+            pdf: None,
             path: "Note.md".into(),
             text: "Original".into(),
             fingerprint: "test".into(),

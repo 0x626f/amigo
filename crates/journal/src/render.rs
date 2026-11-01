@@ -778,16 +778,17 @@ impl Preview {
                 .interactive(ui.is_enabled())
                 .return_key(None)
                 .show(ui);
-            if output.response.has_focus() && (restoring || output.response.changed()) {
-                if let Some(range) = output.cursor_range {
-                    ui.scroll_to_rect(
-                        output
-                            .galley
-                            .pos_from_cursor(range.primary)
-                            .translate(output.galley_pos.to_vec2()),
-                        None,
-                    );
-                }
+            if output.response.has_focus()
+                && (restoring || output.response.changed())
+                && let Some(range) = output.cursor_range
+            {
+                ui.scroll_to_rect(
+                    output
+                        .galley
+                        .pos_from_cursor(range.primary)
+                        .translate(output.galley_pos.to_vec2()),
+                    None,
+                );
             }
             self.changed |= output.response.changed();
             self.focused.push(id);
@@ -1258,14 +1259,15 @@ fn inline_label(
         }
     }
     let changed = output.response.changed();
-    if output.response.has_focus() && (changed || restoring) {
-        if let Some(range) = output.cursor_range {
-            let caret = output
-                .galley
-                .pos_from_cursor(range.primary)
-                .translate(output.galley_pos.to_vec2());
-            ui.scroll_to_rect(caret, None);
-        }
+    if output.response.has_focus()
+        && (changed || restoring)
+        && let Some(range) = output.cursor_range
+    {
+        let caret = output
+            .galley
+            .pos_from_cursor(range.primary)
+            .translate(output.galley_pos.to_vec2());
+        ui.scroll_to_rect(caret, None);
     }
     if changed {
         update_atoms(inline);

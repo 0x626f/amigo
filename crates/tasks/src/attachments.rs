@@ -281,7 +281,7 @@ fn show_content(state: &mut TasksTab, editor: &mut TaskEditor, ui: &mut egui::Ui
                     ui.spacing_mut().item_spacing.y = 2.0;
                     let response = ui.add_sized(
                         [text_width, 26.0],
-                        design::Button::new(&attachment.name).truncate(),
+                        amigo_ui::design::NameButton::new(&attachment.name).truncate(),
                     );
                     if response.on_hover_text(&attachment.name).clicked() {
                         match state
@@ -370,7 +370,7 @@ fn show_content(state: &mut TasksTab, editor: &mut TaskEditor, ui: &mut egui::Ui
             icon(ui, &name);
             ui.add_sized(
                 [(ui.available_width() - 34.0).max(60.0), 38.0],
-                egui::Label::new(format!("{name} · Pending")).truncate(),
+                amigo_ui::design::NameLabel::new(format!("{name} · Pending")).truncate(),
             )
             .on_hover_text(path.display().to_string());
             if design::icon_button(

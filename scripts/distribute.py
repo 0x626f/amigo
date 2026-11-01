@@ -37,6 +37,9 @@ GUI_LIBRARIES = (
     "libX11.so.6", "libXcursor.so.1", "libXi.so.6", "libXrandr.so.2",
     "libxkbcommon.so.0", "libxkbcommon-x11.so.0",
     "libdbus-1.so.3",
+    # Journal PDF support loads these stable ABIs dynamically.
+    "libpoppler-glib.so.8", "libcairo.so.2",
+    "libpango-1.0.so.0", "libpangocairo-1.0.so.0",
 )
 
 
@@ -236,7 +239,8 @@ def package_deb(work, root):
         f"Installed-Size: {sum(p.stat().st_size for p in root.rglob('*') if p.is_file()) // 1024 + 1}\n"
         f"Depends: libc6 (>= {minimum}), libgcc-s1, libx11-6, libxcursor1, libxi6, libxrandr2, "
         "libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libwayland-cursor0, "
-        "libwayland-egl1, libgl1, libegl1, libdbus-1-3, xdg-utils, xdg-desktop-portal\n"
+        "libwayland-egl1, libgl1, libegl1, libdbus-1-3, xdg-utils, xdg-desktop-portal, "
+        "libpoppler-glib8, libcairo2, libpango-1.0-0, libpangocairo-1.0-0\n"
         "Recommends: ffmpeg\n"
         "Description: Personal tasks, calendars, and finances\n"
         " A native desktop workspace for personal Kanban boards, calendars, and finance vaults.\n"

@@ -456,7 +456,7 @@ impl SquidyTab {
             } else {
                 let title = ui.add_sized(
                     [width, 32.],
-                    egui::Label::new(
+                    amigo_ui::design::NameLabel::new(
                         RichText::new(&self.board.as_ref().unwrap().name)
                             .size(design::PAGE_TITLE_SIZE)
                             .strong(),

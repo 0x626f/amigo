@@ -1,0 +1,109 @@
+%PDF-1.7
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /AcroForm 10 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Count 2 /Kids [3 0 R 4 0 R] >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] /Resources << /Font << /Helv 9 0 R >> >> /Contents 5 0 R /Annots [6 0 R 7 0 R 8 0 R 11 0 R 12 0 R 14 0 R] >>
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] /Rotate 90 /Resources << /Font << /Helv 9 0 R >> >> /Contents 13 0 R /Annots [17 0 R 18 0 R 19 0 R 21 0 R 22 0 R] >>
+endobj
+5 0 obj
+<< /Length 52  >>
+stream
+BT /Helv 16 Tf 30 365 Td (Journal PDF fixture) Tj ET
+endstream
+endobj
+6 0 obj
+<< /Type /Annot /Subtype /Widget /FT /Tx /T (name) /TU (Your name) /Rect [30 300 240 325] /V (Original) /MaxLen 40 /DA (/Helv 12 Tf 0 g) /P 3 0 R >>
+endobj
+7 0 obj
+<< /Type /Annot /Subtype /Widget /FT /Btn /T (accept) /Rect [30 260 50 280] /V /Off /AS /Off /AP << /N << /Off 15 0 R /Yes 16 0 R >> >> /P 3 0 R >>
+endobj
+8 0 obj
+<< /Type /Annot /Subtype /Widget /FT /Ch /T (language) /Rect [30 220 240 245] /Opt [(English) (Spanish) (Russian)] /V (English) /DA (/Helv 12 Tf 0 g) /P 3 0 R >>
+endobj
+9 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+10 0 obj
+<< /Fields [6 0 R 7 0 R 8 0 R 11 0 R 12 0 R 17 0 R 20 0 R 21 0 R 22 0 R] /DR << /Font << /Helv 9 0 R >> >> /DA (/Helv 12 Tf 0 g) >>
+endobj
+11 0 obj
+<< /Type /Annot /Subtype /Widget /FT /Tx /T (comments) /Rect [30 130 240 190] /Ff 4096 /V (Multi-line) /DA (/Helv 12 Tf 0 g) /P 3 0 R >>
+endobj
+12 0 obj
+<< /Type /Annot /Subtype /Widget /FT /Tx /T (readonly) /Rect [30 90 240 115] /Ff 1 /V (Read only) /DA (/Helv 12 Tf 0 g) /P 3 0 R >>
+endobj
+13 0 obj
+<< /Length 55  >>
+stream
+BT /Helv 16 Tf 30 365 Td (Second searchable page) Tj ET
+endstream
+endobj
+14 0 obj
+<< /Type /Annot /Subtype /Text /Rect [255 330 279 354] /Contents (Existing note) /F 4 /P 3 0 R >>
+endobj
+15 0 obj
+<< /Length 27 /Type /XObject /Subtype /Form /BBox [0 0 20 20] >>
+stream
+0 0 0 RG 1 w 0 0 20 20 re S
+endstream
+endobj
+16 0 obj
+<< /Length 59 /Type /XObject /Subtype /Form /BBox [0 0 20 20] >>
+stream
+0 0 0 RG 1 w 0 0 20 20 re S 3 3 m 17 17 l S 3 17 m 17 3 l S
+endstream
+endobj
+17 0 obj
+<< /Type /Annot /Subtype /Widget /FT /Tx /T (rotated) /Rect [30 300 240 325] /V (Rotated field) /DA (/Helv 12 Tf 0 g) /P 4 0 R >>
+endobj
+18 0 obj
+<< /Type /Annot /Subtype /Widget /Parent 20 0 R /Rect [30 260 50 280] /AS /A /AP << /N << /Off 15 0 R /A 16 0 R >> >> /P 4 0 R >>
+endobj
+19 0 obj
+<< /Type /Annot /Subtype /Widget /Parent 20 0 R /Rect [70 260 90 280] /AS /Off /AP << /N << /Off 15 0 R /B 16 0 R >> >> /P 4 0 R >>
+endobj
+20 0 obj
+<< /FT /Btn /T (radio-group) /Ff 32768 /Kids [18 0 R 19 0 R] /V /A >>
+endobj
+21 0 obj
+<< /Type /Annot /Subtype /Widget /FT /Ch /T (editable-choice) /Rect [30 220 240 245] /Ff 393216 /Opt [(English) (Spanish) (Russian)] /V (English) /DA (/Helv 12 Tf 0 g) /P 4 0 R >>
+endobj
+22 0 obj
+<< /Type /Annot /Subtype /Widget /FT /Ch /T (multi-choice) /Rect [30 130 240 190] /Ff 2097152 /Opt [(English) (Spanish) (Russian)] /V [(English)] /I [0] /DA (/Helv 12 Tf 0 g) /P 4 0 R >>
+endobj
+xref
+0 23
+0000000000 65535 f 
+0000000009 00000 n 
+0000000075 00000 n 
+0000000138 00000 n 
+0000000315 00000 n 
+0000000500 00000 n 
+0000000603 00000 n 
+0000000767 00000 n 
+0000000930 00000 n 
+0000001107 00000 n 
+0000001204 00000 n 
+0000001352 00000 n 
+0000001505 00000 n 
+0000001653 00000 n 
+0000001760 00000 n 
+0000001874 00000 n 
+0000002000 00000 n 
+0000002158 00000 n 
+0000002304 00000 n 
+0000002450 00000 n 
+0000002598 00000 n 
+0000002684 00000 n 
+0000002880 00000 n 
+trailer
+<< /Size 23 /Root 1 0 R >>
+startxref
+3083
+%%EOF

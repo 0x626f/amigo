@@ -1,9 +1,21 @@
 //! Notebook actions and tree; filesystem changes are returned to the shell.
 use super::*;
+
+struct FileDrag {
+    path: String,
+}
+
 impl JournalTab {
     pub fn sidebar(&mut self, ui: &mut egui::Ui) -> Option<Action> {
         let mut action = None;
-        ui.horizontal(|ui| {
+        if ui.input(|i| {
+            i.events
+                .iter()
+                .any(|e| matches!(e, egui::Event::WindowFocused(false)))
+        }) {
+            egui::DragAndDrop::take_payload::<FileDrag>(ui.ctx());
+        }
+        let header = ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 3.;
             ui.add_space(12.);
             ui.label(
@@ -62,6 +74,12 @@ impl JournalTab {
                 self.search = Some(search::SearchDialog::default());
             }
         });
+        let root_header = ui.interact(
+            header.response.rect,
+            egui::Id::new("journal-root-drop"),
+            egui::Sense::hover(),
+        );
+        action = self.file_drop_target(ui, &root_header, "").or(action);
         ui.add_space(8.);
         for entry in self.entries.clone() {
             let parent = entry.path.rsplit_once('/').map_or("", |(p, _)| p);
@@ -86,10 +104,9 @@ impl JournalTab {
                 let width = (ui.available_width() - actions_width).max(0.);
                 let name = amigo_core::journal::entry_name(&entry.path);
                 let label = name.strip_suffix(".md").unwrap_or(name);
-                let selected = self
-                    .editor
-                    .as_ref()
-                    .is_some_and(|e| e.document.path == entry.path);
+                let selected = self.editor.as_ref().is_some_and(|e| {
+                    e.document.external.is_none() && e.document.path == entry.path
+                });
                 let row = ui
                     .allocate_ui_with_layout(
                         egui::vec2(width, 38.),
@@ -107,6 +124,7 @@ impl JournalTab {
                                 },
                                 selected,
                                 design::NavRowOptions {
+                                    draggable: !entry.folder && !is_in_trash(&entry.path),
                                     indent: (depth as f32 * 12.).min((width - 96.).max(0.)),
                                     disclosure: entry
                                         .folder
@@ -123,6 +141,23 @@ impl JournalTab {
                     egui::Id::new(("journal-entry", &entry.path)),
                     egui::Sense::hover(),
                 );
+                if !self.loading
+                    && !entry.folder
+                    && !is_in_trash(&entry.path)
+                    && row.drag_started_by(egui::PointerButton::Primary)
+                {
+                    egui::DragAndDrop::set_payload(
+                        ui.ctx(),
+                        FileDrag {
+                            path: entry.path.clone(),
+                        },
+                    );
+                }
+                if entry.folder {
+                    action = self
+                        .file_drop_target(ui, &row, &entry.path)
+                        .or(action.take());
+                }
                 if row.clicked() {
                     if entry.folder {
                         if !self.expanded.remove(&entry.path) {
@@ -214,7 +249,7 @@ impl JournalTab {
             });
         }
         if !self.entries.iter().any(|entry| !is_in_trash(&entry.path)) && self.loaded {
-            design::hint(ui, "Create a note or open a Markdown file.");
+            design::hint(ui, "Create a note or open a Markdown or PDF file.");
         }
         let blank = egui::Rect::from_min_max(
             ui.cursor().min,
@@ -228,10 +263,75 @@ impl JournalTab {
             egui::Id::new("journal-root-space"),
             egui::Sense::click(),
         );
+        action = self.file_drop_target(ui, &root_space, "").or(action);
+        if let Some(drag) = egui::DragAndDrop::payload::<FileDrag>(ui.ctx())
+            && let Some(pointer) = ui.input(|i| i.pointer.hover_pos())
+        {
+            egui::Area::new(egui::Id::new("journal-file-drag-preview"))
+                .order(egui::Order::Tooltip)
+                .interactable(false)
+                .fixed_pos(pointer + egui::vec2(16., 16.))
+                .show(ui.ctx(), |ui| {
+                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                        ui.label(amigo_core::journal::entry_name(&drag.path));
+                    });
+                });
+        }
         design::context_menu(&root_space).show(|ui| {
             action = self.tree_menu(ui, None).or(action.take());
         });
         action
+    }
+
+    fn file_drop_target(
+        &mut self,
+        ui: &mut egui::Ui,
+        response: &egui::Response,
+        folder: &str,
+    ) -> Option<Action> {
+        let drag = response.dnd_hover_payload::<FileDrag>()?;
+        let parent = drag.path.rsplit_once('/').map_or("", |(p, _)| p);
+        let valid = !self.loading
+            && !is_in_trash(folder)
+            && parent != folder
+            && self
+                .entries
+                .iter()
+                .any(|e| e.path == drag.path && !e.folder && !is_in_trash(&e.path));
+        if !valid {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::NotAllowed);
+            return None;
+        }
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        ui.painter().rect_stroke(
+            response.rect.shrink(1.),
+            7,
+            egui::Stroke::new(2., colors(ui).accent),
+            egui::StrokeKind::Inside,
+        );
+        // Reveal closed folders after a short hover without toggling them on drop.
+        if !folder.is_empty() && !self.expanded.contains(folder) {
+            let id = response.id.with(("file-drop-hover", &drag.path));
+            let now = ui.input(|i| i.time);
+            let (start, last) = ui
+                .ctx()
+                .data(|d| d.get_temp::<(f64, f64)>(id))
+                .unwrap_or((now, now));
+            let start = if now - last > 0.2 { now } else { start };
+            if now - start >= 0.7 {
+                self.expanded.insert(folder.into());
+            } else {
+                ui.ctx()
+                    .request_repaint_after(std::time::Duration::from_millis(50));
+            }
+            ui.ctx().data_mut(|d| d.insert_temp(id, (start, now)));
+        }
+        response
+            .dnd_release_payload::<FileDrag>()
+            .map(|drag| Action::Move {
+                path: drag.path.clone(),
+                folder: folder.into(),
+            })
     }
 
     fn rename_folder(&mut self, path: &str) {
@@ -261,6 +361,19 @@ impl JournalTab {
             } else if !folder && !in_trash {
                 if tree_item(ui, path, "open", "Open Note", false) {
                     action = Some(Action::Open(path.into()));
+                }
+                if !amigo_core::journal::is_pdf(path)
+                    && tree_item(ui, path, "convert-pdf", "Convert to PDF", false)
+                {
+                    action = Some(Action::ConvertToPdf(path.into()));
+                }
+                if tree_item(ui, path, "move", "Move to Folder…", false) {
+                    self.move_dialog = Some(dialogs::MoveDialog::new(path));
+                }
+                if !amigo_core::journal::is_pdf(path)
+                    && tree_item(ui, path, "export", "Export Document", false)
+                {
+                    action = Some(Action::Export(path.into()));
                 }
                 ui.separator();
             }

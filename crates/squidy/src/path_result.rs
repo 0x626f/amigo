@@ -115,11 +115,13 @@ fn route(ui: &mut egui::Ui, path: &GraphPath, board: &Board, width: f32) {
                         .show(ui, |ui| {
                             ui.add_sized(
                                 [card_width - 20., 22.],
-                                egui::Label::new(RichText::new(name).size(14.).strong())
-                                    .truncate()
-                                    .show_tooltip_when_elided(false)
-                                    .selectable(false)
-                                    .halign(egui::Align::Min),
+                                amigo_ui::design::NameLabel::new(
+                                    RichText::new(name).size(14.).strong(),
+                                )
+                                .truncate()
+                                .show_tooltip_when_elided(false)
+                                .selectable(false)
+                                .halign(egui::Align::Min),
                             )
                         });
                     response.inner.on_hover_text(name);

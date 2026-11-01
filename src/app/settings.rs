@@ -94,10 +94,10 @@ impl Amigo {
     }
     fn activate_settings(&mut self, state: &mut AppSettings) {
         state.reveal_page = true;
-        if state.page == SettingsPage::Tasks {
-            if let Some(board) = self.library.boards.first() {
-                state.page = SettingsPage::Board(board.id.clone());
-            }
+        if state.page == SettingsPage::Tasks
+            && let Some(board) = self.library.boards.first()
+        {
+            state.page = SettingsPage::Board(board.id.clone());
         }
         let result = (|| -> Result<(), String> {
             match &state.page {
@@ -266,12 +266,11 @@ impl Amigo {
                                                             egui::Align::Center,
                                                         ));
                                                     }
-                                                    if response.clicked() {
-                                                        if page != SettingsPage::Tasks
-                                                            || !self.library.boards.is_empty()
-                                                        {
-                                                            next = Some(page.clone());
-                                                        }
+                                                    if response.clicked()
+                                                        && (page != SettingsPage::Tasks
+                                                            || !self.library.boards.is_empty())
+                                                    {
+                                                        next = Some(page.clone());
                                                     }
                                                 });
                                             });

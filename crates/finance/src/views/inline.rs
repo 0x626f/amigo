@@ -102,6 +102,9 @@ impl<'a> Cells<'a> {
         let mut child = self.ui.new_child(
             egui::UiBuilder::new()
                 .id_salt(("finance-cell-ui", self.row, field, self.index))
+                .ui_stack_info(
+                    egui::UiStackInfo::default().with_tag(design::NAME_SCROLL_SHIFT_ONLY),
+                )
                 .max_rect(rect)
                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
         );
@@ -515,7 +518,7 @@ fn comment(cells: &mut Cells<'_>, row: &str, value: &mut String) {
         };
         let response = ui.add_sized(
             [ui.available_width(), design::CONTROL_HEIGHT],
-            design::Button::new(caption).truncate(),
+            amigo_ui::design::NameButton::new(caption).truncate(),
         );
         egui::Popup::menu(&response)
             .id(popup_id)

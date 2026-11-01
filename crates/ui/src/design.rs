@@ -7,6 +7,9 @@ pub use crate::dialogs::{
     settings_heading, settings_row, settings_separator,
 };
 pub use crate::keyboard::{ActionKeys, ActionShortcut, contains_keyboard_focus};
+pub use crate::names::{
+    ComboBox, NAME_SCROLL_SHIFT_ONLY, NameButton, NameLabel, paint_canvas_name,
+};
 pub use crate::search::SearchField;
 pub use controls::{
     Button, button, checkbox, chip, context_menu, dropdown_button, icon_button, menu, menu_button,
@@ -357,6 +360,7 @@ pub enum Icon {
     Settings,
     Edit,
     Import,
+    Save,
     Export,
     Filter,
     Close,
@@ -619,6 +623,19 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, kind: Icon, color: Color3
             ]);
             line(&[(14., 6.), (18., 10.)]);
         }
+        Icon::Save => {
+            line(&[
+                (4., 3.),
+                (17., 3.),
+                (21., 7.),
+                (21., 21.),
+                (3., 21.),
+                (3., 3.),
+                (4., 3.),
+            ]);
+            box_at((7., 3.), (16., 10.), 0);
+            box_at((7., 14.), (17., 21.), 0);
+        }
         Icon::Import => {
             line(&[(4., 15.), (4., 20.), (20., 20.), (20., 15.)]);
             line(&[(12., 3.), (12., 15.)]);
@@ -737,6 +754,8 @@ pub fn nav_row(
 }
 #[derive(Default)]
 pub struct NavRowOptions {
+    /// Reserve row dragging for a caller-owned gesture; names still scroll with wheel/scrollbar.
+    pub draggable: bool,
     pub indent: f32,
     pub disclosure: Option<bool>,
     pub leading_disclosure: bool,
@@ -750,14 +769,17 @@ pub fn nav_row_with_options(
     options: NavRowOptions,
 ) -> egui::Response {
     let NavRowOptions {
+        draggable,
         indent,
         disclosure,
         leading_disclosure,
         count,
     } = options;
     let p = colors(ui);
-    let (rect, response) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), 38.0), egui::Sense::click());
+    let (rect, response) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), 38.0),
+        egui::Sense::click_and_drag(),
+    );
     let selected_t = animate_toggle(ui.ctx(), response.id.with("selected"), selected, 0.18);
     let hover_t = animate_toggle(
         ui.ctx(),
@@ -796,27 +818,37 @@ pub fn nav_row_with_options(
         color,
     );
     let text_color = p.nav_ink.lerp_to_gamma(p.ink, selected_t);
-    let galley = egui::WidgetText::from(RichText::new(label).size(14.0).color(text_color))
+    let text_rect = Rect::from_min_max(
+        egui::pos2(rect.left() + 43. + indent, rect.top()),
+        egui::pos2(
+            rect.right()
+                - if count.is_some() || (disclosure.is_some() && !leading_disclosure) {
+                    34.
+                } else {
+                    11.
+                },
+            rect.bottom(),
+        ),
+    );
+    let galley = egui::WidgetText::from(RichText::new(label).size(14.).color(text_color))
         .into_galley(
             ui,
-            Some(egui::TextWrapMode::Truncate),
-            (rect.width()
-                - indent
-                - if count.is_some() || (disclosure.is_some() && !leading_disclosure) {
-                    77.0
-                } else {
-                    54.0
-                })
-            .max(0.0),
+            Some(egui::TextWrapMode::Extend),
+            f32::INFINITY,
             egui::TextStyle::Body,
         );
-    ui.painter().galley(
-        egui::pos2(
-            rect.left() + 43.0 + indent,
-            rect.center().y - galley.size().y / 2.0,
-        ),
+    let paint_name = if draggable {
+        crate::names::paint_canvas_name
+    } else {
+        crate::names::paint
+    };
+    paint_name(
+        ui,
+        &response,
+        text_rect,
         galley,
         text_color,
+        egui::Align::Min,
     );
     if let Some(open) = disclosure {
         paint_icon(

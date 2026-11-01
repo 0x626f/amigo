@@ -10,6 +10,8 @@ pub(super) struct JournalIo {
     pub pending_setup: Option<design::DataAction>,
     reload_confirmation: bool,
     close_requested: bool,
+    external_navigation: Option<Action>,
+    external_saving: bool,
 }
 struct Job {
     receiver: mpsc::Receiver<Result<Outcome, String>>,
@@ -27,10 +29,16 @@ enum Outcome {
         renamed: Option<(String, String)>,
         folder_edit: bool,
     },
+    Moved {
+        entries: Vec<Entry>,
+        old: String,
+        new: String,
+    },
     Saved {
         path: String,
         text: String,
         fingerprint: String,
+        pdf_edits: Option<amigo_core::journal::pdf::Edits>,
     },
     Search {
         query: String,
@@ -46,6 +54,11 @@ enum Outcome {
 }
 impl Amigo {
     pub(super) fn journal_action(&mut self, action: Action, ctx: &egui::Context) {
+        if matches!(action, Action::CancelExternalSave) {
+            self.journal_io.external_navigation = None;
+            self.journal_io.external_saving = false;
+            return;
+        }
         if matches!(action, Action::Reload) && self.journal.dirty() {
             self.journal_io.reload_confirmation = true;
             return;
@@ -58,18 +71,17 @@ impl Amigo {
             .journal
             .editor
             .as_ref()
-            .filter(|e| e.dirty() && !e.conflict)
+            .filter(|e| e.dirty() && !e.conflict && e.document.external.is_none())
         else {
             return;
         };
-        let path = editor.document.path.clone();
-        let text = editor.document.text.clone();
-        let expected = editor.document.fingerprint.clone();
+        let document = editor.document.clone();
         self.journal_job(ctx, false, move |journal| {
-            let fingerprint = journal.save(&path, &text, &expected)?;
+            let fingerprint = journal.save_document(&document)?;
             Ok(Outcome::Saved {
-                path,
-                text,
+                path: document.path,
+                text: document.text,
+                pdf_edits: document.pdf.map(|pdf| pdf.edits),
                 fingerprint,
             })
         });
@@ -130,11 +142,13 @@ impl Amigo {
                 path,
                 text,
                 fingerprint,
+                pdf_edits,
             }) => {
                 if let Some(editor) = &mut self.journal.editor
                     && editor.document.path == path
                 {
                     editor.saved_text = text;
+                    editor.saved_pdf_edits = pdf_edits;
                     editor.document.fingerprint = fingerprint;
                     editor.conflict = false;
                 }
@@ -173,8 +187,36 @@ impl Amigo {
                     self.journal.close_note();
                 }
                 if let Some(document) = document {
+                    let saved = document.external.is_none();
                     self.journal.open(document);
+                    if saved && self.journal_io.external_saving {
+                        self.journal_io.external_saving = false;
+                        if let Some(action) = self.journal_io.external_navigation.take() {
+                            self.journal_io.pending.push_front(action);
+                        }
+                    }
                 }
+                self.journal.error.clear();
+            }
+            Ok(Outcome::Moved { entries, old, new }) => {
+                self.journal.renamed_folder(&old, &new);
+                if let Some(editor) = &mut self.journal.editor
+                    && editor.document.external.is_none()
+                    && editor.document.path == old
+                {
+                    if let Some(ctx) = ctx {
+                        let old_id = egui::Id::new(("journal-editor", &old));
+                        let new_id = egui::Id::new(("journal-editor", &new));
+                        if let Some(state) = egui::TextEdit::load_state(ctx, old_id) {
+                            state.store(ctx, new_id);
+                        }
+                    }
+                    editor.document.path = new.clone();
+                }
+                self.journal.update_entries(entries);
+                self.journal
+                    .expand_folder(new.rsplit_once('/').map_or("", |(p, _)| p));
+                self.journal.move_result(None);
                 self.journal.error.clear();
             }
             Ok(Outcome::Search { query, entries }) => self.journal.apply_search(&query, entries),
@@ -187,11 +229,13 @@ impl Amigo {
                     .choose_external_destination(source, folder, error);
             }
             Ok(Outcome::Cancelled) => (),
-            Ok(Outcome::Exported) => self.message = "Markdown note exported.".into(),
+            Ok(Outcome::Exported) => self.message = "Document exported.".into(),
             Err(error) => {
                 self.journal.folder_edit_result(Some(&error));
+                self.journal.move_result(Some(&error));
                 if let Some(editor) = &mut self.journal.editor
                     && editor.dirty()
+                    && editor.document.external.is_none()
                 {
                     editor.conflict = true;
                 }
@@ -226,6 +270,30 @@ impl Amigo {
         {
             self.journal_io.pending.push_back(Action::Refresh);
         }
+        let external_dirty = self
+            .journal
+            .editor
+            .as_ref()
+            .is_some_and(|e| e.document.external.is_some() && e.dirty());
+        if self.journal_io.external_navigation.is_some() && !self.journal_io.external_saving {
+            return;
+        }
+        if external_dirty
+            && self.journal_io.pending.front().is_some_and(|a| {
+                matches!(
+                    a,
+                    Action::Open(_)
+                        | Action::OpenExternal
+                        | Action::OpenExternalFile(_)
+                        | Action::NewNote(_)
+                        | Action::FollowLink { .. }
+                        | Action::ConvertToPdf(_)
+                )
+            })
+        {
+            self.journal_io.external_navigation = self.journal_io.pending.pop_front();
+            return;
+        }
         let searching = self
             .journal_io
             .pending
@@ -234,6 +302,7 @@ impl Amigo {
         if !searching
             && self.journal.editor.as_ref().is_some_and(|e| {
                 e.dirty()
+                    && e.document.external.is_none()
                     && !e.conflict
                     && (e.changed_at.elapsed() >= Duration::from_millis(700)
                         || !self.journal_io.pending.is_empty()
@@ -244,11 +313,22 @@ impl Amigo {
             return;
         }
         if self.journal.dirty()
-            && !self
-                .journal_io
-                .pending
-                .front()
-                .is_some_and(|a| matches!(a, Action::SaveCopy | Action::Reload | Action::Search(_)))
+            && !self.journal_io.pending.front().is_some_and(|a| {
+                matches!(a, Action::SaveCopy | Action::Reload | Action::Search(_))
+                    || external_dirty
+                        && matches!(
+                            a,
+                            Action::SaveToJournal
+                                | Action::StoreExternal { .. }
+                                | Action::Move { .. }
+                                | Action::NewFolder(_)
+                                | Action::Trash(_)
+                                | Action::Restore(_)
+                                | Action::DeletePermanently(_)
+                                | Action::Rename { .. }
+                                | Action::Refresh
+                        )
+            })
         {
             ctx.request_repaint_after(Duration::from_millis(700));
             return;
@@ -297,7 +377,14 @@ impl Amigo {
                 }
                 Action::Open(path) => document = Some(journal.read(&path)?),
                 Action::FollowLink { from, target } => {
-                    document = Some(journal.follow_link(&from, &target)?)
+                    document = Some(
+                        if let Some(source) = current.as_ref().and_then(|d| d.external.as_ref()) {
+                            let target = amigo_core::journal::external_link(source, &target)?;
+                            journal.open_file(&target)?
+                        } else {
+                            journal.follow_link(&from, &target)?
+                        },
+                    )
                 }
                 Action::NewNote(name) => {
                     document = Some(journal.create(
@@ -318,7 +405,7 @@ impl Amigo {
                 Action::Rename { old, name } => {
                     let new = journal.rename(&old, &name)?;
                     renamed = Some((old.clone(), new.clone()));
-                    if let Some(current) = current {
+                    if let Some(current) = current.filter(|d| d.external.is_none()) {
                         if current.path == old {
                             document = Some(journal.read(&new)?);
                         } else if let Some(suffix) = current.path.strip_prefix(&format!("{old}/")) {
@@ -328,12 +415,14 @@ impl Amigo {
                 }
                 Action::Trash(path) => {
                     journal.trash(&path)?;
-                    clear = current
-                        .is_some_and(|d| d.path == path || d.path.starts_with(&format!("{path}/")));
+                    clear = current.is_some_and(|d| {
+                        d.external.is_none()
+                            && (d.path == path || d.path.starts_with(&format!("{path}/")))
+                    });
                 }
                 Action::Restore(path) => {
                     let new = journal.restore(&path)?;
-                    if let Some(current) = current {
+                    if let Some(current) = current.filter(|d| d.external.is_none()) {
                         if current.path == path {
                             document = Some(journal.read(&new)?);
                         } else if let Some(suffix) = current.path.strip_prefix(&format!("{path}/"))
@@ -345,27 +434,51 @@ impl Amigo {
                 }
                 Action::DeletePermanently(path) => {
                     journal.delete_permanently(&path)?;
-                    clear = current
-                        .is_some_and(|d| d.path == path || d.path.starts_with(&format!("{path}/")));
+                    clear = current.is_some_and(|d| {
+                        d.external.is_none()
+                            && (d.path == path || d.path.starts_with(&format!("{path}/")))
+                    });
                 }
                 Action::OpenExternal => {
-                    return Ok(
-                        match rfd::FileDialog::new()
-                            .set_title("Open External Markdown File")
-                            .add_filter("Markdown", &["md"])
-                            .pick_file()
-                        {
-                            Some(source) => Outcome::ExternalDestination {
-                                source,
-                                folder: String::new(),
-                                error: String::new(),
-                            },
-                            None => Outcome::Cancelled,
-                        },
-                    );
+                    if let Some(source) = rfd::FileDialog::new()
+                        .set_title("Open Markdown or PDF File")
+                        .add_filter("Journal documents", &["md", "pdf"])
+                        .add_filter("Markdown", &["md"])
+                        .add_filter("PDF", &["pdf"])
+                        .pick_file()
+                    {
+                        document = Some(journal.open_file(&source)?);
+                    }
+                }
+                Action::OpenExternalFile(source) => document = Some(journal.open_file(&source)?),
+                Action::SaveToJournal => {
+                    let Some(source) = current.and_then(|d| d.external) else {
+                        return Ok(Outcome::Cancelled);
+                    };
+                    return Ok(Outcome::ExternalDestination {
+                        source,
+                        folder: String::new(),
+                        error: String::new(),
+                    });
+                }
+                Action::CancelExternalSave => return Ok(Outcome::Cancelled),
+                Action::Move { path, folder } => {
+                    let new = journal.move_file(&path, &folder)?;
+                    return Ok(Outcome::Moved {
+                        entries: journal.entries()?,
+                        old: path,
+                        new,
+                    });
                 }
                 Action::StoreExternal { source, folder } => {
-                    match journal.import(std::slice::from_ref(&source), &folder) {
+                    let result = if let Some(draft) =
+                        current.filter(|d| d.external.as_ref() == Some(&source))
+                    {
+                        journal.store_document(&draft, &folder).map(|d| vec![d])
+                    } else {
+                        journal.import(std::slice::from_ref(&source), &folder)
+                    };
+                    match result {
                         Ok(documents) => document = documents.into_iter().next(),
                         Err(error) => {
                             return Ok(Outcome::ExternalDestination {
@@ -376,9 +489,12 @@ impl Amigo {
                         }
                     }
                 }
+                Action::ConvertToPdf(path) => {
+                    document = Some(journal.convert_to_pdf(&path)?);
+                }
                 Action::Export(path) => {
                     if let Some(mut destination) = rfd::FileDialog::new()
-                        .set_title("Export Markdown Note")
+                        .set_title("Export Document")
                         .set_file_name(
                             std::path::Path::new(&path)
                                 .file_name()
@@ -388,7 +504,11 @@ impl Amigo {
                         .save_file()
                     {
                         if destination.extension().is_none() {
-                            destination.set_extension("md");
+                            destination.set_extension(if amigo_core::journal::is_pdf(&path) {
+                                "pdf"
+                            } else {
+                                "md"
+                            });
                         }
                         journal.export(&path, &destination)?;
                         return Ok(Outcome::Exported);
@@ -402,26 +522,20 @@ impl Amigo {
                 }
                 Action::SaveCopy => {
                     if let Some(current) = current {
-                        let stem = std::path::Path::new(&current.path)
-                            .file_stem()
-                            .unwrap_or_default()
-                            .to_string_lossy();
-                        document = Some(journal.create(
-                            &format!(
-                                "{stem} (recovered {})",
-                                chrono::Local::now().format("%Y-%m-%d %H-%M-%S")
-                            ),
-                            &current.text,
-                        )?);
+                        document = Some(journal.save_copy(&current)?);
                     }
                 }
                 Action::Reload => {
                     if let Some(current) = current {
-                        document = Some(journal.read(&current.path)?);
+                        document = Some(if let Some(source) = current.external {
+                            Journal::read_external(&source)?
+                        } else {
+                            journal.read(&current.path)?
+                        });
                     }
                 }
                 Action::Refresh => {
-                    if let Some(current) = current {
+                    if let Some(current) = current.filter(|d| d.external.is_none()) {
                         document = Some(journal.read(&current.path)?);
                     }
                 }
@@ -445,6 +559,8 @@ impl Amigo {
         {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.journal_io.close_requested = true;
+            self.journal_io.external_navigation = None;
+            self.journal_io.external_saving = false;
             self.journal_io.pending.clear();
             self.squidy_io.pending.clear();
             self.squidy.changed_at = Instant::now() - Duration::from_secs(1);
@@ -471,6 +587,28 @@ impl Amigo {
         if let Some(action) = self.journal.dialogs(ctx) {
             self.journal_action(action, ctx);
         }
+        if self.journal_io.external_navigation.is_some() && !self.journal_io.external_saving {
+            let mut save = false;
+            let mut discard = false;
+            let mut cancel = false;
+            let modal=design::modal(ctx,egui::Id::new("journal-external-unsaved")).show(ctx,|ui|{
+                ui.set_width(design::dialog_width(ctx,540.));
+                cancel=design::dialog_heading(ui,"Unsaved External File").clicked();
+                ui.label("Save your edits to Journal before opening another document? The original file has not been changed.");
+                design::dialog_footer(ui,|ui|{discard=design::dialog_destructive(ui,"Discard Edits and Continue").clicked();save=design::dialog_primary(ui,"Save to Journal…").clicked();cancel|=design::button(ui,"Cancel").clicked();});
+            });
+            if cancel || design::dialog_should_close(&modal) {
+                self.journal_io.external_navigation = None;
+            } else if save {
+                self.journal_io.external_saving = true;
+                self.journal_io.pending.push_front(Action::SaveToJournal);
+            } else if discard {
+                self.journal.close_note();
+                if let Some(action) = self.journal_io.external_navigation.take() {
+                    self.journal_io.pending.push_front(action);
+                }
+            }
+        }
         if self.journal_io.close_requested {
             let mut cancel = false;
             let mut copy = false;
@@ -479,6 +617,7 @@ impl Amigo {
                 ui.set_width(design::dialog_width(ctx,760.));
                 cancel=design::dialog_heading(ui,"Unsaved Workspace Changes").clicked();
                 if self.journal.busy||self.squidy_busy(){ui.spinner();ui.label("Saving your changes before closing…");}
+                else if self.journal.editor.as_ref().is_some_and(|e|e.document.external.is_some()&&e.dirty()){ui.label("This file is open temporarily. Save your edits to Journal before closing, or return to the editor.");}
                 else{ui.colored_label(colors(ui).red,if self.squidy_dirty(){&self.squidy.error}else{&self.journal.error});ui.label("Your changes could not be saved. Return to the editor to preserve or resolve them.");}
                 design::dialog_footer(ui,|ui|{
                     if !self.journal.busy&&!self.squidy_busy(){discard=design::dialog_destructive(ui,"Discard Edits and Close").clicked();}
@@ -498,6 +637,9 @@ impl Amigo {
                 self.squidy.board = self.squidy_io.saved.clone();
                 if let Some(editor) = &mut self.journal.editor {
                     editor.document.text = editor.saved_text.clone();
+                    if let Some(pdf) = &mut editor.document.pdf {
+                        pdf.edits = editor.saved_pdf_edits.clone().unwrap_or_default();
+                    }
                 }
                 self.journal_io.close_requested = false;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -539,17 +681,13 @@ impl Amigo {
         let Some(editor) = self.journal.editor.as_mut().filter(|e| e.dirty()) else {
             return true;
         };
-        let result = Journal::open(&self.data_path).and_then(|journal| {
-            journal.save(
-                &editor.document.path,
-                &editor.document.text,
-                &editor.document.fingerprint,
-            )
-        });
+        let result = Journal::open(&self.data_path)
+            .and_then(|journal| journal.save_document(&editor.document));
         match result {
             Ok(fingerprint) => {
                 editor.document.fingerprint = fingerprint;
                 editor.saved_text = editor.document.text.clone();
+                editor.saved_pdf_edits = editor.document.pdf.as_ref().map(|pdf| pdf.edits.clone());
                 true
             }
             Err(error) => {
@@ -563,6 +701,426 @@ impl Amigo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn saving_an_external_draft_resumes_its_deferred_document_navigation() {
+        let (mut app, ctx) = crate::app::tests::harness();
+        let source = app.data_path.join("External.md");
+        std::fs::write(&source, "Original").unwrap();
+        app.journal_action(Action::OpenExternalFile(source.clone()), &ctx);
+        wait(&mut app, &ctx);
+        app.journal.editor.as_mut().unwrap().document.text = "Keep these edits".into();
+        app.journal_action(Action::NewNote("Next".into()), &ctx);
+        wait(&mut app, &ctx);
+        assert!(app.journal_io.external_navigation.is_some());
+        app.journal_io.external_saving = true;
+        app.journal_action(Action::SaveToJournal, &ctx);
+        wait(&mut app, &ctx);
+        app.journal_action(
+            Action::StoreExternal {
+                source: source.clone(),
+                folder: String::new(),
+            },
+            &ctx,
+        );
+        wait(&mut app, &ctx);
+        assert!(app.journal_io.external_navigation.is_none());
+        assert!(!app.journal_io.external_saving);
+        assert_eq!(
+            app.journal.editor.as_ref().unwrap().document.path,
+            "Next.md"
+        );
+        assert_eq!(
+            Journal::open(&app.data_path)
+                .unwrap()
+                .read("External.md")
+                .unwrap()
+                .text,
+            "Keep these edits"
+        );
+        assert_eq!(std::fs::read_to_string(source).unwrap(), "Original");
+        std::fs::remove_dir_all(app.data_path).unwrap();
+    }
+    #[test]
+    fn opening_external_files_keeps_them_temporary_until_save_to_journal() {
+        let (mut app, ctx) = crate::app::tests::harness();
+        let journal = Journal::open(&app.data_path).unwrap();
+        journal.create_folder("Work").unwrap();
+        journal
+            .create("External", "Existing notebook note")
+            .unwrap();
+        let source = app.data_path.join("External.md");
+        std::fs::write(&source, "External original").unwrap();
+        app.journal_action(Action::OpenExternalFile(source.clone()), &ctx);
+        wait(&mut app, &ctx);
+        assert!(
+            app.journal
+                .editor
+                .as_ref()
+                .unwrap()
+                .document
+                .external
+                .is_some()
+        );
+        assert_eq!(app.journal.entries.iter().filter(|e| !e.folder).count(), 1);
+        app.journal.editor.as_mut().unwrap().document.text = "Edited temporary note".into();
+        app.start_journal_save(&ctx);
+        assert!(app.journal_io.job.is_none());
+        assert_eq!(
+            journal.read("External.md").unwrap().text,
+            "Existing notebook note"
+        );
+        app.journal_action(Action::Refresh, &ctx);
+        wait(&mut app, &ctx);
+        assert_eq!(
+            app.journal.editor.as_ref().unwrap().document.text,
+            "Edited temporary note"
+        );
+        app.journal_action(Action::NewNote("Next".into()), &ctx);
+        wait(&mut app, &ctx);
+        assert!(app.journal_io.external_navigation.is_some());
+        assert!(journal.read("Next.md").is_err());
+        app.journal_action(Action::CancelExternalSave, &ctx);
+        assert!(app.journal_io.external_navigation.is_none());
+        assert!(app.journal.dirty());
+        app.journal_action(Action::SaveToJournal, &ctx);
+        wait(&mut app, &ctx);
+        assert!(
+            app.journal
+                .editor
+                .as_ref()
+                .unwrap()
+                .document
+                .external
+                .is_some()
+        );
+        app.journal_action(
+            Action::StoreExternal {
+                source: source.clone(),
+                folder: "Work".into(),
+            },
+            &ctx,
+        );
+        wait(&mut app, &ctx);
+        assert_eq!(
+            app.journal.editor.as_ref().unwrap().document.path,
+            "Work/External.md"
+        );
+        assert!(!app.journal.dirty());
+        assert!(
+            app.journal
+                .editor
+                .as_ref()
+                .unwrap()
+                .document
+                .external
+                .is_none()
+        );
+        assert_eq!(
+            journal.read("Work/External.md").unwrap().text,
+            "Edited temporary note"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&source).unwrap(),
+            "External original"
+        );
+        assert_eq!(
+            journal.read("External.md").unwrap().text,
+            "Existing notebook note"
+        );
+        std::fs::remove_dir_all(app.data_path).unwrap();
+    }
+    #[test]
+    fn moving_an_open_note_saves_edits_updates_its_path_and_preserves_the_editor() {
+        let (mut app, ctx) = crate::app::tests::harness();
+        let journal = Journal::open(&app.data_path).unwrap();
+        journal.create_folder("Work").unwrap();
+        let document = journal.create("Note", "Original").unwrap();
+        app.journal.open(document);
+        let editor = app.journal.editor.as_mut().unwrap();
+        editor.document.text = "Latest draft".into();
+        editor.changed_at = Instant::now() - Duration::from_secs(5);
+        let changed_at = editor.changed_at;
+        app.journal_action(
+            Action::Move {
+                path: "Note.md".into(),
+                folder: "Work".into(),
+            },
+            &ctx,
+        );
+        wait(&mut app, &ctx);
+        let editor = app.journal.editor.as_ref().unwrap();
+        assert_eq!(editor.document.path, "Work/Note.md");
+        assert_eq!(editor.document.text, "Latest draft");
+        assert_eq!(editor.changed_at, changed_at);
+        assert!(!editor.dirty());
+        assert!(app.journal.error.is_empty());
+        assert!(journal.read("Note.md").is_err());
+        assert_eq!(journal.read("Work/Note.md").unwrap().text, "Latest draft");
+        journal.create("Note", "Keep existing destination").unwrap();
+        app.journal_action(
+            Action::Move {
+                path: "Work/Note.md".into(),
+                folder: String::new(),
+            },
+            &ctx,
+        );
+        wait(&mut app, &ctx);
+        assert!(!app.journal.error.is_empty());
+        assert_eq!(
+            app.journal.editor.as_ref().unwrap().document.path,
+            "Work/Note.md"
+        );
+        assert_eq!(
+            journal.read("Note.md").unwrap().text,
+            "Keep existing destination"
+        );
+        std::fs::remove_dir_all(app.data_path).unwrap();
+    }
+    #[test]
+    #[ignore = "requires Poppler GLib, Cairo and Pango"]
+    fn external_pdf_forms_save_the_draft_only_when_explicitly_imported() {
+        use amigo_core::journal::pdf::{self, Value};
+        let (mut app, ctx) = crate::app::tests::harness();
+        let journal = Journal::open(&app.data_path).unwrap();
+        let source = app.data_path.join("External.pdf");
+        let original = include_bytes!("../../crates/core/tests/fixtures/journal-forms.pdf");
+        std::fs::write(&source, original).unwrap();
+        app.journal_action(Action::OpenExternalFile(source.clone()), &ctx);
+        wait(&mut app, &ctx);
+        let page = pdf::render(
+            app.journal
+                .editor
+                .as_ref()
+                .unwrap()
+                .document
+                .pdf
+                .as_ref()
+                .unwrap(),
+            0,
+            1.,
+        )
+        .unwrap();
+        let id = page
+            .fields
+            .iter()
+            .find(|f| f.name == "Your name")
+            .unwrap()
+            .id;
+        app.journal
+            .editor
+            .as_mut()
+            .unwrap()
+            .document
+            .pdf
+            .as_mut()
+            .unwrap()
+            .edits
+            .fields
+            .insert(id, Value::Text("Temporary form value".into()));
+        app.start_journal_save(&ctx);
+        assert!(app.journal_io.job.is_none());
+        assert!(journal.read("External.pdf").is_err());
+        app.journal_action(
+            Action::StoreExternal {
+                source: source.clone(),
+                folder: String::new(),
+            },
+            &ctx,
+        );
+        wait(&mut app, &ctx);
+        assert!(!app.journal.dirty());
+        assert!(
+            app.journal
+                .editor
+                .as_ref()
+                .unwrap()
+                .document
+                .external
+                .is_none()
+        );
+        assert_eq!(std::fs::read(&source).unwrap(), original);
+        let saved = journal.read("External.pdf").unwrap();
+        assert_eq!(
+            pdf::render(saved.pdf.as_ref().unwrap(), 0, 1.)
+                .unwrap()
+                .fields
+                .iter()
+                .find(|f| f.id == id)
+                .unwrap()
+                .value,
+            Value::Text("Temporary form value".into())
+        );
+        std::fs::remove_dir_all(app.data_path).unwrap();
+    }
+    #[test]
+    fn pdf_save_results_preserve_edits_made_while_worker_was_saving() {
+        use amigo_core::journal::pdf::{PdfDocument, Value};
+        let (mut app, ctx) = crate::app::tests::harness();
+        let mut pdf = PdfDocument::new(
+            include_bytes!("../../crates/core/tests/fixtures/journal-forms.pdf").to_vec(),
+        );
+        pdf.edits.fields.insert(10, Value::Text("First".into()));
+        let saved = pdf.edits.clone();
+        app.journal.open(Document {
+            external: None,
+            path: "Form.pdf".into(),
+            text: String::new(),
+            fingerprint: "original".into(),
+            pdf: Some(pdf),
+        });
+        app.journal
+            .editor
+            .as_mut()
+            .unwrap()
+            .document
+            .pdf
+            .as_mut()
+            .unwrap()
+            .edits
+            .fields
+            .insert(10, Value::Text("Second".into()));
+        app.journal_result(
+            Ok(Outcome::Saved {
+                path: "Form.pdf".into(),
+                text: String::new(),
+                fingerprint: "saved".into(),
+                pdf_edits: Some(saved),
+            }),
+            Some(&ctx),
+        );
+        assert!(app.journal.dirty());
+        assert_eq!(
+            app.journal
+                .editor
+                .as_ref()
+                .unwrap()
+                .document
+                .pdf
+                .as_ref()
+                .unwrap()
+                .edits
+                .fields[&10],
+            Value::Text("Second".into())
+        );
+        std::fs::remove_dir_all(app.data_path).unwrap();
+    }
+    #[test]
+    #[ignore = "requires Poppler GLib, Cairo and Pango"]
+    fn pdf_edits_autosave_before_navigation_conflicts_recover_and_markdown_converts() {
+        use amigo_core::journal::pdf::{self, Value};
+        let (mut app, ctx) = crate::app::tests::harness();
+        let journal = Journal::open(&app.data_path).unwrap();
+        let fixture = include_bytes!("../../crates/core/tests/fixtures/journal-forms.pdf");
+        std::fs::write(app.data_path.join("journal/Form.pdf"), fixture).unwrap();
+        app.journal_action(Action::Open("Form.pdf".into()), &ctx);
+        wait(&mut app, &ctx);
+        let page = pdf::render(
+            app.journal
+                .editor
+                .as_ref()
+                .unwrap()
+                .document
+                .pdf
+                .as_ref()
+                .unwrap(),
+            0,
+            1.,
+        )
+        .unwrap();
+        let field = page
+            .fields
+            .iter()
+            .find(|f| f.name == "Your name")
+            .unwrap()
+            .id;
+        app.journal
+            .editor
+            .as_mut()
+            .unwrap()
+            .document
+            .pdf
+            .as_mut()
+            .unwrap()
+            .edits
+            .fields
+            .insert(field, Value::Text("Saved form value".into()));
+        app.journal_action(Action::NewNote("Next".into()), &ctx);
+        wait(&mut app, &ctx);
+        let reopened = journal.read("Form.pdf").unwrap();
+        let page = pdf::render(reopened.pdf.as_ref().unwrap(), 0, 1.).unwrap();
+        assert_eq!(
+            page.fields.iter().find(|f| f.id == field).unwrap().value,
+            Value::Text("Saved form value".into())
+        );
+        app.journal_action(Action::Open("Form.pdf".into()), &ctx);
+        wait(&mut app, &ctx);
+        app.journal
+            .editor
+            .as_mut()
+            .unwrap()
+            .document
+            .pdf
+            .as_mut()
+            .unwrap()
+            .edits
+            .fields
+            .insert(field, Value::Text("Recovery value".into()));
+        std::fs::write(app.data_path.join("journal/Form.pdf"), fixture).unwrap();
+        app.start_journal_save(&ctx);
+        wait(&mut app, &ctx);
+        assert!(app.journal.editor.as_ref().unwrap().conflict);
+        app.journal_action(Action::SaveCopy, &ctx);
+        wait(&mut app, &ctx);
+        assert!(!app.journal.dirty());
+        assert!(
+            app.journal
+                .editor
+                .as_ref()
+                .unwrap()
+                .document
+                .path
+                .ends_with(".pdf")
+        );
+        assert_eq!(
+            journal
+                .read("Form.pdf")
+                .unwrap()
+                .pdf
+                .unwrap()
+                .bytes
+                .as_ref(),
+            fixture
+        );
+        let recovery = app
+            .journal
+            .editor
+            .as_ref()
+            .unwrap()
+            .document
+            .pdf
+            .as_ref()
+            .unwrap();
+        assert_eq!(
+            pdf::render(recovery, 0, 1.)
+                .unwrap()
+                .fields
+                .iter()
+                .find(|f| f.id == field)
+                .unwrap()
+                .value,
+            Value::Text("Recovery value".into())
+        );
+        app.journal_action(Action::ConvertToPdf("Next.md".into()), &ctx);
+        wait(&mut app, &ctx);
+        assert_eq!(
+            app.journal.editor.as_ref().unwrap().document.path,
+            "Next.pdf"
+        );
+        assert!(app.journal.editor.as_ref().unwrap().document.pdf.is_some());
+        assert!(journal.read("Next.md").unwrap().text.contains("Next"));
+        assert!(app.journal.error.is_empty(), "{}", app.journal.error);
+        std::fs::remove_dir_all(app.data_path).unwrap();
+    }
     #[test]
     fn media_picker_results_insert_portable_markdown_preserve_undo_and_ignore_closed_notes() {
         use amigo_core::{
@@ -1055,7 +1613,7 @@ mod tests {
         for _ in 0..4 {
             output = crate::app::tests::render_sized(&mut app, &ctx, vec![], size);
         }
-        assert!(crate::app::tests::text_rect_optional(&output, "Open External File").is_some());
+        assert!(crate::app::tests::text_rect_optional(&output, "Save To Journal").is_some());
         assert!(crate::app::tests::text_rect_optional(&output, "Journal Root").is_some());
         assert!(
             Journal::open(&app.data_path)

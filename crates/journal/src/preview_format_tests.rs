@@ -19,6 +19,8 @@ fn setup(
         },
     };
     app.tab.open(Document {
+        external: None,
+        pdf: None,
         path: "Note.md".into(),
         text: text.into(),
         fingerprint: "test".into(),
@@ -164,6 +166,8 @@ fn preview_default_can_be_overridden_per_note_and_applies_to_new_notes() {
     );
     assert_eq!(text(&app), "Changed");
     app.tab.open(Document {
+        external: None,
+        pdf: None,
         path: "Next.md".into(),
         text: "Next".into(),
         fingerprint: "test".into(),

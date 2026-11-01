@@ -20,6 +20,8 @@ fn start(
         },
     };
     app.tab.open(Document {
+        external: None,
+        pdf: None,
         path: "Note.md".into(),
         text: source.into(),
         fingerprint: "test".into(),

@@ -390,6 +390,8 @@ fn tree_menus_create_in_their_folder_and_header_buttons_stay_at_root() {
                 }
             }
             app.tab.open(Document {
+                external: None,
+                pdf: None,
                 path: "Work/Deep/Note.md".into(),
                 text: "Nested note".into(),
                 fingerprint: String::new(),
@@ -591,6 +593,8 @@ fn notebook_search_owns_focus_ignores_stale_results_and_opens_with_keyboard() {
         assert!(app.tab.search.is_none());
         assert_eq!(app.tab.entries, tree_entries());
         app.tab.open(Document {
+            external: None,
+            pdf: None,
             path: "Work/Note.md".into(),
             text: "Result".into(),
             fingerprint: String::new(),
@@ -658,14 +662,16 @@ fn external_file_destination_defaults_to_root_selects_folders_and_cancels() {
         &mut app,
         &ctx,
         size,
-        label(&output, "Save and Open").center(),
+        label(&output, "Save to Journal").center(),
     );
     assert!(matches!(&app.action, Some(Action::StoreExternal { folder, .. }) if folder == "Work"));
     app.tab
         .choose_external_destination(source, String::new(), String::new());
     settle_workspace(&mut app, &ctx, size);
     press(&mut app, &ctx, size, egui::Key::Escape);
-    assert!(app.tab.external_file.is_none() && app.action.is_none());
+    assert!(
+        app.tab.external_file.is_none() && matches!(app.action, Some(Action::CancelExternalSave))
+    );
     assert_eq!(
         app.tab.editor.as_ref().unwrap().document.text,
         "Keep this draft"
@@ -676,6 +682,8 @@ fn external_file_destination_defaults_to_root_selects_folders_and_cancels() {
 fn deleting_a_folder_cleans_expansion_and_closing_a_note_discards_inline_rename() {
     let mut tab = JournalTab::default();
     tab.open(Document {
+        external: None,
+        pdf: None,
         path: "Work/Deep/Note.md".into(),
         text: String::new(),
         fingerprint: String::new(),
@@ -741,6 +749,8 @@ fn trash_folder_is_protected_and_expands_readable_notes_with_action_menus() {
         );
         assert!(matches!(&app.action, Some(Action::Open(opened)) if opened == path));
         app.tab.open(Document {
+            external: None,
+            pdf: None,
             path: path.into(),
             text: "Deleted content".into(),
             fingerprint: String::new(),
@@ -1009,4 +1019,346 @@ fn compact_folder_editor_owns_focus_validates_and_recovers_failed_renames() {
             );
         }
     }
+}
+
+#[test]
+fn move_dialog_selects_a_folder_and_retains_the_choice_after_a_collision() {
+    let ctx = egui::Context::default();
+    design::install(&ctx);
+    let size = egui::vec2(980., 640.);
+    let mut app = notebook("Keep editor contents".into());
+    app.tab.entries = tree_entries();
+    app.tab.move_dialog = Some(dialogs::MoveDialog::new("Note.md"));
+    let output = settle_workspace(&mut app, &ctx, size);
+    assert!(label_optional(&output, "Move To Folder").is_some());
+    click_workspace(
+        &mut app,
+        &ctx,
+        size,
+        rect(&ctx, "journal-external-folder-open").center(),
+    );
+    settle_workspace(&mut app, &ctx, size);
+    click_workspace(
+        &mut app,
+        &ctx,
+        size,
+        rect(&ctx, ("journal-destination-folder", "Work")).center(),
+    );
+    let output = settle_workspace(&mut app, &ctx, size);
+    click_workspace(&mut app, &ctx, size, label(&output, "Move").center());
+    assert!(
+        matches!(&app.action,Some(Action::Move{path,folder})if path=="Note.md"&&folder=="Work")
+    );
+    app.tab
+        .move_result(Some("A document with this name already exists."));
+    let output = settle_workspace(&mut app, &ctx, size);
+    assert!(label_optional(&output, "A document with this name already exists.").is_some());
+    assert!(label_optional(&output, "Work").is_some());
+    press(&mut app, &ctx, size, egui::Key::Escape);
+    assert!(app.tab.move_dialog.is_none());
+    assert_eq!(
+        app.tab.editor.as_ref().unwrap().document.text,
+        "Keep editor contents"
+    );
+}
+
+fn start_file_drag(app: &mut Harness, ctx: &egui::Context, size: egui::Vec2, path: &str) {
+    settle_workspace(app, ctx, size);
+    let origin = rect(ctx, ("journal-entry", path)).center();
+    workspace_frame(app, ctx, vec![egui::Event::PointerMoved(origin)], size);
+    workspace_frame(
+        app,
+        ctx,
+        vec![egui::Event::PointerButton {
+            pos: origin,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        }],
+        size,
+    );
+    workspace_frame(
+        app,
+        ctx,
+        vec![egui::Event::PointerMoved(origin + egui::vec2(12., 0.))],
+        size,
+    );
+}
+fn release_file_drag(
+    app: &mut Harness,
+    ctx: &egui::Context,
+    size: egui::Vec2,
+    destination: egui::Pos2,
+) {
+    workspace_frame(app, ctx, vec![egui::Event::PointerMoved(destination)], size);
+    workspace_frame(
+        app,
+        ctx,
+        vec![egui::Event::PointerButton {
+            pos: destination,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        }],
+        size,
+    );
+}
+
+#[test]
+fn tree_drag_moves_markdown_and_pdf_to_folders_and_root_without_opening_or_changing_drafts() {
+    for source in ["Root.md", "Report.pdf", "Work/Note.md"] {
+        for destination in ["Work/Nested", "header", "blank"] {
+            let ctx = egui::Context::default();
+            design::install(&ctx);
+            let size = egui::vec2(980., 640.);
+            let mut app = notebook("Unsaved draft stays here".into());
+            app.tab.entries = tree_entries();
+            app.tab.entries.extend([
+                Entry {
+                    path: "Report.pdf".into(),
+                    folder: false,
+                },
+                Entry {
+                    path: "Work/Nested".into(),
+                    folder: true,
+                },
+            ]);
+            app.tab.expanded.insert("Work".into());
+            app.tab
+                .editor
+                .as_mut()
+                .unwrap()
+                .document
+                .text
+                .push_str(" edited");
+            start_file_drag(&mut app, &ctx, size, source);
+            assert!(egui::DragAndDrop::has_any_payload(&ctx));
+            assert!(app.action.is_none(), "drag must not open the source");
+            let pos = match destination {
+                "header" => rect(&ctx, "journal-root-drop").left_center() + egui::vec2(10., 0.),
+                "blank" => rect(&ctx, "journal-root-space").center(),
+                path => rect(&ctx, ("journal-entry", path)).center(),
+            };
+            release_file_drag(&mut app, &ctx, size, pos);
+            let folder = if destination == "Work/Nested" {
+                destination
+            } else {
+                ""
+            };
+            if source == "Work/Note.md" || !folder.is_empty() {
+                assert!(
+                    matches!(&app.action, Some(Action::Move { path, folder: target }) if path == source && target == folder),
+                    "{source} -> {destination}: {:?}",
+                    app.action
+                );
+            } else {
+                assert!(
+                    app.action.is_none(),
+                    "dropping in the current folder is a no-op"
+                );
+            }
+            assert_eq!(
+                app.tab.editor.as_ref().unwrap().document.text,
+                "Unsaved draft stays here edited"
+            );
+            assert!(!egui::DragAndDrop::has_any_payload(&ctx));
+        }
+    }
+}
+
+#[test]
+fn tree_drag_rejects_trash_busy_and_file_targets_and_escape_cancels() {
+    for scenario in [
+        "trash-source",
+        "trash-target",
+        "busy-start",
+        "busy-drop",
+        "same-folder",
+        "file-target",
+        "outside",
+        "escape",
+        "folder-source",
+    ] {
+        let ctx = egui::Context::default();
+        design::install(&ctx);
+        let size = egui::vec2(980., 640.);
+        let mut app = notebook("Keep this draft".into());
+        app.tab.entries = tree_entries();
+        app.tab.entries.extend([
+            Entry {
+                path: "Trash".into(),
+                folder: true,
+            },
+            Entry {
+                path: "Trash/Deleted.md".into(),
+                folder: false,
+            },
+        ]);
+        app.tab.expanded.extend(["Trash".into(), "Work".into()]);
+        app.tab.loading = scenario == "busy-start";
+        let source = match scenario {
+            "trash-source" => "Trash/Deleted.md",
+            "same-folder" => "Work/Note.md",
+            "folder-source" => "Work",
+            _ => "Root.md",
+        };
+        start_file_drag(&mut app, &ctx, size, source);
+        if matches!(scenario, "trash-source" | "busy-start" | "folder-source") {
+            assert!(!egui::DragAndDrop::has_any_payload(&ctx), "{scenario}");
+        }
+        if scenario == "escape" {
+            press(&mut app, &ctx, size, egui::Key::Escape);
+            assert!(!egui::DragAndDrop::has_any_payload(&ctx));
+        }
+        app.tab.loading |= scenario == "busy-drop";
+        let target = match scenario {
+            "trash-target" => rect(&ctx, ("journal-entry", "Trash")).center(),
+            "file-target" => rect(&ctx, ("journal-entry", "Work/Note.md")).center(),
+            "outside" => egui::pos2(800., 600.),
+            _ => rect(&ctx, ("journal-entry", "Work")).center(),
+        };
+        release_file_drag(&mut app, &ctx, size, target);
+        assert!(app.action.is_none(), "{scenario}: {:?}", app.action);
+        assert!(!egui::DragAndDrop::has_any_payload(&ctx));
+        assert_eq!(
+            app.tab.editor.as_ref().unwrap().document.text,
+            "Keep this draft"
+        );
+    }
+}
+
+#[test]
+fn tree_drag_of_long_name_reveals_closed_folder_then_allows_nested_drop() {
+    let ctx = egui::Context::default();
+    design::install(&ctx);
+    let size = egui::vec2(980., 640.);
+    let mut app = notebook("Keep draft".into());
+    let source = "A very long filename containing español and русский and many more words.md";
+    app.tab.entries = tree_entries();
+    app.tab.entries.extend([
+        Entry {
+            path: source.into(),
+            folder: false,
+        },
+        Entry {
+            path: "Work/Nested".into(),
+            folder: true,
+        },
+    ]);
+    start_file_drag(&mut app, &ctx, size, source);
+    assert!(egui::DragAndDrop::has_any_payload(&ctx));
+    let target = rect(&ctx, ("journal-entry", "Work")).center();
+    workspace_frame(
+        &mut app,
+        &ctx,
+        vec![egui::Event::PointerMoved(target)],
+        size,
+    );
+    for _ in 0..70 {
+        workspace_frame(&mut app, &ctx, vec![], size);
+        assert!(app.action.is_none());
+    }
+    assert!(app.tab.expanded.contains("Work"));
+    let nested = rect(&ctx, ("journal-entry", "Work/Nested")).center();
+    release_file_drag(&mut app, &ctx, size, nested);
+    assert!(
+        matches!(&app.action, Some(Action::Move { path, folder }) if path == source && folder == "Work/Nested")
+    );
+}
+
+#[test]
+fn inline_name_edit_keeps_caret_visible_when_arrowing_through_long_unicode_names() {
+    fn check(output: &egui::FullOutput, ctx: &egui::Context, name: &str) -> f32 {
+        fn find<'a>(shape: &'a egui::Shape, name: &str) -> Option<(egui::Pos2, &'a egui::Galley)> {
+            match shape {
+                egui::Shape::Text(t) if t.galley.text() == name => Some((t.pos, &t.galley)),
+                egui::Shape::Vec(v) => v.iter().find_map(|s| find(s, name)),
+                _ => None,
+            }
+        }
+        let cursor = egui::TextEdit::load_state(ctx, egui::Id::new("journal-title-edit"))
+            .unwrap()
+            .cursor
+            .char_range()
+            .unwrap()
+            .primary;
+        let (shape, (pos, galley)) = output
+            .shapes
+            .iter()
+            .find_map(|s| find(&s.shape, name).map(|g| (s, g)))
+            .unwrap();
+        let x = pos.x + galley.pos_from_cursor(cursor).min.x;
+        assert!(
+            x >= shape.clip_rect.left() - 1. && x <= shape.clip_rect.right() + 1.,
+            "caret {} at {x} is outside {:?}",
+            cursor.index.0,
+            shape.clip_rect
+        );
+
+        pos.x
+    }
+    let ctx = egui::Context::default();
+    design::install(&ctx);
+    let mut app = notebook("Body remains unchanged".into());
+    let mut name =
+        "Long document name with español Привет and many more letters at the end".to_owned();
+    app.tab.title_edit = Some(TitleEdit {
+        path: "Note.md".into(),
+        value: name.clone(),
+        focus: true,
+    });
+    let mut size = egui::vec2(680., 500.);
+    settle_workspace(&mut app, &ctx, size);
+    let output = workspace_frame(&mut app, &ctx, vec![], size);
+    let end_pos = check(&output, &ctx, &name);
+    for key in [egui::Key::ArrowLeft, egui::Key::ArrowRight] {
+        for step in 0..name.chars().count() {
+            if step == 10 {
+                size = egui::vec2(980., 640.);
+            }
+            if step == 30 {
+                size = egui::vec2(680., 500.);
+            }
+            let output = workspace_frame(
+                &mut app,
+                &ctx,
+                vec![egui::Event::Key {
+                    key,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                size,
+            );
+            check(&output, &ctx, &name);
+        }
+        if key == egui::Key::ArrowLeft {
+            let output = workspace_frame(&mut app, &ctx, vec![], size);
+            assert!(
+                check(&output, &ctx, &name) > end_pos,
+                "text must scroll back to its start"
+            );
+        }
+    }
+    name.push_str(" 🌍 more ");
+    let output = workspace_frame(
+        &mut app,
+        &ctx,
+        vec![egui::Event::Text(" 🌍 more ".into())],
+        size,
+    );
+    check(&output, &ctx, &name);
+    app.tab.title_edit.as_mut().unwrap().value = "Short".into();
+    let output = workspace_frame(&mut app, &ctx, vec![], size);
+    check(&output, &ctx, "Short");
+    let field = ctx
+        .read_response(egui::Id::new("journal-title-edit"))
+        .unwrap()
+        .rect;
+    assert!((label(&output, "Short").center().x - field.center().x).abs() < 1.);
+    assert_eq!(
+        app.tab.editor.as_ref().unwrap().document.text,
+        "Body remains unchanged"
+    );
 }

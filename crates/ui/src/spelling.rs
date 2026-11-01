@@ -111,10 +111,10 @@ fn merge_reports(reports: Vec<Vec<(String, Vec<String>)>>) -> Vec<(String, Vec<S
             let longest = reports.iter().map(|r| r[word].len()).max().unwrap_or(0);
             for rank in 0..longest {
                 for report in &reports {
-                    if let Some(suggestion) = report[word].get(rank) {
-                        if !suggestions.contains(suggestion) {
-                            suggestions.push(suggestion.clone());
-                        }
+                    if let Some(suggestion) = report[word].get(rank)
+                        && !suggestions.contains(suggestion)
+                    {
+                        suggestions.push(suggestion.clone());
                     }
                     if suggestions.len() == 6 {
                         return (word.clone(), suggestions);
@@ -182,10 +182,11 @@ fn parse(output: &str) -> Vec<(String, Vec<String>)> {
                 .and_then(|rest| rest.split_whitespace().next())
                 .map(|word| (word.to_owned(), Vec::new()))
         };
-        if let Some((word, suggestions)) = item {
-            if !word.is_empty() && !issues.iter().any(|(existing, _)| existing == &word) {
-                issues.push((word, suggestions));
-            }
+        if let Some((word, suggestions)) = item
+            && !word.is_empty()
+            && !issues.iter().any(|(existing, _)| existing == &word)
+        {
+            issues.push((word, suggestions));
         }
     }
     issues

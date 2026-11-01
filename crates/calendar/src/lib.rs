@@ -108,7 +108,7 @@ impl CalendarTab {
                         self.navigate(1);
                     }
                     ui.add(
-                        egui::Label::new(
+                        amigo_ui::design::NameLabel::new(
                             RichText::new(self.date.format("%B %Y").to_string())
                                 .size(23.)
                                 .strong(),
@@ -362,12 +362,25 @@ fn event_chip(ui: &mut egui::Ui, r: Rect, e: &CalendarEvent) -> egui::Response {
     );
     let galley = egui::WidgetText::from(RichText::new(label).size(13.).color(accent)).into_galley(
         ui,
-        Some(egui::TextWrapMode::Truncate),
-        (r.width() - 14.).max(1.),
+        Some(egui::TextWrapMode::Extend),
+        f32::INFINITY,
         egui::TextStyle::Body,
     );
     let y = ((r.height() - galley.size().y) / 2.).clamp(0., 8.);
-    painter.galley(r.left_top() + Vec2::new(7., y), galley, accent);
+    let old_clip = ui.clip_rect();
+    ui.set_clip_rect(old_clip.intersect(r));
+    design::paint_canvas_name(
+        ui,
+        &response,
+        Rect::from_min_size(
+            r.left_top() + Vec2::new(7., y),
+            Vec2::new((r.width() - 14.).max(1.), galley.size().y),
+        ),
+        galley,
+        accent,
+        egui::Align::Min,
+    );
+    ui.set_clip_rect(old_clip);
     response.on_hover_text(format!(
         "{}\n{}",
         e.title,

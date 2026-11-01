@@ -273,7 +273,7 @@ fn statuses(editor: &mut BoardEditor, ui: &mut egui::Ui) {
                         .desired_width(205.0)
                         .hint_text("Status Name"),
                 );
-                let color = egui::ComboBox::from_id_salt(("status-color", &status.id))
+                let color = amigo_ui::design::ComboBox::from_id_salt(("status-color", &status.id))
                     .width(82.0)
                     .selected_text(
                         RichText::new(status.color.name()).color(status_color(ui, status.color)),
@@ -461,7 +461,7 @@ fn removal_confirmation(editor: &mut BoardEditor, workspace: &Workspace, ui: &mu
                 ui,
                 &format!("Move {affected} tasks to another status when you save the board:"),
             );
-            egui::ComboBox::from_id_salt("replacement-status")
+            amigo_ui::design::ComboBox::from_id_salt("replacement-status")
                 .selected_text(
                     editor
                         .statuses

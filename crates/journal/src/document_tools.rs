@@ -232,10 +232,12 @@ pub(super) fn bar(editor: &mut Editor, prefs: &Preferences, ui: &mut egui::Ui) -
     ui.cursor().top() - top
 }
 
+type SpellingResult = Result<Vec<(String, Vec<String>)>, String>;
+
 struct Spelling {
     source: String,
-    receiver: std::sync::mpsc::Receiver<Result<Vec<(String, Vec<String>)>, String>>,
-    result: Option<Result<Vec<(String, Vec<String>)>, String>>,
+    receiver: std::sync::mpsc::Receiver<SpellingResult>,
+    result: Option<SpellingResult>,
 }
 impl Spelling {
     fn start(source: String, ctx: &egui::Context) -> Self {
@@ -305,8 +307,8 @@ fn spelling_ui(editor: &mut Editor, prefs: &Preferences, ui: &egui::Ui) {
                 }
             }
         });
-    if let Some((word, suggestion)) = replacement {
-        if let Some((start, _)) = editor
+    if let Some((word, suggestion)) = replacement
+        && let Some((start, _)) = editor
             .document
             .text
             .match_indices(&word)
@@ -314,15 +316,14 @@ fn spelling_ui(editor: &mut Editor, prefs: &Preferences, ui: &egui::Ui) {
                 !editor.document.text[..*start].ends_with(char::is_alphabetic)
                     && !editor.document.text[*start + word.len()..].starts_with(char::is_alphabetic)
             })
-        {
-            let before = (editor.document.text.clone(), editor.selection.clone());
-            let mut text = editor.document.text.clone();
-            text.replace_range(start..start + word.len(), &suggestion);
-            let end = text[..start + suggestion.len()].chars().count();
-            restore(editor, (text, end..end), ui, prefs);
-            record(editor, before);
-            spelling = Spelling::start(editor.document.text.clone(), ui.ctx());
-        }
+    {
+        let before = (editor.document.text.clone(), editor.selection.clone());
+        let mut text = editor.document.text.clone();
+        text.replace_range(start..start + word.len(), &suggestion);
+        let end = text[..start + suggestion.len()].chars().count();
+        restore(editor, (text, end..end), ui, prefs);
+        record(editor, before);
+        spelling = Spelling::start(editor.document.text.clone(), ui.ctx());
     }
     if open {
         editor.document_tools.spelling = Some(spelling);

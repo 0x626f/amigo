@@ -265,6 +265,17 @@ impl App for Preview {
                 });
             }
         }
+        if self.step == 8 && self.frames == 14 && std::env::args().any(|a| a == "--name-edit") {
+            for _ in 0..8 {
+                input.events.push(egui::Event::Key {
+                    key: egui::Key::ArrowLeft,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+        }
         if self.frames == 5 && self.step < 3 {
             let mode = [Mode::Split, Mode::Preview, Mode::Source][self.step];
             if let Some(response) = ctx.read_response(egui::Id::new(("journal-mode", mode))) {
@@ -302,6 +313,10 @@ impl App for Preview {
             egui::Popup::close_all(ui.ctx());
             self.app.close_settings();
             self.step += 1;
+            if self.step == 9 && std::env::args().any(|a| a == "--name-edit") {
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                return;
+            }
             if self.step == 17 && std::env::args().any(|a| a == "--folder-scenes") {
                 self.step = 26;
             }
@@ -424,7 +439,11 @@ fn main() -> eframe::Result {
     journal
         .create("Daily", "# Daily note\n\nA fresh page.\n")
         .unwrap();
-    let document = journal.create("Welcome", text).unwrap();
+    let document = journal.create(
+        if std::env::args().any(|a| a == "--name-edit") {
+            "A long document name with español Привет and many more words to navigate letter by letter"
+        } else { "Welcome" }, text,
+    ).unwrap();
     let code_document = journal.create("Code", "# Code and tables\n\nReadable code blocks keep their language and a copy action.\n\n```rust\npub fn greeting(name: &str) -> String {\n    let message = \"Hello from Amigo\";\n    format!(\"{message}, {name}!\")\n}\n```\n\n## Planning together\n\n| Feature | State | Notes |\n| --- | --- | --- |\n| **Editor** | Ready | Syntax, line numbers, selection toolbar |\n| **Preview** | Ready | Editable headings and formatted text |\n\n> Plain Markdown, kept in your own notebook.\n").unwrap();
     journal.create_folder("Discarded").unwrap();
     journal.create("Discarded/Old plan", "# Old plan\n\nThis note is in Trash. Restore the note or its folder, or remove it permanently.\n").unwrap();
@@ -464,7 +483,9 @@ fn main() -> eframe::Result {
             Ok(Box::new(Preview {
                 app,
                 output,
-                step: if std::env::args().any(|a| a == "--settings") {
+                step: if std::env::args().any(|a| a == "--name-edit") {
+                    8
+                } else if std::env::args().any(|a| a == "--settings") {
                     3
                 } else if std::env::args().any(|a| a == "--folder-scenes" || a == "--tree-menu") {
                     16

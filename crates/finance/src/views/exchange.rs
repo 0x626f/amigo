@@ -112,7 +112,7 @@ fn selector(
         egui::Layout::top_down(egui::Align::LEFT),
         |ui| {
             field_label(ui, title);
-            egui::ComboBox::from_id_salt(id)
+            amigo_ui::design::ComboBox::from_id_salt(id)
                 .width(width)
                 .selected_text(value.as_str())
                 .show_ui(ui, |ui| {

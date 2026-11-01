@@ -6,6 +6,7 @@ pub mod forms;
 mod keyboard;
 pub mod markdown;
 pub mod media;
+mod names;
 mod search;
 
 pub mod spelling;

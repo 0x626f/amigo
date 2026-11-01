@@ -18,3 +18,5 @@ rand.workspace = true
 zeroize.workspace = true
 percent-encoding.workspace = true
 pulldown-cmark.workspace = true
+libloading.workspace = true
+image.workspace = true

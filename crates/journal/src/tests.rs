@@ -63,6 +63,8 @@ fn context_formatting_and_undo_keep_unicode_selection_and_markdown() {
         },
     };
     app.tab.open(Document {
+        external: None,
+        pdf: None,
         path: "Note.md".into(),
         text: "Hello 🌍".into(),
         fingerprint: "test".into(),
@@ -150,6 +152,8 @@ fn exclusive_load_blocks_edits_but_autosave_does_not() {
         },
     };
     app.tab.open(Document {
+        external: None,
+        pdf: None,
         path: "Note.md".into(),
         text: "Original".into(),
         fingerprint: "test".into(),
@@ -217,6 +221,8 @@ fn notebook_keeps_title_and_icon_controls_and_double_click_renames() {
             prefs: Preferences::default(),
         };
         app.tab.open(Document {
+            external: None,
+            pdf: None,
             path: "Folder/Original.md".into(),
             text: "# Original\n\nBody".into(),
             fingerprint: "test".into(),
@@ -436,6 +442,8 @@ fn folder_disclosure_opens_and_closes_nested_notes() {
 fn notebook(text: String) -> Harness {
     let mut tab = JournalTab::default();
     tab.open(Document {
+        external: None,
+        pdf: None,
         path: "Note.md".into(),
         text,
         fingerprint: "test".into(),
@@ -883,7 +891,7 @@ fn every_mode_fits_both_window_sizes_and_cache_tracks_edits() {
             tab: JournalTab::default(),
             prefs: Preferences::default(),
         };
-        app.tab.open(Document{path:"Notebook.md".into(),text:"# Notebook\n\n**Bold** and _italic_.\n\n| A | B |\n| --- | --- |\n| one | two |\n\n- [ ] Task\n\n```rust\nlet n=1;\n```\n".into(),fingerprint:"test".into()});
+        app.tab.open(Document{ external:None,pdf:None,path:"Notebook.md".into(),text:"# Notebook\n\n**Bold** and _italic_.\n\n| A | B |\n| --- | --- |\n| one | two |\n\n- [ ] Task\n\n```rust\nlet n=1;\n```\n".into(),fingerprint:"test".into()});
         for mode in [Mode::Source, Mode::Split, Mode::Preview] {
             app.prefs.mode = mode;
             for _ in 0..4 {
@@ -979,6 +987,8 @@ fn preview_text_edits_keep_markdown_sync_and_undo_in_every_layout() {
                     },
                 };
                 app.tab.open(Document {
+                    external: None,
+                    pdf: None,
                     path: "Note.md".into(),
                     text: original.into(),
                     fingerprint: "test".into(),
@@ -1040,6 +1050,8 @@ fn preview_code_edits_preserve_fences_and_loading_blocks_input() {
         },
     };
     app.tab.open(Document {
+        external: None,
+        pdf: None,
         path: "Code.md".into(),
         text: original.into(),
         fingerprint: "test".into(),
@@ -1099,7 +1111,7 @@ fn preview_table_cells_tasks_and_separate_paragraphs_edit_independently() {
             ..Default::default()
         },
     };
-    app.tab.open(Document { path: "Note.md".into(), text: "First **paragraph**.\n\nSecond paragraph.\n\n- [ ] Task\n\n| A | B |\n| --- | --- |\n| one | two |\n".into(), fingerprint: "test".into() });
+    app.tab.open(Document { external:None, pdf: None, path: "Note.md".into(), text: "First **paragraph**.\n\nSecond paragraph.\n\n- [ ] Task\n\n| A | B |\n| --- | --- |\n| one | two |\n".into(), fingerprint: "test".into() });
     for _ in 0..4 {
         frame(&mut app, &ctx, vec![], size);
     }

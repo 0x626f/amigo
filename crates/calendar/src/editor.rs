@@ -292,7 +292,7 @@ fn schedule_fields(ed: &mut Editor, ui: &mut egui::Ui) {
     }
     if ed.event.account.is_empty() {
         field_label(ui, "Repeat");
-        egui::ComboBox::from_id_salt("event-repeat")
+        amigo_ui::design::ComboBox::from_id_salt("event-repeat")
             .selected_text(match ed.event.repeat {
                 Repeat::Never => "Does Not Repeat",
                 Repeat::Daily => "Daily",
@@ -344,7 +344,7 @@ fn notification_fields(ed: &mut Editor, ui: &mut egui::Ui) {
     if ed.reminder {
         ui.horizontal(|ui| {
             ui.add(egui::DragValue::new(&mut ed.amount).range(0..=525600));
-            egui::ComboBox::from_id_salt("reminder-unit")
+            amigo_ui::design::ComboBox::from_id_salt("reminder-unit")
                 .selected_text(match ed.unit {
                     60 => "Hours",
                     1440 => "Days",

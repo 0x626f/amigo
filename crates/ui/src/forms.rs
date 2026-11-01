@@ -16,7 +16,7 @@ pub fn text_field(ui: &mut egui::Ui, label: &str, value: &mut String) {
     ui.add_space(6.0);
 }
 pub fn choice(ui: &mut egui::Ui, salt: &str, value: &mut String, options: &[&str]) {
-    egui::ComboBox::from_id_salt(salt)
+    crate::design::ComboBox::from_id_salt(salt)
         .selected_text(value.as_str())
         .show_ui(ui, |ui| {
             for option in options {

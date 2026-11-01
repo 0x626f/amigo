@@ -230,11 +230,13 @@ struct Insertion {
     range: Range<usize>,
     text: String,
 }
+type WordCheckResult = Arc<Mutex<Option<Result<Vec<String>, String>>>>;
+
 #[derive(Clone)]
 struct WordCheck {
     word: String,
     revision: u64,
-    result: Arc<Mutex<Option<Result<Vec<String>, String>>>>,
+    result: WordCheckResult,
 }
 fn queue(ui: &mut Ui, output: &egui::text_edit::TextEditOutput, range: Range<usize>, text: String) {
     ui.ctx().data_mut(|d| {

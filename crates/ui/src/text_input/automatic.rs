@@ -349,18 +349,17 @@ pub(super) fn show(ui: &Ui, output: &TextEditOutput) {
         if output.response.has_focus()
             && !egui::Popup::is_any_open(ui.ctx())
             && now - field.changed_at >= DELAY
+            && let Some(caret) = caret
         {
-            if let Some(caret) = caret {
-                let after_space = caret == word.range.end + 1
-                    && text
-                        .chars()
-                        .nth(word.range.end)
-                        .is_some_and(char::is_whitespace);
-                if (word.range.start <= caret && caret <= word.range.end) || after_space {
-                    if let Some(last) = rects.last().filter(|r| r.intersects(clip)) {
-                        hint = Some((last.left_bottom(), word.text, suggestions));
-                    }
-                }
+            let after_space = caret == word.range.end + 1
+                && text
+                    .chars()
+                    .nth(word.range.end)
+                    .is_some_and(char::is_whitespace);
+            if ((word.range.start <= caret && caret <= word.range.end) || after_space)
+                && let Some(last) = rects.last().filter(|r| r.intersects(clip))
+            {
+                hint = Some((last.left_bottom(), word.text, suggestions));
             }
         }
     }
