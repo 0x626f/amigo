@@ -1185,12 +1185,16 @@ pub fn external_link(source: &Path, target: &str) -> Result<PathBuf> {
     } else {
         target.into()
     };
-    let parent = source.parent().ok_or("Missing external document folder.")?;
+    let parent = source
+        .parent()
+        .ok_or("Missing external document folder.")?
+        .canonicalize()
+        .map_err(|e| e.to_string())?;
     let path = parent
         .join(target)
         .canonicalize()
         .map_err(|e| e.to_string())?;
-    if !path.starts_with(parent) {
+    if !path.starts_with(&parent) {
         return Err("The linked document is outside this external folder.".into());
     }
     Ok(path)

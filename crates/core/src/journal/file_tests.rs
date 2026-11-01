@@ -105,8 +105,18 @@ fn external_document_links_stay_in_the_opened_directory() {
     fs::write(root.join("Outside.md"), "").unwrap();
     assert_eq!(
         external_link(&source, "Other#heading").unwrap(),
-        folder.join("Other.md")
+        folder.join("Other.md").canonicalize().unwrap()
     );
+    fs::create_dir(folder.join("nested")).unwrap();
+    assert_eq!(
+        external_link(&folder.join("nested/../Note.md"), "Other.md").unwrap(),
+        folder.join("Other.md").canonicalize().unwrap()
+    );
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(root.join("Outside.md"), folder.join("Escapes.md")).unwrap();
+        assert!(external_link(&source, "Escapes.md").is_err());
+    }
     for target in ["../Outside.md", "file:///etc/passwd", "/etc/passwd"] {
         assert!(external_link(&source, target).is_err());
     }
