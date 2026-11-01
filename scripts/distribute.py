@@ -287,7 +287,7 @@ def gui_libraries(binary):
 def package_appimage(work, root):
     args = ["linuxdeploy", "--appdir", str(root), "--executable", str(root / "usr/bin/amigo"),
             "--desktop-file", str(ROOT / "packaging/amigo.desktop"),
-            "--icon-file", str(ROOT / "packaging/amigo.svg"),
+            "--icon-file", str(ROOT / "packaging/amigo.png"),
             "--exclude-library", "libwayland-*.so*"]
     for library in gui_libraries(root / "usr/bin/amigo"):
         args.extend(("--library", library))

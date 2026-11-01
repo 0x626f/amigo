@@ -128,6 +128,18 @@ class ReleaseTests(unittest.TestCase):
         self.assertIn("Recommends: ffmpeg\n", control)
         self.assertIn("--root-owner-group", builder.call_args.args)
 
+    def test_appimage_provides_a_png_icon_to_the_output_plugin(self):
+        with (patch.object(dist, "gui_libraries", return_value=["/lib/libpoppler-glib.so.8"]),
+              patch.object(dist, "run") as builder):
+            dist.package_appimage(self.root / "work", self.root / "AppDir")
+        args = builder.call_args.args
+        self.assertEqual(args[args.index("--icon-file") + 1], str(self.root / "packaging/amigo.png"))
+        self.assertEqual(args[args.index("--exclude-library") + 1], "libwayland-*.so*")
+        self.assertIn("/lib/libpoppler-glib.so.8", args)
+        self.assertEqual(builder.call_args.kwargs["env"]["LDAI_OUTPUT"], str(dist.artifact("AppImage")))
+        png = Path(__file__).resolve().parents[1] / "packaging/amigo.png"
+        self.assertEqual(png.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
+
     def test_staged_amigo_contains_launchers_and_icons_without_personal_data(self):
         sources = [
             "target/release/amigo", "packaging/amigo.desktop", "packaging/amigo.svg", "packaging/amigo.png", "README.md",
