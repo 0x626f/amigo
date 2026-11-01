@@ -129,10 +129,16 @@ class ReleaseTests(unittest.TestCase):
         self.assertIn("--root-owner-group", builder.call_args.args)
 
     def test_appimage_provides_a_png_icon_to_the_output_plugin(self):
+        app = self.root / "AppDir"
+        staged_icon = app / "usr/share/icons/hicolor/256x256/apps/amigo.png"
+        staged_icon.parent.mkdir(parents=True)
+        png = Path(__file__).resolve().parents[1] / "packaging/amigo.png"
+        staged_icon.write_bytes(png.read_bytes())
         with (patch.object(dist, "gui_libraries", return_value=["/lib/libpoppler-glib.so.8"]),
               patch.object(dist, "run") as builder):
             dist.package_appimage(self.root / "work", self.root / "AppDir")
         args = builder.call_args.args
+        self.assertEqual((app / "amigo.png").read_bytes(), staged_icon.read_bytes())
         self.assertEqual(args[args.index("--icon-file") + 1], str(self.root / "packaging/amigo.png"))
         self.assertEqual(args[args.index("--exclude-library") + 1], "libwayland-*.so*")
         self.assertIn("/lib/libpoppler-glib.so.8", args)

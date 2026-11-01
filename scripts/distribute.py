@@ -285,6 +285,9 @@ def gui_libraries(binary):
 
 
 def package_appimage(work, root):
+    # linuxdeploy prefers the staged SVG when choosing its root icon. Recent
+    # appimagetool builds also require a raster icon at the AppDir root.
+    shutil.copyfile(root / "usr/share/icons/hicolor/256x256/apps/amigo.png", root / "amigo.png")
     args = ["linuxdeploy", "--appdir", str(root), "--executable", str(root / "usr/bin/amigo"),
             "--desktop-file", str(ROOT / "packaging/amigo.desktop"),
             "--icon-file", str(ROOT / "packaging/amigo.png"),
