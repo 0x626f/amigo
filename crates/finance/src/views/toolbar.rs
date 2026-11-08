@@ -39,7 +39,7 @@ impl FinanceUi<'_> {
             + ui.spacing().button_padding.x * 2.0;
         let title_width = (ui.available_width()
             - if self.state.view == FinanceView::Wallet {
-                112.0
+                240.0
             } else {
                 0.0
             }
@@ -101,6 +101,18 @@ impl FinanceUi<'_> {
                 self.vault_controls(ui);
                 if self.state.view == FinanceView::Wallet {
                     self.reporting_currency(ui);
+                    self.state.wallet_month =
+                        canonical_month(&self.state.wallet_month).unwrap_or_else(month);
+                    let period = month_text_input(
+                        ui,
+                        "wallet-calculation-period-picker",
+                        &mut self.state.wallet_month,
+                    );
+                    ui.interact(
+                        period.rect,
+                        egui::Id::new("wallet-calculation-period"),
+                        egui::Sense::hover(),
+                    );
                 }
                 if !matches!(self.state.view, FinanceView::Wallet | FinanceView::Rates) {
                     self.state.search_control.show(
@@ -124,21 +136,31 @@ impl FinanceUi<'_> {
             .collect();
         options.sort();
         options.dedup();
-        let response =
-            amigo_ui::design::ComboBox::from_id_salt("wallet-reporting-currency-selector")
-                .width(88.0)
-                .selected_text(&self.plan.meta.reporting_currency)
-                .show_ui(ui, |ui| {
-                    for currency in options {
-                        ui.selectable_value(
-                            &mut self.plan.meta.reporting_currency,
-                            currency.clone(),
-                            currency,
-                        );
-                    }
-                })
-                .response
-                .on_hover_text("Reporting Currency");
+        let response = ui
+            .push_id("wallet-reporting-currency-selector", |ui| {
+                ui.add(
+                    egui::Button::new(&self.plan.meta.reporting_currency)
+                        .frame(false)
+                        .min_size(egui::vec2(48.0, design::CONTROL_HEIGHT)),
+                )
+            })
+            .inner
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text("Reporting Currency");
+        design::menu(&response).show(|ui| {
+            for currency in options {
+                if ui
+                    .selectable_value(
+                        &mut self.plan.meta.reporting_currency,
+                        currency.clone(),
+                        currency,
+                    )
+                    .clicked()
+                {
+                    ui.close();
+                }
+            }
+        });
         ui.interact(
             response.rect,
             egui::Id::new("wallet-reporting-currency"),

@@ -63,8 +63,6 @@ pub(super) fn wallet(app: &mut FinanceUi<'_>, ui: &mut egui::Ui) {
         );
     }
     ui.add_space(20.0);
-    super::history::show(app, ui);
-    ui.add_space(20.0);
     ui.columns(2, |columns| {
         panel(&columns[0]).show(&mut columns[0], |ui| {
             ui.spacing_mut().interact_size.y = 18.0;
@@ -85,7 +83,7 @@ pub(super) fn wallet(app: &mut FinanceUi<'_>, ui: &mut egui::Ui) {
                 ui.vertical(|ui| {
                     ui.add_space(28.0);
                     for (label, amount, color) in
-                        [("Income", income, p.green), ("Spending", expense, p.accent)]
+                        [("Income", income, p.green), ("Expenses", expense, p.accent)]
                     {
                         ui.horizontal(|ui| {
                             design::dot(ui, color);
@@ -193,6 +191,10 @@ pub(super) fn wallet(app: &mut FinanceUi<'_>, ui: &mut egui::Ui) {
                 );
             });
     });
+    ui.add_space(20.0);
+    super::history::show(app, ui);
+    ui.add_space(20.0);
+    super::timeline::show(app, ui);
 }
 
 fn balance_ring(ui: &mut egui::Ui, income: f64, expense: f64) {

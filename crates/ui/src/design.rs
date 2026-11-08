@@ -42,6 +42,12 @@ pub struct Palette {
     pub stripe: Color32,
 }
 impl Palette {
+    pub fn payment_background(self, settled: bool, hovered: bool) -> Color32 {
+        let status = if settled { self.green } else { self.amber };
+        self.card
+            .lerp_to_gamma(status, if hovered { 0.23 } else { 0.16 })
+    }
+
     pub fn for_dark(dark: bool) -> Self {
         if dark {
             Self {
@@ -361,6 +367,7 @@ pub enum Icon {
     Edit,
     Import,
     Save,
+    Copy,
     Export,
     Filter,
     Close,
@@ -622,6 +629,10 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, kind: Icon, color: Color3
                 (4., 20.),
             ]);
             line(&[(14., 6.), (18., 10.)]);
+        }
+        Icon::Copy => {
+            line(&[(7., 7.), (7., 3.), (21., 3.), (21., 17.), (17., 17.)]);
+            box_at((3., 7.), (17., 21.), 2);
         }
         Icon::Save => {
             line(&[

@@ -1,7 +1,10 @@
 use super::*;
 
 const COLUMN_GAP: f32 = 6.0;
-const ROW_PITCH: f32 = design::CONTROL_HEIGHT + 10.0;
+const ROW_PADDING: f32 = 4.0;
+const ROW_GAP: f32 = 6.0;
+const ROW_HEIGHT: f32 = design::CONTROL_HEIGHT + ROW_PADDING * 2.0;
+const ROW_PITCH: f32 = ROW_HEIGHT + ROW_GAP;
 
 enum TableItem {
     Month(String),
@@ -30,7 +33,13 @@ fn table_items(rows: &[Record], group_months: bool) -> Vec<TableItem> {
     (0..rows.len()).map(TableItem::Record).collect()
 }
 
-fn month_header(ui: &mut egui::Ui, month: &str) {
+fn month_header(
+    app: &mut FinanceUi<'_>,
+    ui: &mut egui::Ui,
+    month: &str,
+    latest_income_month: Option<&str>,
+    expense_total: Option<&str>,
+) {
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), ROW_PITCH),
         egui::Sense::hover(),
@@ -48,6 +57,61 @@ fn month_header(ui: &mut egui::Ui, month: &str) {
         egui::FontId::proportional(15.0),
         p.ink,
     );
+    if let Some(total) = expense_total {
+        ui.painter().text(
+            egui::pos2(
+                rect.right().min(ui.clip_rect().right()) - 12.0,
+                rect.center().y,
+            ),
+            egui::Align2::RIGHT_CENTER,
+            total,
+            egui::FontId::proportional(15.0),
+            p.ink,
+        );
+    }
+    if let Some(source_month) = latest_income_month.filter(|key| {
+        chrono::NaiveDate::parse_from_str(&format!("{key}-01"), "%Y-%m-%d")
+            .is_ok_and(|date| date.format("%B %Y").to_string() == month)
+    }) {
+        let button_rect = egui::Rect::from_center_size(
+            egui::pos2(
+                rect.right().min(ui.clip_rect().right()) - 26.0,
+                rect.center().y,
+            ),
+            egui::vec2(28.0, 28.0),
+        );
+        let mut button_ui = ui.new_child(egui::UiBuilder::new().max_rect(button_rect));
+        if design::icon_button(
+            &mut button_ui,
+            egui::Id::new(("finance-income-month-copy", source_month)),
+            Icon::Copy,
+            "Copy Income Batch to Next Month",
+            28.0,
+        )
+        .clicked()
+        {
+            let copies: Vec<_> = app
+                .plan
+                .income
+                .iter()
+                .filter(|income| month_key(&income.date) == source_month)
+                .filter_map(|income| {
+                    let next = chrono::NaiveDate::parse_from_str(&income.date, "%Y-%m-%d")
+                        .ok()?
+                        .checked_add_months(chrono::Months::new(1))?;
+                    let mut copy = income.clone();
+                    copy.id = id();
+                    copy.audit = RecordAudit::new();
+                    copy.date = next.format("%Y-%m-%d").to_string();
+                    Some(copy)
+                })
+                .collect();
+            let count = copies.len();
+            app.plan.income.extend(copies);
+            app.plan.normalize();
+            app.state.message = format!("Copied {count} income records to next month.");
+        }
+    }
     ui.painter().hline(
         rect.x_range(),
         rect.bottom(),
@@ -186,10 +250,6 @@ impl<'a> Cells<'a> {
             .on_hover_text(&text)
         })
     }
-    fn hint(&mut self, text: &str) {
-        let color = colors(self.ui).muted;
-        self.colored_label(color, text);
-    }
     fn finish(self) {
         debug_assert_eq!(self.index, self.widths.len());
         let width = self.widths.iter().sum::<f32>()
@@ -203,6 +263,7 @@ fn column_minimums(columns: &[&str]) -> Vec<f32> {
     columns
         .iter()
         .map(|name| match *name {
+            "Date" if columns.contains(&"Allowance") => 230.0,
             "Date" | "From" => 140.0,
             "Month" => 100.0,
             "Currency" => 76.0,
@@ -274,6 +335,7 @@ fn text(ui: &mut Cells<'_>, row: &str, field: &str, value: &mut String) -> egui:
         let full = value.clone();
         ui.add(
             design::input(value)
+                .spellcheck_on_focus(true)
                 .id(egui::Id::new(("finance-cell", row, field)))
                 .desired_width(ui.available_width())
                 .horizontal_align(if reference_list {
@@ -367,6 +429,7 @@ fn menu_input(
     let menu_id = ui.make_persistent_id("options-menu");
     let full = value.clone();
     let output = design::input(value)
+        .spellcheck_on_focus(true)
         .id(egui::Id::new(("finance-cell", row, field)))
         .desired_width(ui.available_width())
         .horizontal_align(egui::Align::Center)
@@ -749,6 +812,9 @@ fn record_cells(
                 &r.due_date,
                 &r.audit,
             );
+            if !r.regular {
+                flag(ui, "paid", &mut r.paid);
+            }
             first
         }
         Record::RegularExpense(occurrence) => {
@@ -767,6 +833,49 @@ fn record_cells(
                 &expense.due_date,
                 &expense.audit,
             );
+            let selected_month = month_key(&occurrence.date);
+            let mut paid = expense.is_paid_in(&selected_month);
+            let was_paid = paid;
+            flag(ui, "paid", &mut paid);
+            if paid != was_paid {
+                if let Some(saved) = app
+                    .plan
+                    .expenses
+                    .iter_mut()
+                    .find(|saved| saved.id == expense.id)
+                {
+                    saved.set_paid_in(&selected_month, paid);
+                }
+                if let Some(draft) = app.state.drafts.get_mut(&expense.id)
+                    && let Record::Expense(record) = &mut draft.record
+                {
+                    record.set_paid_in(&selected_month, paid);
+                }
+            }
+            first
+        }
+        Record::BudgetExpense {
+            expense,
+            budget_label,
+            ..
+        } => {
+            let first = ui
+                .label(&expense.label)
+                .on_hover_text(format!("Budget: {budget_label}"));
+            ui.label(format_planning_date(&expense.date));
+            ui.label(money(expense.amount.value(), ""));
+            ui.label(&expense.currency);
+            ui.label(budget_label.as_str());
+            ui.label("—");
+            reported_cell(
+                ui,
+                app,
+                expense.amount.value(),
+                &expense.currency,
+                &expense.date,
+                &expense.audit,
+            );
+            ui.label(if expense.paid { "Yes" } else { "No" });
             first
         }
         Record::Saving(r) => {
@@ -811,19 +920,43 @@ fn record_cells(
             let first = text(ui, &key, "label", &mut r.label);
             amount(ui, &key, "allowance", &mut r.amount);
             currency(ui, &mut r.currency, &mut r.currency_id, app.plan);
+            let mut toggle = false;
             if let Some(spent) = app.plan.budget_spent(r) {
-                ui.label(money(spent, &r.currency));
-                ui.colored_label(
-                    if spent > r.amount.value() {
-                        colors(ui.ui).red
-                    } else {
-                        colors(ui.ui).green
-                    },
-                    money(r.amount.value() - spent, &r.currency),
-                );
+                toggle |= ui
+                    .label(money(spent, &r.currency))
+                    .interact(egui::Sense::click())
+                    .clicked();
+                toggle |= ui
+                    .colored_label(
+                        if spent > r.amount.value() {
+                            colors(ui.ui).red
+                        } else {
+                            colors(ui.ui).green
+                        },
+                        money(r.amount.value() - spent, &r.currency),
+                    )
+                    .interact(egui::Sense::click())
+                    .clicked();
             } else {
-                ui.hint("Pending FX");
-                ui.hint("—");
+                let muted = colors(ui.ui).muted;
+                toggle |= ui
+                    .colored_label(muted, "Pending FX")
+                    .interact(egui::Sense::click())
+                    .clicked();
+                toggle |= ui
+                    .colored_label(muted, "—")
+                    .interact(egui::Sense::click())
+                    .clicked();
+            }
+            toggle |= ui
+                .label(match r.date_range() {
+                    Some((min, max)) => format_planning_range(&min, &max),
+                    None => "—".into(),
+                })
+                .interact(egui::Sense::click())
+                .clicked();
+            if toggle && !app.state.expanded_budgets.remove(&key) {
+                app.state.expanded_budgets.insert(key.clone());
             }
             first
         }
@@ -923,6 +1056,49 @@ fn table_contents(
     }
     let grouped = matches!(app.state.view, FinanceView::Income | FinanceView::Expenses);
     let items = table_items(&visible, grouped);
+    let mut expense_totals = BTreeMap::<String, Option<f64>>::new();
+    if app.state.view == FinanceView::Expenses && !app.state.expense_group.is_regular() {
+        let mut month = String::new();
+        for item in &items {
+            match item {
+                TableItem::Month(label) => month = label.clone(),
+                TableItem::Record(index) => {
+                    let row = &visible[*index];
+                    let effective = app
+                        .state
+                        .drafts
+                        .get(row.id())
+                        .map_or(row, |draft| &draft.record);
+                    let total = expense_totals.entry(month.clone()).or_insert(Some(0.0));
+                    *total = total
+                        .zip(effective.reported_amount(app.plan))
+                        .map(|(sum, amount)| sum + amount);
+                }
+            }
+        }
+    }
+    let expense_totals: BTreeMap<_, _> = expense_totals
+        .into_iter()
+        .map(|(month, sum)| {
+            (
+                month,
+                sum.map_or_else(
+                    || "Total: Pending FX".into(),
+                    |sum| format!("Total: {}", money(sum, &app.plan.meta.reporting_currency)),
+                ),
+            )
+        })
+        .collect();
+    let latest_income_month = (app.state.view == FinanceView::Income)
+        .then(|| {
+            app.plan
+                .income
+                .iter()
+                .map(|income| month_key(&income.date))
+                .filter(|month| !month.is_empty())
+                .max()
+        })
+        .flatten();
     let columns: Vec<_> = columns.iter().copied().chain(std::iter::once("")).collect();
     let widths = column_widths(ui.available_width(), &columns);
     // Resize the whole header together, rather than mixing font sizes by column.
@@ -1050,7 +1226,13 @@ fn table_contents(
         scroll.show(ui, |ui| {
             for item in &items {
                 match item {
-                    TableItem::Month(month) => month_header(ui, month),
+                    TableItem::Month(month) => month_header(
+                        app,
+                        ui,
+                        month,
+                        latest_income_month.as_deref(),
+                        expense_totals.get(month).map(String::as_str),
+                    ),
                     TableItem::Record(index) => {
                         painted_row(app, ui, visible[*index].clone(), &widths, *index)
                     }
@@ -1091,7 +1273,13 @@ fn table_contents(
                 );
                 row_ui.spacing_mut().item_spacing.y = 0.0;
                 match &items[index] {
-                    TableItem::Month(month) => month_header(&mut row_ui, month),
+                    TableItem::Month(month) => month_header(
+                        app,
+                        &mut row_ui,
+                        month,
+                        latest_income_month.as_deref(),
+                        expense_totals.get(month).map(String::as_str),
+                    ),
                     TableItem::Record(row) => {
                         painted_row(app, &mut row_ui, visible[*row].clone(), &widths, *row)
                     }
@@ -1150,7 +1338,7 @@ fn painted_row(
 ) {
     let rect = egui::Rect::from_min_size(
         ui.next_widget_position(),
-        egui::vec2(ui.available_width(), ROW_PITCH),
+        egui::vec2(ui.available_width(), ROW_HEIGHT),
     );
     let p = colors(ui);
     let hovered = ui.rect_contains_pointer(rect);
@@ -1159,50 +1347,64 @@ fn painted_row(
         .drafts
         .get(record.id())
         .is_some_and(|draft| draft.dirty || draft.is_new);
-    let fill = if hovered {
+    let effective = app
+        .state
+        .drafts
+        .get(record.id())
+        .map_or(&record, |draft| &draft.record);
+    let settled = match effective {
+        Record::Income(income) => Some(income.received),
+        Record::Expense(expense) => Some(if app.state.month.is_empty() {
+            expense.is_paid_in(&month())
+        } else {
+            expense.is_paid_in(&app.state.month)
+        }),
+        Record::RegularExpense(occurrence) => {
+            Some(occurrence.expense.is_paid_in(&month_key(&occurrence.date)))
+        }
+        Record::BudgetExpense { expense, .. } => Some(expense.paid),
+        _ => None,
+    };
+    let fill = if let Some(settled) = settled {
+        p.payment_background(settled, hovered)
+    } else if hovered {
         p.hover
     } else if index % 2 == 1 {
         p.stripe
     } else {
         p.card
     };
-    ui.painter().rect_filled(rect, 0, fill);
+    ui.painter().rect_filled(rect, 8, fill);
     let original_fill = ui.visuals().panel_fill;
     ui.visuals_mut().panel_fill = fill;
-    ui.painter().hline(
-        rect.x_range(),
-        rect.bottom(),
-        egui::Stroke::new(0.5, p.line),
-    );
     if dirty {
         ui.painter().vline(
-            rect.left(),
-            rect.y_range(),
+            rect.left() + 3.0,
+            rect.top() + 8.0..=rect.bottom() - 8.0,
             egui::Stroke::new(2.0, p.accent),
         );
     }
-    ui.add_space(4.0);
+    ui.add_space(ROW_PADDING);
     row(app, ui, record, widths);
     ui.visuals_mut().panel_fill = original_fill;
-    ui.add_space(4.0);
+    ui.add_space(ROW_PADDING + ROW_GAP);
 }
 
 fn row(app: &mut FinanceUi<'_>, ui: &mut egui::Ui, record: Record, widths: &[f32]) {
     let key = record.id().to_owned();
-    if matches!(record, Record::RegularExpense(_)) {
-        let mut record = record;
-        let mut cells = Cells::new(ui, widths, &key);
-        record_cells(app, &mut cells, &mut record);
-        cells.cell("actions", |ui| {
-            ui.label(
-                RichText::new("Automatic")
-                    .size(11.0)
-                    .color(colors(ui).muted),
-            )
-            .on_hover_text("Included automatically. Edit this expense in Regular.");
-        });
-        cells.finish();
-        return;
+    if matches!(record, Record::Budget(_)) {
+        let rect = egui::Rect::from_min_size(
+            ui.next_widget_position(),
+            egui::vec2(ui.available_width(), design::CONTROL_HEIGHT),
+        );
+        let response = ui.interact(
+            rect,
+            egui::Id::new(("budget-row-toggle", &key)),
+            egui::Sense::click(),
+        );
+        if response.clicked() && !app.state.expanded_budgets.remove(&key) {
+            app.state.expanded_budgets.insert(key.clone());
+        }
     }
     let mut draft = app
         .state
@@ -1217,6 +1419,10 @@ fn row(app: &mut FinanceUi<'_>, ui: &mut egui::Ui, record: Record, widths: &[f32
     let mut add_budget_expense = false;
     let budget_row = matches!(&draft.record, Record::Budget(_));
     let expense = matches!(&draft.record, Record::Expense(_));
+    let linked_expense = matches!(
+        &draft.record,
+        Record::RegularExpense(_) | Record::BudgetExpense { .. }
+    );
     let regular_expense = matches!(&draft.record, Record::Expense(r) if r.regular);
     let mut cells = Cells::new(ui, widths, &key);
     cells.reference_list = is_reference_list(app);
@@ -1229,7 +1435,9 @@ fn row(app: &mut FinanceUi<'_>, ui: &mut egui::Ui, record: Record, widths: &[f32
         draft.error.clear();
     }
     cells.cell("actions", |ui| {
-        let slots = if budget_row {
+        let slots = if linked_expense {
+            2.0
+        } else if budget_row {
             5.0
         } else if expense {
             4.0
@@ -1297,27 +1505,41 @@ fn row(app: &mut FinanceUi<'_>, ui: &mut egui::Ui, record: Record, widths: &[f32
                 )
                 .clicked();
             }
-            ui.add_enabled_ui(draft.is_new || draft.dirty, |ui| {
-                if !draft.is_new && !draft.dirty {
-                    ui.set_opacity(0.0);
-                }
-                save = design::icon_button(
-                    ui,
-                    egui::Id::new(("finance-row-save", &key)),
-                    Icon::Check,
-                    "Save Row",
-                    size,
+            if linked_expense {
+                let from_budget = matches!(&draft.record, Record::BudgetExpense { .. });
+                ui.label(
+                    RichText::new(if from_budget { "Budget" } else { "Automatic" })
+                        .size(11.0)
+                        .color(colors(ui).muted),
                 )
-                .clicked();
-                cancel = design::icon_button(
-                    ui,
-                    egui::Id::new(("finance-row-cancel", &key)),
-                    Icon::Close,
-                    "Cancel Changes",
-                    size,
-                )
-                .clicked();
-            });
+                .on_hover_text(if from_budget {
+                    "Remove deletes this expense from its budget."
+                } else {
+                    "Remove skips only this month's occurrence."
+                });
+            } else {
+                ui.add_enabled_ui(draft.is_new || draft.dirty, |ui| {
+                    if !draft.is_new && !draft.dirty {
+                        ui.set_opacity(0.0);
+                    }
+                    save = design::icon_button(
+                        ui,
+                        egui::Id::new(("finance-row-save", &key)),
+                        Icon::Check,
+                        "Save Row",
+                        size,
+                    )
+                    .clicked();
+                    cancel = design::icon_button(
+                        ui,
+                        egui::Id::new(("finance-row-cancel", &key)),
+                        Icon::Close,
+                        "Cancel Changes",
+                        size,
+                    )
+                    .clicked();
+                });
+            }
             if !draft.is_new
                 && let Record::Expense(expense) = &draft.record
             {
@@ -1346,7 +1568,11 @@ fn row(app: &mut FinanceUi<'_>, ui: &mut egui::Ui, record: Record, widths: &[f32
                     ui,
                     egui::Id::new(("finance-row-delete", &key)),
                     Icon::Trash,
-                    if regular_expense {
+                    if matches!(&draft.record, Record::RegularExpense(_)) {
+                        "Remove Expense for This Month"
+                    } else if matches!(&draft.record, Record::BudgetExpense { .. }) {
+                        "Remove Budget Expense"
+                    } else if regular_expense {
                         "Remove Regular Expense From Next Month"
                     } else {
                         "Delete Record"
@@ -1453,6 +1679,30 @@ fn row(app: &mut FinanceUi<'_>, ui: &mut egui::Ui, record: Record, widths: &[f32
                 if delete && budget_row {
                     app.state.expanded_budgets.remove(&key);
                 }
+                if delete {
+                    match &draft.record {
+                        Record::BudgetExpense {
+                            budget_id, expense, ..
+                        } => {
+                            if let Some(source) = app.state.drafts.get_mut(budget_id)
+                                && let Record::Budget(budget) = &mut source.record
+                            {
+                                budget.expenses.retain(|item| item.id != expense.id);
+                            }
+                        }
+                        Record::RegularExpense(occurrence) => {
+                            if let Some(source) = app.state.drafts.get_mut(&occurrence.expense.id)
+                                && let Record::Expense(expense) = &mut source.record
+                            {
+                                let month = month_key(&occurrence.date);
+                                if !expense.skipped_months.contains(&month) {
+                                    expense.skipped_months.push(month);
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
                 if cancel_expense {
                     app.state.message = "Expense cancelled. This and future months are excluded; earlier months are preserved.".into();
                 }
@@ -1489,7 +1739,7 @@ fn budget_expenses(app: &mut FinanceUi<'_>, ui: &mut egui::Ui, budget: &mut Budg
                     "No expenses yet. Use the + button on the budget row to add one.",
                 );
             }
-            let columns = ["Label", "Amount", "Currency", "Comment", "Paid", ""];
+            let columns = ["Label", "Date", "Amount", "Currency", "Comment", "Paid", ""];
             let widths = column_widths(ui.available_width(), &columns);
             if !budget.expenses.is_empty() {
                 let header_id = format!("budget-header-{}", budget.id);
@@ -1499,10 +1749,32 @@ fn budget_expenses(app: &mut FinanceUi<'_>, ui: &mut egui::Ui, budget: &mut Budg
                 }
                 header.finish();
             }
+            if !budget.expenses.is_empty() {
+                ui.add_space(ROW_GAP);
+            }
             let mut remove = None;
             for expense in &mut budget.expenses {
+                let rect = egui::Rect::from_min_size(
+                    ui.next_widget_position(),
+                    egui::vec2(ui.available_width(), ROW_HEIGHT),
+                );
+                let fill =
+                    colors(ui).payment_background(expense.paid, ui.rect_contains_pointer(rect));
+                ui.painter().rect_filled(rect, 8, fill);
+                let original_fill = ui.visuals().panel_fill;
+                ui.visuals_mut().panel_fill = fill;
+                ui.add_space(ROW_PADDING);
                 let mut cells = Cells::new(ui, &widths, &expense.id);
                 text(&mut cells, &expense.id, "label", &mut expense.label);
+                cells
+                    .cell("date", |ui| {
+                        table_planning_date_input(
+                            ui,
+                            &format!("finance-{}-date", expense.id),
+                            &mut expense.date,
+                        )
+                    })
+                    .on_hover_text("Optional month (YYYY-MM) or exact date (YYYY-MM-DD)");
                 amount(&mut cells, &expense.id, "amount", &mut expense.amount);
                 currency(
                     &mut cells,
@@ -1529,7 +1801,8 @@ fn budget_expenses(app: &mut FinanceUi<'_>, ui: &mut egui::Ui, budget: &mut Budg
                     app.state.active_row = Some(budget.id.clone());
                 }
                 cells.finish();
-                ui.add_space(8.0);
+                ui.visuals_mut().panel_fill = original_fill;
+                ui.add_space(ROW_PADDING + ROW_GAP);
             }
             if let Some(id) = remove {
                 budget.expenses.retain(|e| e.id != id);
@@ -1596,6 +1869,9 @@ pub(super) fn validate(record: &Record, plan: &FinancePlan) -> Result<(), String
     let date = |s: &str| s.is_empty() || chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").is_ok();
     let mut amounts = vec![];
     match record {
+        Record::BudgetExpense { .. } => {
+            return Err("Edit budget expenses in Budgets.".into());
+        }
         Record::RegularExpense(_) => {
             return Err("Edit automatic expenses in the Regular group.".into());
         }
@@ -1663,6 +1939,15 @@ pub(super) fn validate(record: &Record, plan: &FinancePlan) -> Result<(), String
             for expense in &r.expenses {
                 if expense.label.trim().is_empty() || expense.currency.is_empty() {
                     return Err("Each budget expense needs a label and currency.".into());
+                }
+                if !expense.date.trim().is_empty()
+                    && !date(expense.date.trim())
+                    && canonical_month(&expense.date).is_none()
+                {
+                    return Err(
+                        "Enter an expense month (YYYY-MM), date (YYYY-MM-DD), or leave it blank."
+                            .into(),
+                    );
                 }
                 if expense.amount.value() < 0.0 {
                     return Err("Expense amount cannot be negative.".into());
@@ -1795,8 +2080,33 @@ pub(super) fn commit(plan: &mut FinancePlan, record: &Record, delete: bool) -> R
         }
     }
     match record {
-        Record::RegularExpense(_) => {
-            return Err("Edit automatic expenses in the Regular group.".into());
+        Record::BudgetExpense {
+            budget_id, expense, ..
+        } => {
+            if !delete {
+                return Err("Edit budget expenses in Budgets.".into());
+            }
+            if let Some(budget) = plan
+                .budgets
+                .iter_mut()
+                .find(|budget| budget.id == *budget_id)
+            {
+                budget.expenses.retain(|item| item.id != expense.id);
+            }
+        }
+        Record::RegularExpense(occurrence) => {
+            if !delete {
+                return Err("Edit automatic expenses in the Regular group.".into());
+            }
+            let month = month_key(&occurrence.date);
+            if let Some(expense) = plan
+                .expenses
+                .iter_mut()
+                .find(|expense| expense.id == occurrence.expense.id)
+                && !expense.skipped_months.contains(&month)
+            {
+                expense.skipped_months.push(month);
+            }
         }
         Record::Account(r) => {
             let mut account = r.clone();

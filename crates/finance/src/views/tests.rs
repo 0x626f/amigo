@@ -977,7 +977,7 @@ fn expense_columns_and_month_groups_show_each_regular_expense_once() {
         );
         assert!(
             ctx.read_response(egui::Id::new(("finance-row-delete", &occurrence)))
-                .is_none()
+                .is_some()
         );
         assert!(
             ctx.read_response(egui::Id::new(("finance-row-save", &occurrence)))
@@ -1264,9 +1264,9 @@ fn every_table_keeps_columns_aligned_and_actions_visible_during_window_resizing(
     for (record, count) in [
         (Record::Account(Account::default()), 2),
         (Record::Income(Income::new("EUR")), 13),
-        (Record::Expense(Expense::new("EUR")), 8),
+        (Record::Expense(Expense::new("EUR")), 9),
         (Record::Saving(Saving::default()), 9),
-        (Record::Budget(Budget::default()), 6),
+        (Record::Budget(Budget::default()), 7),
         (Record::Chain(Chain::default()), 2),
         (Record::Stored(2, StoredValue::default()), 2),
     ] {
@@ -2395,7 +2395,7 @@ fn budget_row_controls_expand_independently_and_keep_hidden_expense_edits() {
         }
         for key in ["budget-0", "budget-1"] {
             let actions = ctx
-                .read_response(egui::Id::new(("finance-table-cell", key, 5usize)))
+                .read_response(egui::Id::new(("finance-table-cell", key, 6usize)))
                 .unwrap()
                 .rect;
             for action in ["budget-expenses-toggle", "budget-expense-add"] {
@@ -2411,6 +2411,23 @@ fn budget_row_controls_expand_independently_and_keep_hidden_expense_edits() {
             }
         }
         assert!(app.tab.expanded_budgets.is_empty());
+        let spent = ctx
+            .read_response(egui::Id::new(("finance-table-cell", "budget-0", 3usize)))
+            .unwrap()
+            .rect;
+        click(&mut app, &ctx, size, spent.center());
+        let _ = frame(&mut app, &ctx, size, vec![]);
+        assert!(app.tab.expanded_budgets.contains("budget-0"));
+        click(&mut app, &ctx, size, spent.center());
+        let _ = frame(&mut app, &ctx, size, vec![]);
+        assert!(app.tab.expanded_budgets.is_empty());
+        let label = ctx
+            .read_response(egui::Id::new(("finance-cell", "budget-0", "label")))
+            .unwrap()
+            .rect;
+        click(&mut app, &ctx, size, label.center());
+        assert!(app.tab.expanded_budgets.is_empty());
+
         assert!(
             ctx.read_response(egui::Id::new(("finance-cell", "expense-0", "label")))
                 .is_none()
@@ -2507,6 +2524,13 @@ fn budgets_edit_nested_expenses_and_recalculate_with_saved_currency_rates() {
         let first = budget.expenses[0].id.clone();
         replace_cell(&mut app, &ctx, size, &first, "label", "Hotel");
         replace_cell(&mut app, &ctx, size, &first, "amount", "100");
+        replace_input(
+            &mut app,
+            &ctx,
+            size,
+            egui::Id::new((format!("finance-{first}-date"), "input")),
+            "2026-12-20",
+        );
         for _ in 0..3 {
             let _ = frame(&mut app, &ctx, size, vec![]);
         }
@@ -2517,15 +2541,36 @@ fn budgets_edit_nested_expenses_and_recalculate_with_saved_currency_rates() {
         let second = budget.expenses[1].id.clone();
         replace_cell(&mut app, &ctx, size, &second, "label", "Flight");
         replace_cell(&mut app, &ctx, size, &second, "amount", "110");
+        replace_input(
+            &mut app,
+            &ctx,
+            size,
+            egui::Id::new((format!("finance-{second}-date"), "input")),
+            "2026-01-03",
+        );
+        reveal_table_cell(&mut app, &ctx, size, &second, 3);
         let currency = ctx
-            .read_response(egui::Id::new(("finance-table-cell", &second, 2usize)))
+            .read_response(egui::Id::new(("finance-table-cell", &second, 3usize)))
             .unwrap()
             .rect;
         click(&mut app, &ctx, size, currency.center());
         click_text(&mut app, &ctx, size, "USD");
+        for _ in 0..3 {
+            let _ = frame(&mut app, &ctx, size, vec![]);
+        }
         row_action(&mut app, &ctx, size, &key, "finance-row-save");
-        assert!(app.tab.drafts.is_empty());
+        assert!(
+            app.tab.drafts.is_empty(),
+            "{:?}",
+            app.tab
+                .drafts
+                .values()
+                .map(|d| &d.error)
+                .collect::<Vec<_>>()
+        );
         assert_eq!(app.plan.budgets[0].expenses.len(), 2);
+        assert_eq!(app.plan.budgets[0].expenses[0].date, "2026-12-20");
+        assert_eq!(app.plan.budgets[0].expenses[1].date, "2026-01-03");
         assert!(
             app.plan.budgets[0]
                 .expenses
@@ -2534,11 +2579,15 @@ fn budgets_edit_nested_expenses_and_recalculate_with_saved_currency_rates() {
         );
         assert_eq!(app.plan.budget_spent(&app.plan.budgets[0]), Some(0.0));
         assert_eq!(app.plan.totals(&month(), false).1, 0.0);
+        reveal_table_cell(&mut app, &ctx, size, &key, 5);
+        let output = frame(&mut app, &ctx, size, vec![]);
+        assert!(text_rect(&output, "3 January / 20 December 2026").is_some());
+        reveal_table_cell(&mut app, &ctx, size, &first, 5);
         let output = frame(&mut app, &ctx, size, vec![]);
         assert!(text_rect(&output, "Paid").is_some());
         for (expense_id, expected) in [(&first, 100.0), (&second, 200.0)] {
             let paid = ctx
-                .read_response(egui::Id::new(("finance-table-cell", expense_id, 4usize)))
+                .read_response(egui::Id::new(("finance-table-cell", expense_id, 5usize)))
                 .unwrap()
                 .rect;
             click(&mut app, &ctx, size, paid.center());
@@ -2562,13 +2611,15 @@ fn budgets_edit_nested_expenses_and_recalculate_with_saved_currency_rates() {
         app.plan.fx_rates[0].rate = Amount::Number(9.9);
         app.plan.normalize();
         assert!((app.plan.budget_spent(&app.plan.budgets[0]).unwrap() - 200.0).abs() < 1e-9);
+        reveal_table_cell(&mut app, &ctx, size, &first, 2);
         replace_cell(&mut app, &ctx, size, &first, "amount", "200");
         keyboard(&mut app, &ctx, size, egui::Key::Enter);
         assert!((app.plan.budget_spent(&app.plan.budgets[0]).unwrap() - 300.0).abs() < 1e-9);
         let output = frame(&mut app, &ctx, size, vec![]);
         assert!(text_rect(&output, "700.00 EUR").is_some());
+        reveal_table_cell(&mut app, &ctx, size, &second, 5);
         let paid = ctx
-            .read_response(egui::Id::new(("finance-table-cell", &second, 4usize)))
+            .read_response(egui::Id::new(("finance-table-cell", &second, 5usize)))
             .unwrap()
             .rect;
         click(&mut app, &ctx, size, paid.center());
@@ -2578,8 +2629,9 @@ fn budgets_edit_nested_expenses_and_recalculate_with_saved_currency_rates() {
         for _ in 0..2 {
             let _ = frame(&mut app, &ctx, size, vec![]);
         }
+        reveal_table_cell(&mut app, &ctx, size, &second, 5);
         let paid = ctx
-            .read_response(egui::Id::new(("finance-table-cell", &second, 4usize)))
+            .read_response(egui::Id::new(("finance-table-cell", &second, 5usize)))
             .unwrap()
             .rect;
         click(&mut app, &ctx, size, paid.center());
@@ -2660,6 +2712,27 @@ fn wallet_history_range_extends_through_real_dropdown_and_preserves_filters() {
         app.plan.income.truncate(1);
         app.plan.income[0].date = "2020-01-01".into();
         for _ in 0..3 {
+            let _ = frame(&mut app, &ctx, size, vec![]);
+        }
+        let plot = ctx
+            .read_response(egui::Id::new("wallet-history-plot"))
+            .unwrap()
+            .rect;
+        let _ = frame(
+            &mut app,
+            &ctx,
+            size,
+            vec![
+                egui::Event::PointerMoved(egui::pos2(500.0, 180.0)),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    phase: egui::TouchPhase::Move,
+                    delta: egui::vec2(0.0, 350.0 - plot.top()),
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        for _ in 0..30 {
             let _ = frame(&mut app, &ctx, size, vec![]);
         }
         let output = frame(&mut app, &ctx, size, vec![]);
@@ -2887,5 +2960,469 @@ fn chain_editor_saves_a_name_without_an_rpc_url_and_keeps_token_links() {
                 .name,
             "Local network"
         );
+    }
+}
+
+#[test]
+fn budget_expense_date_accepts_month_day_or_blank() {
+    let plan = FinancePlan::empty();
+    let mut budget = Budget {
+        label: "Trip".into(),
+        currency: "EUR".into(),
+        expenses: vec![BudgetExpense {
+            label: "Hotel".into(),
+            currency: "EUR".into(),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    for (value, valid) in [
+        ("", true),
+        ("2026-02", true),
+        ("2026-02-15", true),
+        ("2026-13", false),
+        ("2026-02-30", false),
+    ] {
+        budget.expenses[0].date = value.into();
+        assert_eq!(
+            inline::validate(&Record::Budget(budget.clone()), &plan).is_ok(),
+            valid,
+            "{value}"
+        );
+    }
+}
+
+#[test]
+fn newest_income_month_header_copies_the_whole_batch_to_next_month() {
+    for (date, expected, width) in [
+        ("2026-01-31", "2026-02-28", 980.0),
+        ("2026-12-15", "2027-01-15", 1440.0),
+    ] {
+        let (mut app, ctx) = harness();
+        let size = egui::vec2(width, 900.0);
+        app.plan.income.clear();
+        for (key, amount) in [("first-income", 200.0), ("last-income", 100.0)] {
+            let mut income = Income::new("EUR");
+            income.id = key.into();
+            income.date = date.into();
+            income.source = "Salary".into();
+            income.gross_amount = Amount::Number(amount);
+            app.plan.income.push(income);
+        }
+        let mut previous = Income::new("EUR");
+        previous.id = "previous-month".into();
+        previous.date = "2025-11-10".into();
+        previous.source = "Earlier income".into();
+        app.plan.income.push(previous);
+        app.plan.normalize();
+        app.tab.view = FinanceView::Income;
+        app.tab.month.clear();
+        for _ in 0..3 {
+            let _ = frame(&mut app, &ctx, size, vec![]);
+        }
+        assert!(
+            ctx.read_response(egui::Id::new(("finance-income-copy", "first-income")))
+                .is_none()
+        );
+        assert!(
+            ctx.read_response(egui::Id::new(("finance-income-month-copy", "2025-11")))
+                .is_none()
+        );
+        let original = app.plan.income.clone();
+        let copy_button = ctx
+            .read_response(egui::Id::new((
+                "finance-income-month-copy",
+                month_key(date),
+            )))
+            .unwrap()
+            .rect;
+        let output = frame(&mut app, &ctx, size, vec![]);
+        let month_label = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
+            .unwrap()
+            .format("%B %Y")
+            .to_string();
+        let heading = text_rect(&output, &month_label).unwrap();
+        assert!((copy_button.center().y - heading.center().y).abs() < 2.0);
+        assert!(copy_button.right() < width);
+        click(&mut app, &ctx, size, copy_button.center());
+        assert_eq!(app.plan.income.len(), 5);
+        assert_eq!(&app.plan.income[..3], original.as_slice());
+        for (copy, source) in app.plan.income[3..].iter().zip(&original[..2]) {
+            assert_ne!(copy.id, source.id);
+            assert_eq!(copy.date, expected);
+            assert_eq!(copy.source, source.source);
+            assert_eq!(copy.gross_amount, source.gross_amount);
+            assert_eq!(copy.currency, source.currency);
+        }
+    }
+}
+
+#[test]
+fn monthly_expense_headers_total_manual_and_automatic_rows_and_follow_search() {
+    for width in [980.0, 1440.0] {
+        let (mut app, ctx) = harness();
+        let size = egui::vec2(width, 900.0);
+        app.plan.expenses.clear();
+        for (title, date, amount, regular) in [
+            ("Manual one", "2026-01-10", 10.0, false),
+            ("Manual two", "2026-01-20", 20.0, false),
+            ("Manual three", "2026-02-10", 40.0, false),
+            ("Subscription", "2026-01-01", 5.0, true),
+        ] {
+            let mut expense = Expense::new("EUR");
+            expense.title = title.into();
+            expense.due_date = date.into();
+            expense.amount = Amount::Number(amount);
+            expense.regular = regular;
+            app.plan.expenses.push(expense);
+        }
+        app.plan.normalize();
+        app.tab.view = FinanceView::Expenses;
+        for (month, heading, total) in [
+            ("2026-01", "January 2026", "Total: 35.00 EUR"),
+            ("2026-02", "February 2026", "Total: 45.00 EUR"),
+        ] {
+            app.tab.month = month.into();
+            let _ = frame(&mut app, &ctx, size, vec![]);
+            let output = frame(&mut app, &ctx, size, vec![]);
+            let caption = text_rect(&output, heading).unwrap();
+            let sum = text_rect(&output, total).expect("Monthly total must be visible");
+            assert!((caption.center().y - sum.center().y).abs() < 1.0);
+            assert!(sum.right() < width && sum.left() > caption.right());
+        }
+        app.tab.month = "2026-01".into();
+        app.tab.search = "Manual".into();
+        let _ = frame(&mut app, &ctx, size, vec![]);
+        let output = frame(&mut app, &ctx, size, vec![]);
+        assert!(text_rect(&output, "Total: 30.00 EUR").is_some());
+        app.tab.expense_group = crate::ExpenseGroup::Regular;
+        app.tab.search.clear();
+        let output = frame(&mut app, &ctx, size, vec![]);
+        assert!(text_rect(&output, "Total: 5.00 EUR").is_none());
+    }
+}
+
+#[test]
+fn monthly_expenses_include_budget_rows_only_in_their_planned_month() {
+    let (mut app, ctx) = harness();
+    let size = egui::vec2(1440.0, 900.0);
+    app.plan.expenses.clear();
+    app.plan.budgets.push(Budget {
+        id: "trip-budget".into(),
+        label: "Trip budget".into(),
+        currency: "EUR".into(),
+        expenses: [
+            ("Hotel", "2026-01-20", 10.0, false),
+            ("Flight", "2026-01", 20.0, true),
+            ("Train", "2026-02-10", 40.0, false),
+            ("Unscheduled", "", 80.0, false),
+            ("Next year", "2027-01-10", 160.0, false),
+        ]
+        .into_iter()
+        .map(|(label, date, amount, paid)| BudgetExpense {
+            id: label.into(),
+            label: label.into(),
+            date: date.into(),
+            amount: Amount::Number(amount),
+            currency: "EUR".into(),
+            paid,
+            ..Default::default()
+        })
+        .collect(),
+        ..Default::default()
+    });
+    app.plan.normalize();
+    let original = app.plan.clone();
+    app.tab.view = FinanceView::Expenses;
+    app.tab.month = "2026-01".into();
+    let _ = frame(&mut app, &ctx, size, vec![]);
+    let output = frame(&mut app, &ctx, size, vec![]);
+    for text in [
+        "Hotel",
+        "Flight",
+        "January 2026",
+        "20 January 2026",
+        "Total: 30.00 EUR",
+    ] {
+        assert!(text_rect(&output, text).is_some(), "Missing {text}");
+    }
+    for text in ["Train", "Unscheduled", "Next year"] {
+        assert!(text_rect(&output, text).is_none(), "Unexpected {text}");
+    }
+    assert!(
+        ctx.read_response(egui::Id::new((
+            "finance-row-save",
+            "budget-expense:trip-budget:Hotel"
+        )))
+        .is_none()
+    );
+    app.tab.month = "2026-02".into();
+    let _ = frame(&mut app, &ctx, size, vec![]);
+    let output = frame(&mut app, &ctx, size, vec![]);
+    assert!(text_rect(&output, "Train").is_some());
+    assert!(text_rect(&output, "Hotel").is_none());
+    assert!(text_rect(&output, "Total: 40.00 EUR").is_some());
+    app.tab.expense_group = crate::ExpenseGroup::Regular;
+    let output = frame(&mut app, &ctx, size, vec![]);
+    assert!(text_rect(&output, "Train").is_none());
+    app.tab.expense_group = crate::ExpenseGroup::Monthly;
+    app.tab.month = "2026-01".into();
+    app.tab.search = "Trip budget".into();
+    let _ = frame(&mut app, &ctx, size, vec![]);
+    let output = frame(&mut app, &ctx, size, vec![]);
+    assert!(text_rect(&output, "Hotel").is_some());
+    assert!(text_rect(&output, "Flight").is_some());
+    app.tab.selected_currencies.insert("USD".into());
+    let output = frame(&mut app, &ctx, size, vec![]);
+    assert!(text_rect(&output, "Hotel").is_none());
+    assert_eq!(app.plan, original);
+    assert!(app.tab.drafts.is_empty());
+}
+
+#[test]
+fn expense_payment_controls_save_manual_status_and_track_each_recurring_month() {
+    let (mut app, ctx) = harness();
+    let size = egui::vec2(1440.0, 900.0);
+    app.plan.expenses.clear();
+    for (id, regular) in [("manual", false), ("recurring", true)] {
+        let mut expense = Expense::new("EUR");
+        expense.id = id.into();
+        expense.title = id.into();
+        expense.due_date = "2026-01-15".into();
+        expense.amount = Amount::Number(10.0);
+        expense.regular = regular;
+        app.plan.expenses.push(expense);
+    }
+    app.plan.normalize();
+    app.tab.view = FinanceView::Expenses;
+    app.tab.month = "2026-01".into();
+    for _ in 0..3 {
+        let _ = frame(&mut app, &ctx, size, vec![]);
+    }
+    for key in ["manual", "regular-expense:recurring:2026-01"] {
+        reveal_table_cell(&mut app, &ctx, size, key, 7);
+        let paid = ctx
+            .read_response(egui::Id::new(("finance-table-cell", key, 7usize)))
+            .unwrap()
+            .rect;
+        click(&mut app, &ctx, size, paid.center());
+        let _ = frame(&mut app, &ctx, size, vec![]);
+        if key == "manual" {
+            row_action(&mut app, &ctx, size, key, "finance-row-save");
+        }
+    }
+    assert!(app.plan.expenses[0].paid);
+    assert!(app.plan.expenses[1].is_paid_in("2026-01"));
+    assert!(!app.plan.expenses[1].is_paid_in("2026-02"));
+    assert!(app.tab.drafts.is_empty());
+}
+
+#[test]
+fn wallet_orders_charts_and_draws_settled_solid_and_pending_dashed_timeline_items() {
+    let (mut app, ctx) = harness();
+    let size = egui::vec2(1440.0, 1800.0);
+    app.plan.income.clear();
+    app.plan.expenses.clear();
+    app.plan.budgets.clear();
+    for (key, received) in [("settled", true), ("pending", false)] {
+        let mut income = Income::new("EUR");
+        income.id = key.into();
+        income.source = key.into();
+        income.date = "2026-01-15".into();
+        income.gross_amount = Amount::Number(100.0);
+        income.received = received;
+        app.plan.income.push(income);
+    }
+    app.plan.normalize();
+    app.tab.wallet_month = "2026-01".into();
+    app.tab.view = FinanceView::Wallet;
+    for _ in 0..3 {
+        let _ = frame(&mut app, &ctx, size, vec![]);
+    }
+    let output = frame(&mut app, &ctx, size, vec![]);
+    let summary = text_rect(&output, "Net income").unwrap();
+    let monthly = text_rect(&output, "Monthly Income & Expenses").unwrap();
+    let history = text_rect(&output, "Income & Expenses Chart").unwrap();
+    let timeline = text_rect(&output, "Income & Expenses Timeline").unwrap();
+    assert!(
+        summary.top() < monthly.top()
+            && monthly.top() < history.top()
+            && history.top() < timeline.top()
+    );
+    fn count_lines(shape: &egui::Shape, y: f32) -> usize {
+        match shape {
+            egui::Shape::LineSegment { points, stroke }
+                if stroke.width == 3.0 && (points[0].y - y).abs() < 0.5 =>
+            {
+                1
+            }
+            egui::Shape::Vec(shapes) => shapes.iter().map(|shape| count_lines(shape, y)).sum(),
+            _ => 0,
+        }
+    }
+    for (key, solid) in [("income:settled", true), ("income:pending", false)] {
+        let row = ctx
+            .read_response(egui::Id::new(("wallet-timeline-item", key)))
+            .unwrap()
+            .rect;
+        assert!(row.bottom() < size.y && row.right() <= size.x - 28.0);
+        let lines: usize = output
+            .shapes
+            .iter()
+            .map(|shape| count_lines(&shape.shape, row.center().y))
+            .sum();
+        if solid {
+            assert_eq!(lines, 1);
+        } else {
+            assert!(lines > 1);
+        }
+    }
+}
+
+#[test]
+fn monthly_expense_remove_controls_confirm_and_preserve_other_recurring_months() {
+    for width in [980.0, 1440.0] {
+        let (mut app, ctx) = harness();
+        let size = egui::vec2(width, 900.0);
+        app.plan.expenses.clear();
+        app.plan.budgets.clear();
+        for (key, amount, regular) in [("manual", 10.0, false), ("regular", 20.0, true)] {
+            let mut expense = Expense::new("EUR");
+            expense.id = key.into();
+            expense.title = key.into();
+            expense.amount = Amount::Number(amount);
+            expense.due_date = "2026-01-15".into();
+            expense.regular = regular;
+            app.plan.expenses.push(expense);
+        }
+        app.plan.budgets.push(Budget {
+            id: "budget".into(),
+            label: "Trip".into(),
+            currency: "EUR".into(),
+            expenses: vec![BudgetExpense {
+                id: "hotel".into(),
+                label: "Hotel".into(),
+                date: "2026-01".into(),
+                amount: Amount::Number(30.0),
+                currency: "EUR".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        });
+        app.plan.normalize();
+        app.tab.view = FinanceView::Expenses;
+        app.tab.month = "2026-01".into();
+        for _ in 0..3 {
+            let _ = frame(&mut app, &ctx, size, vec![]);
+        }
+        let recurring = "regular-expense:regular:2026-01";
+        for key in ["manual", recurring, "budget-expense:budget:hotel"] {
+            let button = ctx
+                .read_response(egui::Id::new(("finance-row-delete", key)))
+                .unwrap()
+                .rect;
+            let cell = ctx
+                .read_response(egui::Id::new(("finance-table-cell", key, 8usize)))
+                .unwrap()
+                .rect;
+            assert!(cell.expand(0.5).contains_rect(button));
+        }
+        row_action(&mut app, &ctx, size, recurring, "finance-row-delete");
+        row_action(&mut app, &ctx, size, recurring, "finance-row-keep");
+        assert!(app.plan.expenses[1].skipped_months.is_empty());
+        row_action(&mut app, &ctx, size, recurring, "finance-row-delete");
+        row_action(
+            &mut app,
+            &ctx,
+            size,
+            recurring,
+            "finance-row-confirm-delete",
+        );
+        assert_eq!(app.plan.expenses[1].skipped_months, vec!["2026-01"]);
+        assert!(app.plan.expenses[1].occurrence_date("2026-01").is_none());
+        assert_eq!(
+            app.plan.expenses[1].occurrence_date("2026-02"),
+            Some("2026-02-15".into())
+        );
+        let output = frame(&mut app, &ctx, size, vec![]);
+        assert!(text_rect(&output, "Total: 40.00 EUR").is_some());
+        row_action(
+            &mut app,
+            &ctx,
+            size,
+            "budget-expense:budget:hotel",
+            "finance-row-delete",
+        );
+        row_action(
+            &mut app,
+            &ctx,
+            size,
+            "budget-expense:budget:hotel",
+            "finance-row-confirm-delete",
+        );
+        assert!(app.plan.budgets[0].expenses.is_empty());
+        let output = frame(&mut app, &ctx, size, vec![]);
+        assert!(text_rect(&output, "Total: 10.00 EUR").is_some());
+        row_action(&mut app, &ctx, size, "manual", "finance-row-delete");
+        row_action(&mut app, &ctx, size, "manual", "finance-row-confirm-delete");
+        assert_eq!(app.plan.expenses.len(), 1);
+        assert_eq!(app.plan.expenses[0].id, "regular");
+        assert!(app.tab.drafts.is_empty());
+    }
+}
+
+#[test]
+fn wallet_text_period_picker_precedes_currency_and_updates_month_and_year() {
+    for width in [980.0, 1440.0] {
+        let (mut app, ctx) = harness();
+        let size = egui::vec2(width, 900.0);
+        app.plan.income.clear();
+        app.plan.expenses.clear();
+        app.plan.budgets.clear();
+        for (date, amount) in [
+            ("2026-01-10", 100.0),
+            ("2026-02-10", 200.0),
+            ("2027-02-10", 300.0),
+        ] {
+            let mut income = Income::new("EUR");
+            income.date = date.into();
+            income.gross_amount = Amount::Number(amount);
+            app.plan.income.push(income);
+        }
+        app.plan.normalize();
+        app.tab.view = FinanceView::Wallet;
+        app.tab.wallet_month = "2026-01".into();
+        app.tab.month = "2020-05".into();
+        let original = app.plan.clone();
+        for _ in 0..3 {
+            let _ = frame(&mut app, &ctx, size, vec![]);
+        }
+        let month = ctx
+            .read_response(egui::Id::new("wallet-calculation-period"))
+            .unwrap()
+            .rect;
+        let currency = ctx
+            .read_response(egui::Id::new("wallet-reporting-currency"))
+            .unwrap()
+            .rect;
+        assert!(month.left() >= 252.0 && month.right() < currency.left());
+        assert!((month.center().y - currency.center().y).abs() < 1.0);
+        click(&mut app, &ctx, size, month.center());
+        click_text(&mut app, &ctx, size, "Feb");
+        assert_eq!(app.tab.wallet_month, "2026-02");
+        let output = frame(&mut app, &ctx, size, vec![]);
+        assert!(text_rect(&output, "200.00").is_some());
+        let year = ctx
+            .read_response(egui::Id::new("wallet-calculation-period"))
+            .unwrap()
+            .rect;
+        click(&mut app, &ctx, size, year.center());
+        click_text(&mut app, &ctx, size, "›");
+        click_text(&mut app, &ctx, size, "Feb");
+        assert_eq!(app.tab.wallet_month, "2027-02");
+        let output = frame(&mut app, &ctx, size, vec![]);
+        assert!(text_rect(&output, "300.00").is_some());
+        assert_eq!(app.tab.month, "2020-05");
+        assert_eq!(app.plan, original);
     }
 }
