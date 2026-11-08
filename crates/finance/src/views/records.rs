@@ -25,24 +25,6 @@ pub(super) fn income(app: &mut FinanceUi<'_>, ui: &mut egui::Ui) {
         })
         .cloned()
         .collect();
-    if !app.state.month.is_empty() && !rows.is_empty() {
-        if design::button(ui, "Copy this month's income to next month").clicked() {
-            let mut copies = rows.clone();
-            for row in &mut copies {
-                row.id = id();
-                row.audit = RecordAudit::new();
-                if let Ok(date) = chrono::NaiveDate::parse_from_str(&row.date, "%Y-%m-%d")
-                    && let Some(next) = date.checked_add_months(chrono::Months::new(1))
-                {
-                    row.date = next.format("%Y-%m-%d").to_string();
-                }
-            }
-            let count = copies.len();
-            app.plan.income.extend(copies);
-            app.state.message = format!("Copied {count} income records to next month.");
-        }
-        ui.add_space(10.0);
-    }
     if rows.is_empty()
         && !app
             .state
@@ -144,6 +126,32 @@ pub(super) fn expenses(app: &mut FinanceUi<'_>, ui: &mut egui::Ui) {
             }
         }
     }
+    if !regular {
+        for budget in &app.plan.budgets {
+            for expense in &budget.expenses {
+                let Some(month) = expense.planned_month() else {
+                    continue;
+                };
+                if (app.state.month.is_empty() || month == app.state.month)
+                    && currency_matches(app, &expense.currency)
+                    && matches(
+                        &app.state.search,
+                        &format!(
+                            "{} {} {} {}",
+                            expense.label, budget.label, expense.comment, expense.currency
+                        ),
+                    )
+                {
+                    rows.push(Record::BudgetExpense {
+                        budget_id: budget.id.clone(),
+                        id: format!("budget-expense:{}:{}", budget.id, expense.id),
+                        budget_label: budget.label.clone(),
+                        expense: expense.clone(),
+                    });
+                }
+            }
+        }
+    }
     if rows.is_empty()
         && !app
             .state
@@ -161,7 +169,7 @@ pub(super) fn expenses(app: &mut FinanceUi<'_>, ui: &mut egui::Ui) {
             },
         );
     }
-    let columns = [
+    let mut columns = vec![
         "Title",
         if regular { "From" } else { "Date" },
         "Amount",
@@ -170,6 +178,9 @@ pub(super) fn expenses(app: &mut FinanceUi<'_>, ui: &mut egui::Ui) {
         "Priority",
         "Reported",
     ];
+    if !regular {
+        columns.push("Paid");
+    }
     inline::table(app, ui, rows, &columns);
 }
 pub(super) fn savings(app: &mut FinanceUi<'_>, ui: &mut egui::Ui) {
@@ -262,6 +273,13 @@ pub(super) fn budgets(app: &mut FinanceUi<'_>, ui: &mut egui::Ui) {
         app,
         ui,
         rows.into_iter().map(Record::Budget).collect(),
-        &["Label", "Allowance", "Currency", "Spent", "Remaining"],
+        &[
+            "Label",
+            "Allowance",
+            "Currency",
+            "Spent",
+            "Remaining",
+            "Date",
+        ],
     );
 }

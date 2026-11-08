@@ -987,3 +987,127 @@ fn obsolete_finance_fields_are_discarded_after_savings_category_migration() {
     assert!(plan.savings_categories.is_empty());
     assert!(plan.savings[0].category.is_empty());
 }
+
+#[test]
+fn budget_dates_are_optional_persisted_and_reduced_chronologically() {
+    let mut budget: Budget = serde_json::from_value(json!({
+        "label": "Trip", "expenses": [{"label": "Legacy expense"}]
+    }))
+    .unwrap();
+    assert!(budget.expenses[0].date.is_empty());
+    assert_eq!(budget.date_range(), None);
+    for date in ["2026-12-20", "2026-01-03", "", "2026-08-10"] {
+        budget.expenses.push(BudgetExpense {
+            date: date.into(),
+            ..Default::default()
+        });
+    }
+    let (min, max) = budget.date_range().unwrap();
+    assert_eq!(min.to_string(), "2026-01-03");
+    assert_eq!(max.to_string(), "2026-12-20");
+    let saved = serde_json::to_value(&budget).unwrap();
+    assert_eq!(serde_json::from_value::<Budget>(saved).unwrap(), budget);
+    budget
+        .expenses
+        .retain(|expense| expense.date == "2026-08-10");
+    let (min, max) = budget.date_range().unwrap();
+    assert_eq!(min, max);
+    budget.expenses.clear();
+    assert_eq!(budget.date_range(), None);
+}
+
+#[test]
+fn budget_range_preserves_month_precision_and_covers_the_whole_month() {
+    let mut budget = Budget::default();
+    for value in ["2026-02-15", "2026-02", "2026-01-20", "2026-01"] {
+        budget.expenses.push(BudgetExpense {
+            date: value.into(),
+            ..Default::default()
+        });
+    }
+    assert_eq!(
+        budget.date_range(),
+        Some(("2026-01".into(), "2026-02".into()))
+    );
+    budget
+        .expenses
+        .retain(|expense| expense.date.starts_with("2026-02"));
+    assert_eq!(
+        budget.date_range(),
+        Some(("2026-02".into(), "2026-02".into()))
+    );
+    budget.expenses.push(BudgetExpense {
+        date: "2026-03-12".into(),
+        ..Default::default()
+    });
+    assert_eq!(
+        budget.date_range(),
+        Some(("2026-02".into(), "2026-03-12".into()))
+    );
+}
+
+#[test]
+fn budget_planned_months_include_recurring_expenses_in_future_budget_months() {
+    let mut plan = FinancePlan::empty();
+    let mut recurring = Expense::new("EUR");
+    recurring.regular = true;
+    recurring.due_date = "2026-01-10".into();
+    plan.expenses.push(recurring);
+    plan.budgets.push(Budget {
+        expenses: ["2026-03", "2026-04-15", "", "2026-13"]
+            .into_iter()
+            .map(|date| BudgetExpense {
+                date: date.into(),
+                ..Default::default()
+            })
+            .collect(),
+        ..Default::default()
+    });
+    assert_eq!(
+        plan.expense_months("2026-01"),
+        vec!["2026-01", "2026-02", "2026-03", "2026-04"]
+    );
+}
+
+#[test]
+fn expense_payment_status_roundtrips_and_recurring_months_are_independent() {
+    let mut expense: Expense = serde_json::from_value(json!({"title": "Legacy"})).unwrap();
+    assert!(!expense.is_paid_in("2026-01"));
+    expense.set_paid_in("2026-01", true);
+    assert!(expense.paid);
+    expense.regular = true;
+    assert!(!expense.is_paid_in("2026-01"));
+    expense.set_paid_in("2026-01", true);
+    expense.set_paid_in("2026-01", true);
+    expense.set_paid_in("2026-02", true);
+    assert_eq!(expense.paid_months.len(), 2);
+    expense.set_paid_in("2026-01", false);
+    assert!(!expense.is_paid_in("2026-01"));
+    assert!(expense.is_paid_in("2026-02"));
+    let restored: Expense =
+        serde_json::from_value(serde_json::to_value(&expense).unwrap()).unwrap();
+    assert_eq!(restored, expense);
+}
+
+#[test]
+fn skipping_one_recurring_month_preserves_later_occurrences_and_survives_reload() {
+    let mut plan = FinancePlan::empty();
+    let mut expense = Expense::new("EUR");
+    expense.regular = true;
+    expense.title = "Rent".into();
+    expense.due_date = "2026-01-31".into();
+    expense.amount = Amount::Number(20.0);
+    expense.skipped_months.push("2026-02".into());
+    plan.expenses.push(expense);
+    assert_eq!(plan.expense_months("2026-03"), vec!["2026-01", "2026-03"]);
+    assert!(plan.expenses[0].occurrence_date("2026-02").is_none());
+    assert_eq!(
+        plan.expenses[0].occurrence_date("2026-03"),
+        Some("2026-03-31".into())
+    );
+    let restored: FinancePlan =
+        serde_json::from_value(serde_json::to_value(&plan).unwrap()).unwrap();
+    assert_eq!(restored.expenses[0].skipped_months, vec!["2026-02"]);
+    assert_eq!(restored.totals("2026-02", false).1, 0.0);
+    assert_eq!(restored.totals("2026-03", false).1, 20.0);
+}

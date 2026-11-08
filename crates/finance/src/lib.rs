@@ -311,6 +311,10 @@ impl FinanceTab {
         self.filters_open = true;
     }
     pub fn edit_record(&mut self, mut record: Record, is_new: bool) {
+        if matches!(record, Record::BudgetExpense { .. }) {
+            self.view = FinanceView::Budgets;
+            return;
+        }
         if let Record::RegularExpense(occurrence) = record {
             record = Record::Expense((*occurrence.expense).clone());
         }

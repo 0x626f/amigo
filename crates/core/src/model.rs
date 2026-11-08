@@ -121,7 +121,10 @@ record!(Expense {
     priority: String,
     regular: bool,
     regular_until: String,
-    cancelled_on: String
+    cancelled_on: String,
+    paid: bool,
+    paid_months: Vec<String>,
+    skipped_months: Vec<String>
 });
 record!(Budget {
     id: String,
@@ -135,6 +138,7 @@ record!(Budget {
 });
 record!(BudgetExpense {
     id: String,
+    date: String,
     label: String,
     amount: Amount,
     currency: String,
@@ -143,6 +147,45 @@ record!(BudgetExpense {
     paid: bool,
     audit: RecordAudit
 });
+impl BudgetExpense {
+    pub fn planned_month(&self) -> Option<String> {
+        canonical_month(&self.date).or_else(|| {
+            let month = month_key(&self.date);
+            (!month.is_empty()).then_some(month)
+        })
+    }
+}
+impl Budget {
+    /// Keep the entered precision; a month covers its entire calendar span.
+    pub fn date_range(&self) -> Option<(String, String)> {
+        let dates: Vec<_> = self
+            .expenses
+            .iter()
+            .filter_map(|expense| {
+                let value = expense.date.trim();
+                if let Ok(day) = chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d") {
+                    Some((day, day, day.to_string()))
+                } else {
+                    let month = canonical_month(value)?;
+                    let start =
+                        chrono::NaiveDate::parse_from_str(&format!("{month}-01"), "%Y-%m-%d")
+                            .ok()?;
+                    let end = start
+                        .checked_add_months(chrono::Months::new(1))?
+                        .pred_opt()?;
+                    Some((start, end, month))
+                }
+            })
+            .collect();
+        let min = dates
+            .iter()
+            .min_by_key(|(start, _, value)| (*start, value.len()))?;
+        let max = dates
+            .iter()
+            .max_by_key(|(_, end, value)| (*end, std::cmp::Reverse(value.len())))?;
+        Some((min.2.clone(), max.2.clone()))
+    }
+}
 record!(Saving {
     audit: RecordAudit,
     category: String,
@@ -184,6 +227,23 @@ impl Income {
     }
 }
 impl Expense {
+    pub fn set_paid_in(&mut self, month: &str, paid: bool) {
+        if self.regular {
+            self.paid_months.retain(|value| value != month);
+            if paid {
+                self.paid_months.push(month.to_owned());
+            }
+        } else {
+            self.paid = paid;
+        }
+    }
+    pub fn is_paid_in(&self, month: &str) -> bool {
+        if self.regular {
+            self.paid_months.iter().any(|paid| paid == month)
+        } else {
+            self.paid
+        }
+    }
     pub fn new(currency: &str) -> Self {
         Self {
             id: id(),
@@ -204,6 +264,7 @@ impl Expense {
             selected_month.to_owned()
         };
         self.scheduled_in_month(selected_month)
+            && (!self.regular || !self.skipped_months.contains(&reporting_month))
             && (cancelled_month.is_empty() || reporting_month < cancelled_month)
     }
 
@@ -268,10 +329,17 @@ impl FinancePlan {
             .map(|expense| month_key(&expense.due_date))
             .filter(|month| !month.is_empty())
             .collect();
+        months.extend(
+            self.budgets
+                .iter()
+                .flat_map(|budget| &budget.expenses)
+                .filter_map(BudgetExpense::planned_month),
+        );
         let last = self
             .expenses
             .iter()
             .map(|expense| month_key(&expense.due_date))
+            .chain(months.iter().cloned())
             .chain(canonical_month(through))
             .filter(|month| !month.is_empty())
             .max();
@@ -293,10 +361,9 @@ impl FinancePlan {
                     if month.as_str() > end.as_str() {
                         break;
                     }
-                    if !expense.includes_month(&month) {
-                        break;
+                    if expense.includes_month(&month) {
+                        months.insert(month);
                     }
-                    months.insert(month);
                     let Some(next) = date.checked_add_months(chrono::Months::new(1)) else {
                         break;
                     };
@@ -590,6 +657,12 @@ impl FinancePlan {
             normalize_date(&mut row.date);
         }
         for row in &mut self.budgets {
+            for expense in &mut row.expenses {
+                normalize_date(&mut expense.date);
+                if let Some(month) = canonical_month(&expense.date) {
+                    expense.date = month;
+                }
+            }
             if let Some(month) = canonical_month(&row.month) {
                 row.month = month;
             }

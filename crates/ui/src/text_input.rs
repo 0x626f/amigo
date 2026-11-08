@@ -15,6 +15,7 @@ pub struct TextEdit<'a> {
     password: bool,
     editable: bool,
     spelling: bool,
+    spelling_on_focus: bool,
 }
 macro_rules! forward {
     ($($name:ident($arg:ident: $ty:ty);)*) => {$(
@@ -32,6 +33,7 @@ impl<'a> TextEdit<'a> {
             password: false,
             editable,
             spelling: true,
+            spelling_on_focus: false,
         }
     }
     pub fn multiline(text: &'a mut dyn egui::TextBuffer) -> Self {
@@ -44,6 +46,7 @@ impl<'a> TextEdit<'a> {
             password: false,
             editable,
             spelling: true,
+            spelling_on_focus: false,
         }
     }
     forward! {
@@ -80,6 +83,11 @@ impl<'a> TextEdit<'a> {
     }
     pub fn spellcheck(mut self, enabled: bool) -> Self {
         self.spelling = enabled;
+        self
+    }
+    /// Restrict automatic spelling marks and checks to the active editor.
+    pub fn spellcheck_on_focus(mut self, enabled: bool) -> Self {
+        self.spelling_on_focus = enabled;
         self
     }
     pub fn code_editor(mut self) -> Self {
@@ -167,7 +175,7 @@ impl<'a> TextEdit<'a> {
                         output.galley.text(),
                         output
                             .galley
-                            .cursor_from_pos(pos - output.galley_pos)
+                            .cursor_from_pos(pos - automatic::text_origin(&output))
                             .index
                             .0,
                     )
@@ -200,7 +208,7 @@ impl<'a> TextEdit<'a> {
             ui.ctx().data_mut(|d| {
                 d.insert_temp(id.with("text-content"), output.galley.text().to_owned())
             });
-            if self.spelling {
+            if self.spelling && (!self.spelling_on_focus || output.response.has_focus()) {
                 automatic::show(ui, &output);
             }
             if self.menu {
@@ -660,6 +668,108 @@ mod tests {
         let output = frame(&ctx, &mut text, vec![]);
         assert!(!output.shapes.iter().any(|shape| matches!(&shape.shape,egui::Shape::Path(path) if path.stroke.color==egui::epaint::ColorMode::Solid(red))));
     }
+    #[test]
+    fn focused_only_spelling_tracks_aligned_words_and_stops_after_blur() {
+        for align in [egui::Align::Min, egui::Align::Center, egui::Align::Max] {
+            let ctx = egui::Context::default();
+            design::install(&ctx);
+            automatic::seed(&ctx, "teh", vec!["the".into()]);
+            let id = Id::new("aligned-spelling-test");
+            let mut text = "hello teh world".to_owned();
+            let mut frame = |events| {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        egui::CentralPanel::default().show(ui, |ui| {
+                            ui.add(
+                                TextEdit::singleline(&mut text)
+                                    .id(id)
+                                    .desired_width(300.0)
+                                    .horizontal_align(align)
+                                    .suffix(egui::Atom::custom(
+                                        id.with("arrow"),
+                                        egui::vec2(20.0, 20.0),
+                                    ))
+                                    .spellcheck_on_focus(true),
+                            );
+                        });
+                    },
+                );
+                output.textures_delta.clear();
+                output
+            };
+            let red = design::palette(&ctx).red;
+            let underlines = |output: &egui::FullOutput| {
+                output
+                    .shapes
+                    .iter()
+                    .filter_map(|shape| match &shape.shape {
+                        egui::Shape::Path(path)
+                            if path.stroke.color == egui::epaint::ColorMode::Solid(red) =>
+                        {
+                            Some(path.points.clone())
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+            };
+            assert!(underlines(&frame(vec![])).is_empty());
+            ctx.memory_mut(|memory| memory.request_focus(id));
+            let output = frame(vec![]);
+            let lines = underlines(&output);
+            assert_eq!(lines.len(), 1);
+            let shape = output
+                .shapes
+                .iter()
+                .find_map(|shape| match &shape.shape {
+                    egui::Shape::Text(text) if text.galley.text() == "hello teh world" => {
+                        Some(text)
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            let row = &shape.galley.rows[0];
+            let from = shape.pos.x + row.pos.x + row.glyphs[6].pos.x;
+            let through =
+                shape.pos.x + row.pos.x + row.glyphs[8].pos.x + row.glyphs[8].advance_width;
+            assert!(
+                (lines[0].first().unwrap().x - from).abs() < 0.5,
+                "{align:?}"
+            );
+            assert!(
+                (lines[0].last().unwrap().x - through).abs() < 0.5,
+                "{align:?}"
+            );
+            let pos = egui::pos2(
+                (from + through) * 0.5,
+                shape.pos.y + row.pos.y + row.size.y * 0.5,
+            );
+            for pressed in [true, false] {
+                frame(vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Secondary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ]);
+            }
+            let range = egui::TextEdit::load_state(&ctx, id)
+                .unwrap()
+                .cursor
+                .char_range()
+                .unwrap()
+                .as_sorted_char_range();
+            assert_eq!(range.start.0..range.end.0, 6..9);
+            ctx.memory_mut(|memory| memory.surrender_focus(id));
+            assert!(underlines(&frame(vec![])).is_empty());
+        }
+    }
+
     #[test]
     fn automatic_spelling_skips_password_and_readonly_fields() {
         let ctx = egui::Context::default();

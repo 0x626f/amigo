@@ -226,6 +226,12 @@ pub(super) fn word_at(text: &str, point: usize) -> Option<Word> {
         .into_iter()
         .find(|w| w.range.start <= point && point <= w.range.end)
 }
+// egui aligns the galley bounds before painting; centered/right-aligned rows
+// can have a negative left edge within those bounds.
+pub(super) fn text_origin(output: &TextEditOutput) -> egui::Pos2 {
+    output.galley_pos - egui::vec2(output.galley.rect.left(), 0.0)
+}
+
 fn rectangles(output: &TextEditOutput, range: Range<usize>) -> Vec<Rect> {
     let mut offset = 0;
     let mut rects = Vec::new();
@@ -239,7 +245,7 @@ fn rectangles(output: &TextEditOutput, range: Range<usize>) -> Vec<Rect> {
                 egui::pos2(left, row.pos.y),
                 egui::pos2(right, row.pos.y + row.size.y),
             );
-            rects.push(rect.translate(output.galley_pos.to_vec2()));
+            rects.push(rect.translate(text_origin(output).to_vec2()));
         }
         offset += row.glyphs.len() + usize::from(row.ends_with_newline);
         if offset >= range.end {
@@ -297,7 +303,7 @@ pub(super) fn show(ui: &Ui, output: &TextEditOutput) {
             })
             .collect::<Vec<_>>()
     };
-    let clip = output.response.rect.intersect(ui.clip_rect());
+    let clip = output.text_clip_rect.intersect(ui.clip_rect());
     let painter = ui.painter().with_clip_rect(clip);
     let caret = output
         .cursor_range

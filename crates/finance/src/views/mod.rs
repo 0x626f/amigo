@@ -18,6 +18,7 @@ mod references;
 mod settings;
 #[cfg(test)]
 mod tests;
+mod timeline;
 mod toolbar;
 use dashboard::wallet;
 use records::{budgets, expenses, income, savings};
@@ -98,6 +99,12 @@ pub enum Record {
     Income(Income),
     Expense(Expense),
     RegularExpense(ExpenseOccurrence),
+    BudgetExpense {
+        id: String,
+        budget_id: String,
+        budget_label: String,
+        expense: amigo_core::model::BudgetExpense,
+    },
     Saving(Saving),
     Budget(Budget),
     Rate(ExchangeRate),
@@ -112,6 +119,7 @@ impl Record {
             Self::Income(r) => &r.id,
             Self::Expense(r) => &r.id,
             Self::RegularExpense(r) => &r.id,
+            Self::BudgetExpense { id, .. } => id,
             Self::Saving(r) => &r.id,
             Self::Budget(r) => &r.id,
             Self::Rate(r) => &r.id,
@@ -124,7 +132,9 @@ impl Record {
         match self {
             Self::Account(_) => FinanceView::Storage,
             Self::Income(_) => FinanceView::Income,
-            Self::Expense(_) | Self::RegularExpense(_) => FinanceView::Expenses,
+            Self::Expense(_) | Self::RegularExpense(_) | Self::BudgetExpense { .. } => {
+                FinanceView::Expenses
+            }
             Self::Saving(_) => FinanceView::Savings,
             Self::Budget(_) => FinanceView::Budgets,
             Self::Rate(_) => FinanceView::Rates,
@@ -136,6 +146,12 @@ impl Record {
             Self::Income(row) => plan.record_value(row.net(), &row.currency, &row.audit, &row.date),
             Self::Expense(row) => expense_reported_amount(plan, row),
             Self::RegularExpense(row) => expense_reported_amount(plan, &row.expense),
+            Self::BudgetExpense { expense, .. } => plan.record_value(
+                expense.amount.value(),
+                &expense.currency,
+                &expense.audit,
+                &expense.date,
+            ),
             _ => None,
         }
     }
@@ -144,6 +160,13 @@ impl Record {
             Self::Income(r) => r.date.clone(),
             Self::Expense(r) => r.due_date.clone(),
             Self::RegularExpense(r) => r.date.clone(),
+            Self::BudgetExpense { expense, .. } => {
+                if canonical_month(&expense.date).is_some() {
+                    format!("{}-01", expense.planned_month()?)
+                } else {
+                    expense.date.clone()
+                }
+            }
             Self::Rate(r) => r.date.clone(),
             Self::Budget(r) => {
                 if r.audit.inferred || r.audit.date().is_empty() {
@@ -166,6 +189,7 @@ impl Record {
             Self::Income(r) => r.id = key,
             Self::Expense(r) => r.id = key,
             Self::RegularExpense(r) => r.id = key,
+            Self::BudgetExpense { id, .. } => *id = key,
             Self::Saving(r) => r.id = key,
             Self::Budget(r) => r.id = key,
             Self::Rate(r) => r.id = key,
